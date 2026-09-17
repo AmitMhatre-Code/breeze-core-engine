@@ -315,20 +315,30 @@ def price_margin_for_legs(
     except Exception as exc:  # noqa: BLE001 -- an unpriceable shape drops out of the shortlist
         _logger.warning("bot2: margin_calculator failed for %s", stock_code, exc_info=True)
         return None, f"margin_calculator raised {type(exc).__name__}: {exc}"
+    shape = "+".join(f"{'CE' if r == cfg.CALL else 'PE'}{strike:g}x{qty}" for r, strike, qty in legs)
     if not isinstance(out, dict):
-        return None, f"margin_calculator returned {type(out).__name__}, not a response"
-    if out.get("Status") != 200:
-        return None, (
+        reason = f"margin_calculator returned {type(out).__name__}, not a response"
+    elif out.get("Status") != 200:
+        reason = (
             f"margin_calculator status {out.get('Status')}: {out.get('Error') or 'no error text'}"
         )
-    raw = (out.get("Success") or {}).get("span_margin_required")
-    try:
-        value = float(raw or 0)
-    except (TypeError, ValueError):
-        return None, f"margin_calculator span_margin_required unreadable: {raw!r}"
-    if value <= 0:
-        return None, f"margin_calculator span_margin_required was {raw!r}"
-    return value, None
+        # An expired/invalid session must not be reused by the next attempt.
+        evict = getattr(proc, "_maybe_evict_session", None)
+        if callable(evict):
+            evict(user_id, out)
+    else:
+        raw = (out.get("Success") or {}).get("span_margin_required")
+        try:
+            value = float(raw or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value, None
+        reason = f"margin_calculator span_margin_required was {raw!r}"
+    # Every refusal is logged, not only a raised call: a broker-side refusal used to return
+    # None silently, which hid a stale session behind "could not be priced" for a morning.
+    _logger.warning("bot2: %s %s %s: %s", stock_code, exchange_code, shape, reason)
+    return None, reason
 
 
 def build_candidates(
@@ -580,6 +590,7 @@ def plan_index(
     if lot_size <= 0:
         result.reason_code = ReasonCode.INTERNAL_ERROR
         result.error = "No lot size in the scrip master."
+        _logger.warning("bot2: %s %s not planned: no lot size in the scrip master", index_code, expiry_display)
         return result
 
     candidates, error, spot, error_code = build_candidates(
@@ -595,6 +606,7 @@ def plan_index(
     if error:
         result.reason_code = error_code
         result.error = error
+        _logger.warning("bot2: %s %s not planned (%s): %s", index_code, expiry_display, error_code, error)
         return result
 
     # Every shortlisted shape is recorded, not just the winner. A user who ticked three

@@ -540,6 +540,25 @@ def test_unpriceable_reason_names_the_margin_refusal(patch_chain, no_arm, monkey
     assert "Naked PE (PE 23500): margin_calculator status 500: Session expired" in result.error
 
 
+def test_margin_refusal_is_logged_not_just_returned(patch_chain, no_arm, monkeypatch, caplog):
+    """A broker refusal used to return None silently -- a stale session looked like an
+    unpriceable book in the logs for a whole expiry morning."""
+    proc = FakeProc()
+    patch_chain(proc)
+    monkeypatch.setattr(
+        proc, "margin_calculator",
+        lambda payload, exchange_code=cfg.NFO: {"Status": 500, "Error": "Session key is expired"},
+    )
+    evicted = []
+    proc._maybe_evict_session = lambda user_id, response: evicted.append(response)
+    with caplog.at_level("WARNING", logger=bot2.__name__):
+        _fire_shortlist(proc, ["naked_pe"])
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Session key is expired" in m and "PE23500" in m for m in messages), messages
+    assert any("not planned" in m for m in messages), messages
+    assert evicted, "an auth refusal must evict the cached session"
+
+
 def test_unpriceable_reason_lists_every_dropped_shape(patch_chain, no_arm):
     """A strangle missing its call leg is explained by the CE line, not repeated."""
     proc = FakeProc(bid_by_right={cfg.PUT: 0.0})

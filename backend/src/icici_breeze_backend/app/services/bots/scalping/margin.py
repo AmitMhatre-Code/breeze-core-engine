@@ -59,9 +59,27 @@ def margin_for_mixed_legs(
         _logger.warning("iron fly: margin_calculator failed for %s", stock_code, exc_info=True)
         return None
     if not isinstance(out, dict) or out.get("Status") != 200:
+        # Logged, not just returned: a silent refusal is how a stale session passed for
+        # "cannot price" on Bot 2 for a whole morning.
+        _logger.warning(
+            "iron fly: margin_calculator refused for %s %s status=%s error=%r",
+            stock_code,
+            exchange_code,
+            out.get("Status") if isinstance(out, dict) else type(out).__name__,
+            out.get("Error") if isinstance(out, dict) else None,
+        )
+        evict = getattr(proc, "_maybe_evict_session", None)
+        if callable(evict) and isinstance(out, dict):
+            evict(user_id, out)
         return None
+    raw = (out.get("Success") or {}).get("span_margin_required")
     try:
-        value = float((out.get("Success") or {}).get("span_margin_required") or 0)
+        value = float(raw or 0)
     except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        _logger.warning(
+            "iron fly: margin_calculator span_margin_required=%r for %s %s", raw, stock_code, exchange_code
+        )
         return None
-    return value if value > 0 else None
+    return value

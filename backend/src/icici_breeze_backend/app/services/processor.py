@@ -398,6 +398,18 @@ def _remember_span_margin_required(cache_key: str, span_margin_required: float) 
         pass
 
 
+# Attribute stamped on every session `get_session_breeze` hands out, recording the
+# (user_id, broker_token) it was built for. See the ownership check there.
+_SESSION_OWNER_ATTR = "_breeze_modern_session_owner"
+
+
+def _stamp_session_owner(session: Any, user_id: str, broker_token: str) -> None:
+    try:
+        setattr(session, _SESSION_OWNER_ATTR, (user_id, broker_token))
+    except Exception:  # noqa: BLE001 -- an unstampable session is simply never re-checked
+        _logger.debug("get_session_breeze: could not stamp session owner", exc_info=True)
+
+
 def _safe_float(v: Any, default: float = 0.0) -> float:
     try:
         if v is None or v == "" or isinstance(v, bool):
@@ -720,6 +732,14 @@ class processor():
                 combined_res = breeze.margin_calculator(
                     existing_legs + [candidate_leg], exchange_code=exchange_code
                 )
+                if not (isinstance(combined_res, dict) and combined_res.get("Status") == 200):
+                    _logger.warning(
+                        "margin_calculator: position-netted call refused for %s %s status=%s error=%r; using standalone",
+                        stock_code,
+                        exchange_code,
+                        combined_res.get("Status") if isinstance(combined_res, dict) else type(combined_res).__name__,
+                        combined_res.get("Error") if isinstance(combined_res, dict) else None,
+                    )
                 if isinstance(combined_res, dict) and combined_res.get("Status") == 200:
                     combined = float(
                         (combined_res.get("Success") or {}).get("span_margin_required") or 0.0
@@ -738,7 +758,11 @@ class processor():
                         existing_legs
                     )
             except Exception:
-                pass  # best-effort (D7): leave `out` as the standalone figure on any failure.
+                # best-effort (D7): leave `out` as the standalone figure on any failure.
+                _logger.warning(
+                    "margin_calculator: position-netted call failed for %s %s; using standalone",
+                    stock_code, exchange_code, exc_info=True,
+                )
         return out, warnings
 
     def _get_full_secret_for_user(self, user_id: str, user_fragment: str = ""):
@@ -846,11 +870,30 @@ class processor():
             from icici_breeze_backend.app.auth.context import get_breeze_session_for_request, set_breeze_session_for_request
             from icici_breeze_backend.app.services.breeze_session_cache import get as cache_get, set as cache_set
 
-            # Reuse session created earlier in this request
+            # Reuse the session created earlier in this context -- but only while it still
+            # belongs to this user's *current* token. A request's context dies with the
+            # request, so there the check is free. A long-lived background thread
+            # (bot-scheduler, exit arming, the scalper and CAS loops) never gets a fresh
+            # context: without this check its first session is kept forever, and after the
+            # midnight token rollover every signed call on that thread quietly fails with
+            # yesterday's session while the same call from a request succeeds. That is how
+            # Bot 2 skipped a whole expiry morning as "could not be priced". The same slot
+            # is also shared by every user such a thread serves.
+            broker_token = self._resolve_broker_token(user_id)
             cached = get_breeze_session_for_request()
             if cached is not None:
-                return cached
-            broker_token = self._resolve_broker_token(user_id)
+                owner = getattr(cached, _SESSION_OWNER_ATTR, None)
+                if owner is None or owner == (user_id, broker_token):
+                    return cached
+                _logger.warning(
+                    "get_session_breeze: discarding context session owned by user_id=%s "
+                    "(token %s) for user_id=%s (token %s)",
+                    owner[0],
+                    "matches" if owner[1] == broker_token else "stale",
+                    user_id,
+                    "present" if broker_token else "absent",
+                )
+                set_breeze_session_for_request(None)
             if not broker_token:
                 _logger.warning("get_session_breeze: no broker token in request or persisted store user_id=%s", user_id)
                 return None
@@ -859,16 +902,19 @@ class processor():
 
                 breeze = cache_get(user_id, broker_token)
                 if breeze is not None:
+                    _stamp_session_owner(breeze, user_id, broker_token)
                     set_breeze_session_for_request(breeze)
                     return breeze
                 breeze = MockBreezeSdk()
                 breeze.user_id = user_id
+                _stamp_session_owner(breeze, user_id, broker_token)
                 set_breeze_session_for_request(breeze)
                 cache_set(user_id, broker_token, breeze)
                 return breeze
             # Cross-request cache: reuse session for same user+token within TTL
             breeze = cache_get(user_id, broker_token)
             if breeze is not None:
+                _stamp_session_owner(breeze, user_id, broker_token)
                 set_breeze_session_for_request(breeze)
                 return breeze
             full_secret, cred_data = self._get_full_secret_for_user(user_id)
@@ -879,6 +925,7 @@ class processor():
             breeze = BreezeConnect(api_key=api_key)
             breeze.user_id = user_id
             breeze.generate_session(api_secret=full_secret, session_token=broker_token)
+            _stamp_session_owner(breeze, user_id, broker_token)
             set_breeze_session_for_request(breeze)
             cache_set(user_id, broker_token, breeze)
             _logger.info("get_session_breeze: session created for user_id=%s", user_id)
@@ -2333,12 +2380,25 @@ class processor():
             )
             return None
         if isinstance(margins, dict) and margins.get("Status") == 200:
+            raw = (margins.get("Success") or {}).get("span_margin_required")
             try:
-                span = float((margins.get("Success") or {}).get("span_margin_required"))
+                span = float(raw)
             except (TypeError, ValueError):
+                _logger.warning(
+                    "netted margin_calculator: unreadable span_margin_required=%r exchange=%s legs=%d",
+                    raw, exchange_code, len(active),
+                )
                 return None
             _remember_span_margin_required(cache_key, span)
             return span
+        _logger.warning(
+            "netted margin_calculator refused exchange=%s legs=%d status=%s error=%r",
+            exchange_code,
+            len(active),
+            margins.get("Status") if isinstance(margins, dict) else type(margins).__name__,
+            margins.get("Error") if isinstance(margins, dict) else None,
+        )
+        self._maybe_evict_session(user_id, margins if isinstance(margins, dict) else None)
         return None
 
     def _compute_netted_margins(self, breeze, user_id: str, legs: list) -> dict:

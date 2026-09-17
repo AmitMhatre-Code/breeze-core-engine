@@ -93,6 +93,7 @@ def _has_session(proc: Any, user_id: str) -> bool:
     try:
         return proc.get_session_breeze(user_id) is not None
     except Exception:  # noqa: BLE001
+        _logger.warning("bot scheduler: session check failed for user=%s", user_id, exc_info=True)
         return False
 
 
