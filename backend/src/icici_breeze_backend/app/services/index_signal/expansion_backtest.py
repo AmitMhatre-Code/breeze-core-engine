@@ -26,7 +26,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.index_signal import expansion, shadow_log
@@ -98,7 +98,35 @@ def last_run(*, cache_path: Optional[str] = None, db_path: Optional[str] = None)
         entry = (run.get("indices") or {}).get(label)
         if entry and entry.get("summary", {}).get("readings"):
             entry["readiness"] = score(label, start, end, db_path=db_path)
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    for variant_id, entry in list((run.get("variants") or {}).items()):
+        variant = variants.get_variant(variant_id)
+        if variant is None:
+            # Deleted since the run: its replay rows went with it.
+            del run["variants"][variant_id]
+            continue
+        entry["variant"] = variant.to_dict()
+        if entry.get("summary", {}).get("readings"):
+            entry["readiness"] = score_variant(variant, start, end, db_path=db_path)
     return run
+
+
+def rollover_expiries(
+    start: datetime.date, end: datetime.date, holidays: Optional[set[datetime.date]] = None
+) -> set[datetime.date]:
+    """The NIFTY near-month futures expiries a range touches, for the rollover exclusion."""
+    from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+
+    out: set[datetime.date] = set()
+    day = start
+    while day <= end + datetime.timedelta(days=7):
+        try:
+            out.add(regime.near_month_futures_expiry(day, "NIFTY", holidays or set()))
+        except Exception:  # noqa: BLE001 -- a calendar gap costs an exclusion, never the replay
+            _logger.debug("rollover expiry lookup failed for %s", day, exc_info=True)
+        day += datetime.timedelta(days=7)
+    return out
 
 
 def replay(
@@ -117,17 +145,102 @@ def replay(
     carrying across sessions -- windows straddling the overnight break are dropped by the engine
     itself, not by this caller.
     """
+    return _replay_logged(
+        _stock_code(label),
+        backtest_label(label),
+        params or expansion.ExpansionParams(require_oi=_requires_oi(label)),
+        from_date=from_date,
+        to_date=to_date,
+        cache_path=cache_path,
+        db_path=db_path,
+        rollover_expiries=rollover_expiries,
+    )
+
+
+def replay_variant(
+    variant: Any,
+    *,
+    from_date: Optional[datetime.date] = None,
+    to_date: Optional[datetime.date] = None,
+    cache_path: Optional[str] = None,
+    db_path: Optional[str] = None,
+    rollover_expiries: Optional[set[datetime.date]] = None,
+) -> dict[str, Any]:
+    """Replay one signal variant (#38) under its own `:backtest` label, turned its own way."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    return _replay_logged(
+        _stock_code(variant.index),
+        variant.backtest_label,
+        variant.params(),
+        from_date=from_date,
+        to_date=to_date,
+        cache_path=cache_path,
+        db_path=db_path,
+        rollover_expiries=rollover_expiries,
+        transform=lambda snap: variants.apply_direction(snap, variant),
+    )
+
+
+def score_variant(
+    variant: Any, start: datetime.date, end: datetime.date, *, db_path: Optional[str] = None
+) -> dict[str, Any]:
+    now = datetime.datetime.combine(end + datetime.timedelta(days=1), datetime.time()).replace(tzinfo=IST)
+    return shadow_log.readiness(
+        variant.backtest_label,
+        now=now.timestamp(),
+        lookback_days=(end - start).days + 2,
+        db_path=db_path,
+    )
+
+
+def replay_states(
+    candles: Any,
+    params: expansion.ExpansionParams,
+    *,
+    rollover_expiries: Optional[set[datetime.date]] = None,
+) -> Iterator[tuple[Any, dict[str, Any]]]:
+    """(candle, engine snapshot as that bar closed) for every in-session bar, in order.
+
+    The one replay loop: the signal backtest logs these, and the bot backtests act on them, so a
+    bot replay reads exactly the calls the signal replay scores. Rollover days are excluded only
+    for a variant that reads OI -- they are about OI moving mechanically."""
+    engine = expansion.ExpansionEngine("nifty", params)
+    rollover = rollover_expiries or set()
+    for candle in candles:
+        moment = candle.ts
+        if not SESSION_START <= moment.time() <= SESSION_END:
+            continue
+        ts = moment.replace(tzinfo=IST).timestamp()
+        engine.on_bar(expansion.Bar(ts=ts, close=candle.close, volume=candle.volume, oi=candle.oi))
+        excluded = params.require_oi and any(
+            expansion.in_rollover_window(moment.date(), expiry) for expiry in rollover
+        )
+        yield candle, engine.snapshot(ts, session_open=True, excluded=excluded)
+
+
+def _replay_logged(
+    stock_code: str,
+    log_label: str,
+    params: expansion.ExpansionParams,
+    *,
+    from_date: Optional[datetime.date],
+    to_date: Optional[datetime.date],
+    cache_path: Optional[str],
+    db_path: Optional[str],
+    rollover_expiries: Optional[set[datetime.date]],
+    transform: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
+) -> dict[str, Any]:
     from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 
-    from_label = backtest_label(label)
     # A cache that has never been fetched is the ordinary first-run state, not an error.
     store.ensure_tables(cache_path)
     bars = store.load_candles(
-        stock_code=_stock_code(label), from_date=from_date, to_date=to_date, path=cache_path
+        stock_code=stock_code, from_date=from_date, to_date=to_date, path=cache_path
     )
     if not bars:
         return {
-            "label": from_label,
+            "label": log_label,
             "bars": 0,
             "readings": 0,
             "days": 0,
@@ -135,35 +248,24 @@ def replay(
             "message": "No ICICI history is stored for this range.",
         }
 
-    engine = expansion.ExpansionEngine(
-        label, params or expansion.ExpansionParams(require_oi=_requires_oi(label))
-    )
-    shadow_log.purge_label(from_label, db_path=db_path)
+    shadow_log.purge_label(log_label, db_path=db_path)
 
-    rollover = rollover_expiries or set()
     states: dict[str, int] = {}
     readings = 0
     days: set[datetime.date] = set()
-    for candle in bars:
+    for candle, snap in replay_states(bars, params, rollover_expiries=rollover_expiries):
+        if transform is not None:
+            snap = transform(snap)
         moment = candle.ts
-        if not SESSION_START <= moment.time() <= SESSION_END:
-            continue
-        ts = moment.replace(tzinfo=IST).timestamp()
-        engine.on_bar(
-            expansion.Bar(ts=ts, close=candle.close, volume=candle.volume, oi=candle.oi)
-        )
-        excluded = any(
-            expansion.in_rollover_window(moment.date(), expiry) for expiry in rollover
-        )
-        snap = engine.snapshot(ts, session_open=True, excluded=excluded)
         states[snap["state"]] = states.get(snap["state"], 0) + 1
         readings += 1
         days.add(moment.date())
         # The futures close is the level (see the module docstring).
-        shadow_log.record(from_label, snap, spot=candle.close, now=ts, db_path=db_path)
+        ts = moment.replace(tzinfo=IST).timestamp()
+        shadow_log.record(log_label, snap, spot=candle.close, now=ts, db_path=db_path)
 
     return {
-        "label": from_label,
+        "label": log_label,
         "bars": len(bars),
         "readings": readings,
         "days": len(days),

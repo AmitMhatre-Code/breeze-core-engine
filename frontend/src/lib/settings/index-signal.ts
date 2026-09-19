@@ -139,7 +139,13 @@ export type IndexSignalShadowReportResponse = {
 export type MechanismKey = "wobi" | "flow" | "expansion";
 
 /** A shadow-log label: the index alone for W-OBI, else `<index>:<mechanism>`. */
-export type SignalLabel = IndexLabel | `${IndexLabel}:flow` | `${IndexLabel}:expansion` | `${IndexLabel}:expansion:backtest`;
+export type SignalLabel =
+  | IndexLabel
+  | `${IndexLabel}:flow`
+  | `${IndexLabel}:expansion`
+  | `${IndexLabel}:expansion:backtest`
+  // A signal variant's live or replay label (backend `index_signal.variants`, #38).
+  | `nifty:expansion:${string}`;
 
 export function mechanismLabel(mechanism: MechanismKey, index: IndexLabel): SignalLabel {
   return mechanism === "wobi" ? index : (`${index}:${mechanism}` as SignalLabel);
@@ -220,6 +226,8 @@ export type ExpansionBacktestRun = {
   calls: number;
   notes: string[];
   indices: Partial<Record<IndexLabel, { summary: ExpansionBacktestSummary; readiness?: IndexReadiness }>>;
+  /** Each signal variant's replay, keyed by variant id (#38). Absent on runs before variants. */
+  variants?: Record<string, { summary: ExpansionBacktestSummary; readiness?: IndexReadiness; variant?: SignalVariant }>;
   /** Days back from today that reach the start of the range, for the flip list. */
   flip_days: number;
 };
@@ -271,6 +279,55 @@ export type IndexSignalReadinessResponse = {
     IndexReadiness & { name: string; requires_oi: boolean; published: boolean }
   >;
 };
+
+/** A named, pre-registered reading of the expansion mechanism (backend `index_signal.variants`, #38). */
+export type SignalVariant = {
+  id: string;
+  name: string;
+  index: "nifty";
+  window_minutes: number;
+  /** null: price and volume alone, no open-interest confirmation. */
+  oi_window_minutes: number | null;
+  hold_minutes: number;
+  direction: "follow" | "fade";
+  builtin: boolean;
+  /** The 15-minute follow variant: the mechanism the navbar already shows for NIFTY. */
+  incumbent: boolean;
+  requires_oi: boolean;
+  log_label: SignalLabel;
+  backtest_label: SignalLabel;
+  created_at: string | null;
+};
+
+export type SignalVariantView = SignalVariant & {
+  readiness: IndexReadiness;
+  /** This account's bots set to it (bot types). A variant in use cannot be deleted. */
+  used_by: string[];
+};
+
+export type SignalVariantsResponse = {
+  variants: SignalVariantView[];
+  bounds: {
+    window_minutes: [number, number];
+    oi_window_minutes: [number, number];
+    hold_minutes: [number, number];
+    name_max: number;
+  };
+};
+
+export type SignalVariantCreate = {
+  name: string;
+  window_minutes: number;
+  oi_window_minutes: number | null;
+  hold_minutes: number;
+  direction: "follow" | "fade";
+};
+
+/** One line saying what a variant reads, e.g. "5m price/vol · 15m OI · hold 5m · fade". */
+export function describeVariant(v: Pick<SignalVariant, "window_minutes" | "oi_window_minutes" | "hold_minutes" | "direction">): string {
+  const oi = v.oi_window_minutes == null ? "no OI" : `${v.oi_window_minutes}m OI`;
+  return `${v.window_minutes}m price/vol · ${oi} · hold ${v.hold_minutes}m · ${v.direction}`;
+}
 
 export const INDEX_SIGNAL_PREFERENCES_QUERY_KEY = ["settings", "index-signal-preferences"] as const;
 export const INDEX_SIGNAL_WEIGHTS_QUERY_KEY = ["settings", "index-signal-weights"] as const;
@@ -334,6 +391,21 @@ export function startExpansionBacktest(body: { period: BacktestPeriod; from_date
 
 export function fetchExpansionLastBacktest(): Promise<{ run: ExpansionBacktestRun | null }> {
   return apiClient.get<{ run: ExpansionBacktestRun | null }>("/api/settings/index-signal/expansion/backtest");
+}
+
+/** Under the report's key, so a new minute of evidence refreshes each variant's verdict too. */
+export const SIGNAL_VARIANTS_QUERY_KEY = [...INDEX_SIGNAL_SHADOW_REPORT_QUERY_KEY, "variants"] as const;
+
+export function fetchSignalVariants(): Promise<SignalVariantsResponse> {
+  return apiClient.get<SignalVariantsResponse>("/api/settings/index-signal/variants");
+}
+
+export function createSignalVariant(body: SignalVariantCreate): Promise<SignalVariantView> {
+  return apiClient.post<SignalVariantView>("/api/settings/index-signal/variants", body);
+}
+
+export function deleteSignalVariant(id: string): Promise<{ deleted: string }> {
+  return apiClient.delete<{ deleted: string }>(`/api/settings/index-signal/variants/${encodeURIComponent(id)}`);
 }
 
 export function fetchIndexSignalReadiness(): Promise<IndexSignalReadinessResponse> {

@@ -269,14 +269,61 @@ def replay(
         raise NoCachedData(f"No NIFTY futures bars are cached for {start} to {end}. Fetch data first.")
     spot = store.load_candles(from_date=start, to_date=end, table="spot_candles", path=path)
     if bot == "fly":
+        entry_filter = getattr(config, "entry_filter", None)
+        kind = getattr(entry_filter, "kind", "none")
+        filter_variant, filter_readings, vix_series = None, None, None
+        if kind == "expansion_neutral":
+            filter_variant = _variant_or_raise(entry_filter.variant)
+            filter_readings = _variant_readings(filter_variant, start, end, hol, path)
+        elif kind == "vix_not_rising":
+            from icici_breeze_backend.app.services.bots.scalping import vix_minutes
+
+            vix_series = vix_minutes.series_from_candles(
+                store.load_candles(
+                    stock_code=vix_minutes.STOCK_CODE, from_date=start, to_date=end,
+                    table="spot_candles", path=path,
+                )
+            )
         return run_fly_backtest(
             futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
             spot_bars=spot, pricer=pricer, lots=lots or DEFAULT_LOTS, holidays=hol,
+            filter_readings=filter_readings, vix_series=vix_series,
         )
+    variant, readings = None, None
+    if getattr(config, "entry_signal", "momentum") != "momentum":
+        variant = _variant_or_raise(config.entry_signal)
+        readings = _variant_readings(variant, start, end, hol, path)
     return run_backtest(
         futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
-        spot_bars=spot, pricer=pricer, holidays=hol,
+        spot_bars=spot, pricer=pricer, holidays=hol, variant=variant, readings=readings,
     )
+
+
+# Bars before the range that only warm a variant's percentile baseline (#38): 120 bars is
+# about a third of a session, so a few days is plenty, and whatever is cached is used.
+_VARIANT_WARMUP_DAYS = 7
+
+
+def _variant_or_raise(variant_id: str) -> Any:
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    variant = variants.get_variant(variant_id)
+    if variant is None:
+        raise ValueError(
+            f"The signal variant {variant_id!r} no longer exists. Choose another in the bot's settings."
+        )
+    return variant
+
+
+def _variant_readings(
+    variant: Any, start: datetime.date, end: datetime.date, hol: set[datetime.date], path: Optional[str]
+) -> dict[datetime.datetime, dict[str, Any]]:
+    from icici_breeze_backend.app.services.bots.scalping.backtest_common import variant_readings
+    from icici_breeze_backend.app.services.index_signal.expansion_backtest import rollover_expiries
+
+    warm_from = start - datetime.timedelta(days=_VARIANT_WARMUP_DAYS)
+    bars = store.load_candles(from_date=warm_from, to_date=end, path=path)
+    return variant_readings(bars, variant, rollover_expiries=rollover_expiries(warm_from, end, hol))
 
 
 def fetch_underlying(
@@ -287,6 +334,11 @@ def fetch_underlying(
         fetcher.fetch_futures("NIFTY", start, end)
     for index in indices:
         fetcher.fetch_spot(index, start, end)
+    if bot == "fly":
+        # India VIX minute bars, for the fly's `vix_not_rising` entry filter (#38). A handful of
+        # calls a month; fetched whatever the filter is set to, so switching it on later needs
+        # no second fetch.
+        fetcher.fetch_spot("INDVIX", start, end)
     cached = store.load_vix(path=fetcher.path)
     missing = [d for d in regime.trading_days(start, end, fetcher.holidays) if d not in cached]
     if missing:

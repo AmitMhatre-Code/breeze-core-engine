@@ -737,6 +737,99 @@ _SIGNAL_LOG_LABELS = (
 )
 
 
+def _known_signal_label(label: str) -> bool:
+    """A fixed mechanism's label, or a signal variant's live or replay label (#38)."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    return label in _SIGNAL_LOG_LABELS or variants.is_variant_label(label)
+
+
+class SignalVariantCreate(BaseModel):
+    """A new way of reading the expansion mechanism (#38). NIFTY only; see `variants`."""
+
+    name: str
+    window_minutes: int
+    # None reads price and volume alone -- no OI confirmation at all.
+    oi_window_minutes: Optional[int] = None
+    hold_minutes: int
+    direction: Literal["follow", "fade"]
+
+
+def _variant_view(variant: Any, user_id: str) -> dict[str, Any]:
+    from icici_breeze_backend.app.repositories import bots as bots_repo
+    from icici_breeze_backend.app.services.index_signal import shadow_log
+
+    return {
+        **variant.to_dict(),
+        "readiness": shadow_log.readiness(variant.log_label),
+        # This account's bots set to it -- shown on the screen, and why a delete is refused.
+        "used_by": [
+            bot.bot_type for owner, bot in bots_repo.bots_using_signal_variant(variant.id) if owner == user_id
+        ],
+    }
+
+
+@router.get("/index-signal/variants")
+async def settings_index_signal_variants(ctx: RequestContext = Depends(get_request_context)):
+    """Every signal variant with its live evidence verdict (the same fixed readiness test the
+    mechanisms get), and the bounds the create form checks against."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    return {
+        "variants": [_variant_view(v, ctx.user_id) for v in variants.list_variants(fresh=True)],
+        "bounds": {
+            "window_minutes": [variants.WINDOW_MIN, variants.WINDOW_MAX],
+            "oi_window_minutes": [variants.OI_WINDOW_MIN, variants.OI_WINDOW_MAX],
+            "hold_minutes": [variants.HOLD_MIN, variants.HOLD_MAX],
+            "name_max": variants.NAME_MAX,
+        },
+    }
+
+
+@router.post("/index-signal/variants", status_code=201)
+async def settings_index_signal_variant_create(
+    body: SignalVariantCreate, ctx: RequestContext = Depends(get_request_context)
+):
+    """Create a variant. It starts with an empty record: evidence belongs to one definition."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    try:
+        created = variants.create_variant(
+            name=body.name,
+            window_minutes=body.window_minutes,
+            oi_window_minutes=body.oi_window_minutes,
+            hold_minutes=body.hold_minutes,
+            direction=body.direction,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _variant_view(created, ctx.user_id)
+
+
+@router.delete("/index-signal/variants/{variant_id}")
+async def settings_index_signal_variant_delete(
+    variant_id: str, ctx: RequestContext = Depends(get_request_context)
+):
+    """Delete a user variant and its evidence. Refused while any bot is set to it -- a bot left
+    on a deleted variant would read `unavailable` and never trade, with nothing saying why."""
+    from icici_breeze_backend.app.repositories import bots as bots_repo
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    users = bots_repo.bots_using_signal_variant(variant_id.strip().lower())
+    if users:
+        names = sorted({bot.bot_type for _owner, bot in users})
+        raise HTTPException(
+            status_code=409,
+            detail="A bot is still set to this variant (" + ", ".join(names) + "). "
+            "Choose another signal in its settings first.",
+        )
+    try:
+        deleted = variants.delete_variant(variant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"deleted": deleted.id}
+
+
 @router.get("/index-signal/flips")
 async def settings_index_signal_flips(
     label: str = Query(...),
@@ -750,7 +843,7 @@ async def settings_index_signal_flips(
     from icici_breeze_backend.app.services.index_signal import shadow_log
 
     key = label.strip().lower()
-    if key not in _SIGNAL_LOG_LABELS:
+    if not _known_signal_label(key):
         raise HTTPException(status_code=400, detail=f"unknown signal label: {label}")
     return shadow_log.flip_list(key, days=days, min_move_bps=min_move_bps)
 
@@ -795,11 +888,11 @@ def settings_index_signal_expansion_last_backtest(ctx: RequestContext = Depends(
 
 def _signal_log_label(index: str) -> str:
     label = index.strip().lower()
-    if label not in _SIGNAL_LOG_LABELS:
+    if not _known_signal_label(label):
         raise HTTPException(
             status_code=400,
             detail="index must be nifty or sensex, its :flow or :expansion mechanism, "
-            "or an :expansion:backtest replay",
+            "a signal variant, or an :expansion:backtest replay",
         )
     return label
 

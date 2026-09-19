@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -74,6 +74,26 @@ def _validate_bot_type(bot_type: str) -> str:
     if bot_type not in BOT_TYPES:
         raise HTTPException(status_code=404, detail=f"Unknown bot: {bot_type}")
     return bot_type
+
+
+def _require_signal_variants_exist(config: Any) -> None:
+    """A scalper may only be set to a signal variant that exists (#38). The model checks the
+    id's shape; only here, with I/O, can a deleted or mistyped one be refused."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    wanted: list[str] = []
+    entry_signal = getattr(config, "entry_signal", None)
+    if entry_signal and entry_signal != "momentum":
+        wanted.append(entry_signal)
+    entry_filter = getattr(config, "entry_filter", None)
+    if entry_filter is not None and entry_filter.kind == "expansion_neutral":
+        wanted.append(entry_filter.variant)
+    for variant_id in wanted:
+        if variants.get_variant(variant_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid bot configuration: no signal variant {variant_id!r}.",
+            )
 
 
 def _guard_scalper_live_transition(
@@ -326,9 +346,10 @@ async def update_bot(
         current = repo.get_or_create_bot(ctx.user_id, bot_type).config
         merged = {**current, **payload.config}
         try:
-            model(**merged)
+            parsed = model(**merged)
         except Exception as e:  # noqa: BLE001 -- surfaced to the user as a 400
             raise HTTPException(status_code=400, detail=f"Invalid bot configuration: {e}") from e
+        _require_signal_variants_exist(parsed)
         if bot_type in SCALPER_BOT_TYPES:
             _guard_scalper_live_transition(ctx.user_id, bot_type, current, merged)
 

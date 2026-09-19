@@ -27,6 +27,20 @@ def _isolate_log_sink(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_signal_variants(tmp_path, monkeypatch):
+    """Signal variants (#38) live in users.sqlite3 and are cached in-process; bot configs,
+    backtests and the publisher all look them up. Without this a test would read -- and seed --
+    the developer's real backend/data/ database, and one test's created variant would answer
+    the next test's lookup."""
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    monkeypatch.setattr(variants, "_db_path", lambda: str(tmp_path / "signal_variants.sqlite3"))
+    variants.reset_state_for_tests()
+    yield
+    variants.reset_state_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _clear_order_book_cache():
     """The SG order-book cache is process-global, so without this a test that reads the
     book would silently satisfy the next test's read and any assertion counting broker

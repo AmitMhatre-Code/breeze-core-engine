@@ -25,9 +25,11 @@ import datetime
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
+from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.domain.bots import IronFlyScalperConfig
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+from icici_breeze_backend.app.services.bots.scalping import vix_minutes
 from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     MINUTE,
     WARM_CANDLES,
@@ -42,6 +44,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     spot_map,
     tally_idle,
     to_candle,
+    unavailable_reading,
 )
 from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
     MISSING,
@@ -53,6 +56,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle, OptionKey
 from icici_breeze_backend.app.services.bots.scalping.iron_fly_bot import (
     evaluate_exit,
+    expansion_neutral_hold,
     reentry_blocked,
     wing_width_for,
 )
@@ -169,7 +173,11 @@ def run_fly_backtest(
     holidays: Optional[set[datetime.date]] = None,
     weekday_map: regime.WeekdayMap = regime.EXPIRY_WEEKDAY_MAP[INDEX],
     default_iv: float = 0.13,
+    filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
+    vix_series: Optional[Sequence[tuple[float, float]]] = None,
 ) -> FlyResult:
+    """`filter_readings` / `vix_series` feed the entry filter (#38), when it is switched on:
+    the named variant's replayed readings, or India VIX 1-minute bars."""
     pricer = pricer or ModelPricer()
     spots = spot_map(spot_bars)
     spot_days = {ts.date() for ts in spots}
@@ -188,8 +196,29 @@ def run_fly_backtest(
         vix = vix_by_day.get(day)
         sigma = (vix if vix and vix > 0 else default_iv * 100.0) / 100.0
         expiry = regime.next_expiry(day, weekday_map, holidays)
-        _run_day(day_bars, day, expiry, sigma, vix, config, charges, spread, pricer, spots, lots, result)
+        _run_day(
+            day_bars, day, expiry, sigma, vix, config, charges, spread, pricer, spots, lots, result,
+            filter_readings=filter_readings, vix_series=vix_series,
+        )
     return result
+
+
+def _entry_filter_hold(
+    config: IronFlyScalperConfig,
+    bar_start: datetime.datetime,
+    now: datetime.datetime,
+    filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]],
+    vix_series: Optional[Sequence[tuple[float, float]]],
+) -> Optional[tuple[str, str]]:
+    """The live filter (`runtime._fly_entry_filter`), on replayed inputs. Fails closed the
+    same way: a minute with no reading, or no VIX bars, holds the entry."""
+    f = config.entry_filter
+    if f.kind == "expansion_neutral":
+        reading = (filter_readings or {}).get(bar_start) or unavailable_reading(f.variant)
+        return expansion_neutral_hold(reading)
+    if f.kind == "vix_not_rising":
+        return vix_minutes.filter_hold(f, vix_series or (), now.replace(tzinfo=IST).timestamp())
+    return None
 
 
 def _run_day(
@@ -205,6 +234,9 @@ def _run_day(
     spots: dict,
     lots: int,
     result: FlyResult,
+    *,
+    filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
+    vix_series: Optional[Sequence[tuple[float, float]]] = None,
 ) -> None:
     pre_open, day_bars = split_session(day_bars)
     quantity = lots * regime.lot_size_for(INDEX, day)
@@ -262,7 +294,8 @@ def _run_day(
             has_open_position=False,
             entry_hold=reentry_blocked(
                 config, now=now, last_closed_at=ledger.totals.last_closed_at, candles=candles
-            ),
+            )
+            or _entry_filter_hold(config, bar.ts, now, filter_readings, vix_series),
         )
         if decision.action != "enter":
             tally_idle(result.idle, decision)

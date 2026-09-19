@@ -25,9 +25,13 @@ def get_index_signal(label: str, *, now: float | None = None) -> dict[str, Any]:
     key = str(label or "").strip().lower()
     if key not in LABELS:
         raise ValueError(f"unknown index label: {label!r}")
+    return _read(key, _unavailable(key, "not_published"), now)
+
+
+def _read(key: str, missing: dict[str, Any], now: float | None) -> dict[str, Any]:
     payload = cache_get_json(index_signal_key(key))
     if not isinstance(payload, dict):
-        return _unavailable(key, "not_published")
+        return missing
     ts = time.time() if now is None else now
     try:
         valid_until = float(payload.get("valid_until") or 0.0)
@@ -38,6 +42,15 @@ def get_index_signal(label: str, *, now: float | None = None) -> dict[str, Any]:
         stale.update(state="unavailable", reason="stale")
         return stale
     return payload
+
+
+def get_variant_signal(variant_id: str, *, now: float | None = None) -> dict[str, Any]:
+    """A signal variant's published reading (#38) -- what a bot set to that variant trades on.
+
+    Same rules as `get_index_signal`: judged by the payload's own `valid_until`, and anything
+    but "bullish"/"bearish" is no trade. A fade variant's state is already the traded side."""
+    key = str(variant_id or "").strip().lower()
+    return _read(f"variant:{key}", {**_unavailable("nifty", "not_published"), "variant_id": key}, now)
 
 
 def get_index_signals(*, now: float | None = None) -> dict[str, dict[str, Any]]:

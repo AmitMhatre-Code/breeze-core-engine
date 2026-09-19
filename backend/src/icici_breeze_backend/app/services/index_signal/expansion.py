@@ -25,8 +25,10 @@ Why the window floor is 15 minutes
 ----------------------------------
 Open interest is a position count and it moves slowly. Measured on NIFTY futures over four
 sessions, the median one-minute |OI change| is 0.0093% of outstanding -- about 1,700 contracts
-out of 18.5 million, which is noise. Over 15 minutes the median is 0.132%. Anything shorter
-than W_MIN_MINUTES is reading rounding error, so the params refuse it.
+out of 18.5 million, which is noise. Over 15 minutes the median is 0.132%. An OI window shorter
+than W_MIN_MINUTES is reading rounding error, so the params refuse it. The floor is on the OI
+reading only: the price-and-volume window may be shorter, with OI still judged over its own
+15 minutes, and a variant that reads no OI at all has no floor (#38).
 
 Why an unwind quadrant is neutral and not a reversal call
 ---------------------------------------------------------
@@ -82,7 +84,13 @@ Quadrant = Literal["new_longs", "short_covering", "new_shorts", "long_liquidatio
 
 @dataclass(frozen=True)
 class ExpansionParams:
+    #: The price-and-volume window: the move and the traded quantity behind it are measured
+    #: over this span and ranked against earlier spans of the same length.
     window_minutes: int = 15
+    #: The open-interest window, when it differs from the price window (#38). None means the
+    #: same span. Only the OI reading has a floor -- a 5-minute price move confirmed by 15
+    #: minutes of OI is legitimate; 5 minutes of OI is rounding error.
+    oi_window_minutes: Optional[int] = None
     #: Percentile of the trailing distribution a reading must beat. 0.80 = the top fifth.
     price_percentile: float = 0.80
     volume_percentile: float = 0.80
@@ -104,19 +112,32 @@ class ExpansionParams:
     #: its missing volume silently omitted from the sum.
     max_gap_seconds: float = 300.0
 
+    @property
+    def oi_window(self) -> int:
+        return self.window_minutes if self.oi_window_minutes is None else self.oi_window_minutes
+
+    @property
+    def span_minutes(self) -> int:
+        """The longest window a reading needs, i.e. how many bars back it reaches."""
+        return max(self.window_minutes, self.oi_window) if self.require_oi else self.window_minutes
+
     def __post_init__(self) -> None:
-        if self.window_minutes < W_MIN_MINUTES:
+        if self.window_minutes < 1:
+            raise ValueError("window_minutes must be at least 1")
+        if self.require_oi and self.oi_window < W_MIN_MINUTES:
             raise ValueError(
-                f"window_minutes must be at least {W_MIN_MINUTES}: below that the median "
-                "one-minute OI change is under 0.01% of outstanding, which is noise"
+                f"the open-interest window must be at least {W_MIN_MINUTES} minutes: below that "
+                "the median one-minute OI change is under 0.01% of outstanding, which is noise"
             )
+        if self.hold_minutes < 1:
+            raise ValueError("hold_minutes must be at least 1")
         for name in ("price_percentile", "volume_percentile"):
             value = getattr(self, name)
             if not 0.0 < value < 1.0:
                 raise ValueError(f"{name} must be a percentile strictly between 0 and 1")
         if self.min_baseline_bars > self.baseline_bars:
             raise ValueError("min_baseline_bars cannot exceed baseline_bars")
-        if self.min_baseline_bars <= self.window_minutes:
+        if self.min_baseline_bars <= self.span_minutes:
             raise ValueError(
                 "the baseline must be longer than the window it ranks, or the first reading "
                 "is ranked against the bars that produced it"
@@ -190,13 +211,27 @@ def _window_reading(
     volume: Optional[float] = None
     if all(b.volume is not None for b in span):
         volume = sum(float(b.volume) for b in span)  # type: ignore[arg-type]
-    oi_delta: Optional[float] = None
+    return price_bps, volume, _oi_change(first, last)
+
+
+def _oi_change(first: Bar, last: Bar) -> Optional[float]:
     # A non-positive OI is absent, never a reading. ICICI serves 0 on pre-open bars and on
     # *every* BSE bar, so a zero reaching here is likely rather than hypothetical -- and a zero
     # anchor would turn the next real value into the largest OI rise ever recorded.
     if first.oi is not None and last.oi is not None and first.oi > 0 and last.oi > 0:
-        oi_delta = float(last.oi) - float(first.oi)
-    return price_bps, volume, oi_delta
+        return float(last.oi) - float(first.oi)
+    return None
+
+
+def _oi_reading(bars: list[Bar], end: int, window: int, max_gap_seconds: float) -> Optional[float]:
+    """The OI change over its own window ending at `end` (#38), under the same gap rule."""
+    start = end - window
+    if start < 0 or end >= len(bars):
+        return None
+    span_bars = bars[start : end + 1]
+    if any(b.ts - a.ts > max_gap_seconds for a, b in zip(span_bars, span_bars[1:])):
+        return None
+    return _oi_change(bars[start], bars[end])
 
 
 def evaluate(
@@ -211,7 +246,7 @@ def evaluate(
     firing signal is what #33 showed to be unreadable.
     """
     w = params.window_minutes
-    needed = params.min_baseline_bars + w
+    needed = params.min_baseline_bars + params.span_minutes
     if len(bars) < needed:
         return None, None, {"bars": len(bars), "bars_required": needed}, REASON_WARMING_UP
 
@@ -219,6 +254,8 @@ def evaluate(
     if now is None:
         return None, None, {"bars": len(bars)}, REASON_STALE
     price_bps, volume, oi_delta = now
+    if params.oi_window != w:
+        oi_delta = _oi_reading(bars, len(bars) - 1, params.oi_window, params.max_gap_seconds)
 
     # Like against like: the current W-window reading is ranked against earlier W-window
     # readings, never against single bars.
@@ -281,6 +318,10 @@ def in_rollover_window(today: date, futures_expiry: date, days_before: int = 2) 
     return 0 <= delta <= days_before
 
 
+def _history_len(params: ExpansionParams) -> int:
+    return params.baseline_bars + params.span_minutes + 1
+
+
 class ExpansionEngine:
     """One index's live state.
 
@@ -292,9 +333,12 @@ class ExpansionEngine:
         self.label = label
         self._lock = threading.Lock()
         self._params = params
-        self._bars: Deque[Bar] = deque(maxlen=params.baseline_bars + params.window_minutes + 1)
+        self._bars: Deque[Bar] = deque(maxlen=_history_len(params))
         self._held: Optional[DirectionalState] = None
         self._held_until: float = 0.0
+        #: When the call now held first fired. A call re-fired while it is still held is the
+        #: same call, extended: "one trade per call" keys on this (#38).
+        self._call_started: Optional[float] = None
         self._last: dict[str, Any] = {}
 
     @property
@@ -308,14 +352,14 @@ class ExpansionEngine:
         with self._lock:
             if params == self._params:
                 return
-            rebuild = (
+            rebuild = _history_len(params) != _history_len(self._params) or (
                 params.window_minutes != self._params.window_minutes
-                or params.baseline_bars != self._params.baseline_bars
+                or params.oi_window != self._params.oi_window
             )
             self._params = params
             if rebuild:
-                self._bars = deque(maxlen=params.baseline_bars + params.window_minutes + 1)
-                self._held, self._held_until = None, 0.0
+                self._bars = deque(maxlen=_history_len(params))
+                self._held, self._held_until, self._call_started = None, 0.0, None
 
     def on_bar(self, bar: Bar) -> None:
         """Feed one completed bar. Out-of-order and duplicate bars are ignored rather than
@@ -328,6 +372,8 @@ class ExpansionEngine:
             side, strength, components, reason = evaluate(list(self._bars), self._params)
             self._last = {"strength": strength, "components": components, "reason": reason}
             if side is not None:
+                if side != self._held or bar.ts >= self._held_until:
+                    self._call_started = bar.ts
                 self._held = side
                 self._held_until = bar.ts + self._params.hold_minutes * 60.0
 
@@ -367,14 +413,14 @@ class ExpansionEngine:
                 REASON_WARMING_UP,
                 REASON_NO_OI,
             ):
-                self._held, self._held_until = None, 0.0
+                self._held, self._held_until, self._call_started = None, 0.0, None
                 state = "unavailable"
             elif self._held is not None and now < self._held_until:
                 state = self._held
                 reason = None
             else:
                 # The call has lapsed, or nothing expanded. Both are readings: neutral.
-                self._held, self._held_until = None, 0.0
+                self._held, self._held_until, self._call_started = None, 0.0, None
                 state = "neutral"
 
             return {
@@ -387,6 +433,9 @@ class ExpansionEngine:
                 "coverage": 1.0 if p.require_oi else 0.5,
                 "requires_oi": p.require_oi,
                 "window_minutes": p.window_minutes,
+                "oi_window_minutes": p.oi_window if p.require_oi else None,
+                "hold_minutes": p.hold_minutes,
+                "call_started_at": self._call_started if state in ("bullish", "bearish") else None,
                 "thresholds": {
                     "price_percentile": p.price_percentile,
                     "volume_percentile": p.volume_percentile,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Checkbox } from "@/components/ui/Checkbox";
 import { FieldValidityContext, NumberInput } from "@/components/ui/NumberInput";
@@ -13,11 +14,19 @@ import {
 } from "@/lib/scalper-sessions";
 import {
   BOT_IRON_FLY_SCALPER,
+  MOMENTUM_ENTRY_SIGNAL,
   type Bot,
   type IronFlyScalperConfig,
   type MomentumLongScalperConfig,
   type SessionWindow,
 } from "@/lib/use-bots";
+import {
+  describeVariant,
+  fetchSignalVariants,
+  SIGNAL_VARIANTS_QUERY_KEY,
+  type ReadinessStatus,
+  type SignalVariantView,
+} from "@/lib/settings/index-signal";
 
 export type Tab = { id: string; label: string };
 
@@ -36,8 +45,63 @@ export const IRON_FLY_TABS: Tab[] = [
   { id: "structure", label: "Structure" },
   { id: "exits", label: "Exits" },
   { id: "reentry", label: "Re-entry" },
+  { id: "filter", label: "Entry filter" },
   { id: "risk", label: "Risk" },
 ];
+
+const EVIDENCE_WORD: Record<ReadinessStatus, string> = {
+  ready: "beats the trend",
+  too_early: "too early to tell",
+  no_edge: "no edge yet",
+  worse: "worse than the trend",
+};
+
+function useSignalVariants(): SignalVariantView[] {
+  const q = useQuery({ queryKey: SIGNAL_VARIANTS_QUERY_KEY, queryFn: fetchSignalVariants, staleTime: 60_000 });
+  return q.data?.variants ?? [];
+}
+
+function variantOption(v: SignalVariantView): string {
+  return `${v.name} — ${describeVariant(v)} (${EVIDENCE_WORD[v.readiness.status]})`;
+}
+
+function Select({
+  label,
+  hint,
+  value,
+  onChange,
+  disabled,
+  options,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label className="block">
+      <span className="block text-micro font-semibold uppercase tracking-[0.06em] text-faint">{label}</span>
+      <select
+        className="app-input mt-1 w-full max-w-xl"
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {/* A stored id no longer listed (deleted variant) still shows, so it is visible, not silently swapped. */}
+        {options.some((o) => o.value === value) ? null : <option value={value}>{value} (not found)</option>}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {hint && <span className="mt-1 block text-hint text-faint">{hint}</span>}
+    </label>
+  );
+}
 
 function Num({
   label,
@@ -271,6 +335,46 @@ function ScheduleTab({
   );
 }
 
+function EntrySignalPicker({
+  cfg,
+  onConfig,
+  disabled,
+}: {
+  cfg: MomentumLongScalperConfig;
+  onConfig: (patch: Record<string, unknown>) => void;
+  disabled: boolean;
+}) {
+  const variants = useSignalVariants();
+  const chosen = variants.find((v) => v.id === cfg.entry_signal);
+  return (
+    <div className="grid gap-2">
+      <Select
+        label="Entry signal"
+        value={cfg.entry_signal}
+        disabled={disabled}
+        onChange={(entry_signal) => onConfig({ entry_signal })}
+        options={[
+          { value: MOMENTUM_ENTRY_SIGNAL, label: "Momentum — the bot's own EMA / VWAP / volume signal" },
+          ...variants.map((v) => ({ value: v.id, label: variantOption(v) })),
+        ]}
+      />
+      {cfg.entry_signal === MOMENTUM_ENTRY_SIGNAL ? null : (
+        <p className="app-card-muted p-3 text-hint">
+          Buys the ATM call on a bullish call and the ATM put on a bearish one
+          {chosen?.direction === "fade" ? " — the variant has already turned each call the other way" : ""}. One
+          trade per call, held for the variant&rsquo;s {chosen ? `${chosen.hold_minutes}-minute` : ""} window and
+          then closed; the stop and the ladder on the Exits tab still apply, the time stop does not. Variants and
+          their evidence live in{" "}
+          <a className="app-link" href="/settings?tab=index-signal">
+            Settings › Index Signal
+          </a>
+          .
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ScalperSettings({
   bot,
   tab,
@@ -334,12 +438,18 @@ export function ScalperSettings({
   if (!isFly) {
     const cfg = config as MomentumLongScalperConfig;
     if (tab === "signal") {
+      const onMomentum = cfg.entry_signal === MOMENTUM_ENTRY_SIGNAL;
       return (
         <div className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <EntrySignalPicker cfg={cfg} onConfig={onConfig} disabled={disabled} />
+          </div>
           <Num label="Premium outlay" suffix="₹" min={1000} max={10_000_000} step={1000}
             hint="Capital deployed, not risked. Lots = outlay ÷ cost, and an ATM option cheapens towards expiry — so this buys more lots the nearer expiry gets."
             value={cfg.premium_outlay_inr}
             onChange={(v) => onConfig({ premium_outlay_inr: v })} disabled={disabled} />
+          {onMomentum ? (
+            <>
           <Num label="EMA period" min={2} max={200}
             value={cfg.signal.ema_period}
             onChange={(v) => onConfig({ signal: { ...cfg.signal, ema_period: v } })} disabled={disabled} />
@@ -357,12 +467,21 @@ export function ScalperSettings({
               checked={cfg.signal.require_vwap}
               onChange={(v) => onConfig({ signal: { ...cfg.signal, require_vwap: v } })} disabled={disabled} />
           </div>
+            </>
+          ) : null}
         </div>
       );
     }
     const e = cfg.exits;
+    const onVariant = cfg.entry_signal !== MOMENTUM_ENTRY_SIGNAL;
     return (
       <div className="grid gap-4 sm:grid-cols-2">
+        {onVariant ? (
+          <p className="app-card-muted p-3 text-hint sm:col-span-2">
+            This bot trades a signal variant, so the time stop below is not used: a trade closes when the
+            variant&rsquo;s window ends. The stop and the ladder still apply.
+          </p>
+        ) : null}
         <Num label="Runner trigger" suffix="pts" min={0.5} max={500} step={0.5}
           hint="Not a take-profit: reaching it starts the trailing runner rather than closing the trade."
           value={e.target_pts} onChange={(v) => onConfig({ exits: { ...e, target_pts: v } })} disabled={disabled} />
@@ -419,6 +538,9 @@ export function ScalperSettings({
       </div>
     );
   }
+  if (tab === "filter") {
+    return <FlyEntryFilter fly={fly} onConfig={onConfig} disabled={disabled} />;
+  }
   if (tab === "reentry") {
     const r = fly.reentry;
     return (
@@ -473,6 +595,60 @@ export function ScalperSettings({
           onChange={(v) => onConfig({ exits: { ...e, stop_loss_credit_pct: v > 0 ? v : null } })}
           disabled={disabled} />
       </div>
+    </div>
+  );
+}
+
+function FlyEntryFilter({
+  fly,
+  onConfig,
+  disabled,
+}: {
+  fly: IronFlyScalperConfig;
+  onConfig: (patch: Record<string, unknown>) => void;
+  disabled: boolean;
+}) {
+  const variants = useSignalVariants();
+  const f = fly.entry_filter;
+  return (
+    <div className="space-y-4">
+      <p className="app-text-muted text-hint">
+        Checked after the re-entry gate, before every new fly. A fly earns its credit when the market moves less than
+        implied volatility priced in; each filter skips a moment when that is visibly not happening. Both hold the
+        entry when their input cannot be read.
+      </p>
+      <Select
+        label="Filter"
+        value={f.kind}
+        disabled={disabled}
+        onChange={(kind) => onConfig({ entry_filter: { ...f, kind } })}
+        options={[
+          { value: "none", label: "None — the re-entry gate only" },
+          { value: "vix_not_rising", label: "India VIX not rising" },
+          { value: "expansion_neutral", label: "No live expansion call" },
+        ]}
+      />
+      {f.kind === "vix_not_rising" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Num label="Look back" suffix="min" min={1} max={120}
+            value={f.vix_lookback_minutes}
+            onChange={(v) => onConfig({ entry_filter: { ...f, vix_lookback_minutes: v } })} disabled={disabled} />
+          <Num label="Skip if VIX rose more than" suffix="%" min={0} max={50} step={0.25}
+            hint="India VIX 1-minute bars, read at most once a minute and only when a fly would otherwise open."
+            value={f.vix_max_rise_pct}
+            onChange={(v) => onConfig({ entry_filter: { ...f, vix_max_rise_pct: v } })} disabled={disabled} />
+        </div>
+      ) : null}
+      {f.kind === "expansion_neutral" ? (
+        <Select
+          label="Signal variant"
+          hint="A live call on either side holds the fly: a move with volume behind it is the opposite of the quiet a fly wants."
+          value={f.variant}
+          disabled={disabled}
+          onChange={(variant) => onConfig({ entry_filter: { ...f, variant } })}
+          options={variants.map((v) => ({ value: v.id, label: `${v.name} — ${describeVariant(v)}` }))}
+        />
+      ) : null}
     </div>
   );
 }

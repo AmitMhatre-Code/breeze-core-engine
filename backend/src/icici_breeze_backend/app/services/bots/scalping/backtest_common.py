@@ -93,6 +93,33 @@ def gate(
     return decide(snapshot, config)
 
 
+def variant_readings(
+    bars: Sequence[Any],
+    variant: Any,
+    *,
+    rollover_expiries: Optional[set[datetime.date]] = None,
+) -> dict[datetime.datetime, dict[str, Any]]:
+    """A signal variant's reading as each bar closed, keyed by the bar's start (#38).
+
+    Built with the signal backtest's own replay loop over the whole range at once, so the
+    percentile baseline carries across days exactly as it does live, and a bot replay acts on
+    the very calls the signal replay scores. Pass bars from a few days before the range too:
+    they only warm the baseline."""
+    from icici_breeze_backend.app.services.index_signal import expansion_backtest, variants
+
+    return {
+        candle.ts: variants.apply_direction(snap, variant)
+        for candle, snap in expansion_backtest.replay_states(
+            bars, variant.params(), rollover_expiries=rollover_expiries
+        )
+    }
+
+
+def unavailable_reading(variant_id: str) -> dict[str, Any]:
+    """What a minute with no replayed reading looks like: no trade, and says why."""
+    return {"state": "unavailable", "reason": "no_reading", "variant_id": variant_id}
+
+
 def tally_idle(idle: dict[str, int], decision: Decision) -> None:
     idle[decision.reason_code] = idle.get(decision.reason_code, 0) + 1
 

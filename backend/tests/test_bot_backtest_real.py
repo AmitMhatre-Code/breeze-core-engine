@@ -141,7 +141,7 @@ class FakeBook:
 def _momentum(underlying, pricer=None, config=None, spot_bars=None):
     return run_backtest(
         underlying,
-        config=config or MomentumLongScalperConfig(),
+        config=config or MomentumLongScalperConfig(entry_signal="momentum"),
         charges=CHARGES,
         spread=SPREAD,
         vix_by_day={},
@@ -430,7 +430,7 @@ def test_real_pricing_needs_the_cash_index_for_its_strike():
 
 
 def test_session_windows_come_from_the_live_gate_stack():
-    config = MomentumLongScalperConfig(sessions=[SessionWindow(start="10:30", end="11:30")])
+    config = MomentumLongScalperConfig(entry_signal="momentum", sessions=[SessionWindow(start="10:30", end="11:30")])
     result = _momentum(_trending(), config=config)
     assert result.cycles == []
     assert result.idle.get(ReasonCode.OUTSIDE_SESSION_WINDOW, 0) > 0

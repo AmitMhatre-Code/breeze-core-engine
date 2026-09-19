@@ -142,7 +142,7 @@ def _trending_day(day=_NEAR_EXPIRY):
 def test_a_trending_day_produces_cycles(and_config=None):
     result = run_backtest(
         _trending_day(),
-        config=MomentumLongScalperConfig(),
+        config=MomentumLongScalperConfig(entry_signal="momentum"),
         charges=CHARGES,
         spread=SPREAD,
         vix_by_day={_NEAR_EXPIRY: 13.0},
@@ -158,7 +158,7 @@ def test_a_flat_day_produces_no_cycles():
     day = datetime.date(2026, 3, 5)
     bars = _bars(day, [24_000.0] * 60, [1_000] * 60)
     result = run_backtest(
-        bars, config=MomentumLongScalperConfig(), charges=CHARGES, spread=SPREAD,
+        bars, config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES, spread=SPREAD,
         vix_by_day={day: 13.0},
     )
     assert result.cycles == []
@@ -168,7 +168,7 @@ def test_a_flat_day_produces_no_cycles():
 def test_every_cycle_carries_friction():
     """Friction is the binding constraint; a cycle without it is not a cycle."""
     result = run_backtest(
-        _trending_day(), config=MomentumLongScalperConfig(), charges=CHARGES,
+        _trending_day(), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
         spread=SPREAD, vix_by_day={_NEAR_EXPIRY: 13.0},
     )
     assert all(c.friction > 0 for c in result.cycles)
@@ -179,12 +179,12 @@ def test_slippage_is_adverse_on_both_legs_as_in_paper_mode():
     """An earlier draft applied it only on entry, which made backtests flatter paper mode."""
     day = _NEAR_EXPIRY
     generous = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(),
+        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"),
         charges=ChargesModel(slippage_spread_fraction=0.0), spread=SPREAD,
         vix_by_day={day: 13.0},
     )
     penalised = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(),
+        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"),
         charges=ChargesModel(slippage_spread_fraction=0.5), spread=SPREAD,
         vix_by_day={day: 13.0},
     )
@@ -195,7 +195,7 @@ def test_slippage_is_adverse_on_both_legs_as_in_paper_mode():
 
 def test_only_one_position_is_held_at_a_time():
     result = run_backtest(
-        _trending_day(), config=MomentumLongScalperConfig(), charges=CHARGES,
+        _trending_day(), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
         spread=SPREAD, vix_by_day={_NEAR_EXPIRY: 13.0},
     )
     for a, b in zip(result.cycles, result.cycles[1:]):
@@ -210,7 +210,7 @@ def test_one_signal_run_buys_once_in_the_backtest_too():
     closes = [24_000.0] * 25 + [24_000.0 + 2 * i for i in range(1, 20)]
     volumes = [1_000] * 25 + [int(2_000 * 1.2 ** i) for i in range(1, 20)]
     result = run_backtest(
-        _bars(day, closes, volumes), config=MomentumLongScalperConfig(), charges=CHARGES,
+        _bars(day, closes, volumes), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
         spread=SPREAD, vix_by_day={day: 13.0},
     )
     assert len(result.cycles) == 1
@@ -222,7 +222,7 @@ def test_a_position_never_carries_across_days():
     """A candle history is not a position; each session starts flat."""
     d1, d2 = _NEAR_EXPIRY, datetime.date(2026, 3, 10)
     result = run_backtest(
-        _trending_day(d1) + _trending_day(d2), config=MomentumLongScalperConfig(),
+        _trending_day(d1) + _trending_day(d2), config=MomentumLongScalperConfig(entry_signal="momentum"),
         charges=CHARGES, spread=SPREAD, vix_by_day={d1: 13.0, d2: 13.0},
     )
     assert result.days == 2
@@ -234,14 +234,14 @@ def test_the_result_states_its_iv_and_spread_sources():
     """A run priced off a fallback must never be mistaken for a calibrated one."""
     day = _NEAR_EXPIRY
     with_vix = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(), charges=CHARGES,
+        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
         spread=SPREAD, vix_by_day={day: 13.0},
     )
     assert with_vix.summary()["iv_source"] == "daily India VIX"
     assert "no calibration yet" in with_vix.summary()["spread_source"]
 
     without = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(), charges=CHARGES,
+        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
         spread=SPREAD, vix_by_day={},
     )
     assert without.summary()["iv_source"].startswith("constant")
@@ -341,7 +341,7 @@ def test_the_raised_outlay_is_what_makes_a_full_week_tradeable():
 
     at_old_default = run_backtest(
         _trending_day(far),
-        config=MomentumLongScalperConfig(premium_outlay_inr=10_000.0),
+        config=MomentumLongScalperConfig(entry_signal="momentum", premium_outlay_inr=10_000.0),
         charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0},
     )
     assert at_old_default.cycles == []
@@ -349,7 +349,7 @@ def test_the_raised_outlay_is_what_makes_a_full_week_tradeable():
 
     at_new_default = run_backtest(
         _trending_day(far),
-        config=MomentumLongScalperConfig(),  # 25,000
+        config=MomentumLongScalperConfig(entry_signal="momentum"),  # 25,000
         charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0},
     )
     assert at_new_default.cycles
@@ -363,7 +363,7 @@ def test_position_size_rises_towards_expiry_on_a_fixed_outlay():
     highest. Pinned here so the behaviour is deliberate rather than discovered later.
     """
     near, far = datetime.date(2026, 3, 9), datetime.date(2026, 3, 4)  # 1 DTE vs 6 DTE
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     near_lots = run_backtest(
         _trending_day(near), config=cfg, charges=CHARGES, spread=SPREAD, vix_by_day={near: 13.0}
     ).cycles[0].lots

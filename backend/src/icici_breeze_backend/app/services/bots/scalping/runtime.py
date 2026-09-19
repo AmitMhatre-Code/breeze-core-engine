@@ -191,7 +191,10 @@ def build_snapshot(
         unrealized_pnl=float(unrealized),
         entries_suspended=bool(entries_suspended),
         signal=_entry_signal(bot_type, config),
-        entry_hold=_entry_hold(bot_type, config, now, totals, has_open_position=bool(open_cycles)),
+        entry_hold=_entry_hold(
+            bot_type, config, now, totals, has_open_position=bool(open_cycles),
+            proc=proc, user_id=user_id,
+        ),
     )
 
 
@@ -205,21 +208,27 @@ def _entry_signal(bot_type: str, config: Any) -> Any:
     if bot_type != BOT_MOMENTUM_LONG_SCALPER:
         return None
     try:
-        from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
-
         feed = futures_feed.get_feed()
-        return evaluate_momentum(feed.builder.candles, feed.builder.session_vwap, config.signal)
+        return momentum_bot.current_signal(config, feed.builder.candles, feed.builder.session_vwap)
     except Exception:  # noqa: BLE001 -- a signal failure must not stop the gate stack
         _logger.exception("scalping[%s]: signal evaluation failed", bot_type)
         return None
 
 
 def _entry_hold(
-    bot_type: str, config: Any, now: Any, totals: Any, *, has_open_position: bool
+    bot_type: str,
+    config: Any,
+    now: Any,
+    totals: Any,
+    *,
+    has_open_position: bool,
+    proc: Any = None,
+    user_id: str = "",
 ) -> Optional[tuple[str, str]]:
     """A bot-specific hold on a fresh entry, as a verdict input, or None.
 
-    Bot 3: the fresh-signal rule. Bot 4: the re-entry gate (cooldown, then a settled range).
+    Bot 3: the fresh-signal rule. Bot 4: the re-entry gate (cooldown, then a settled range),
+    then its entry filter (#38).
 
     Evaluated here for the reason `_entry_signal` is: checked only inside the executor, a held
     pass was published as `enter / gates_clear` and the wait after every stop-loss looked like
@@ -234,7 +243,7 @@ def _entry_hold(
     if bot_type != BOT_IRON_FLY_SCALPER:
         return None
     try:
-        return iron_fly_bot.reentry_blocked(
+        held = iron_fly_bot.reentry_blocked(
             config,
             now=now,
             last_closed_at=totals.last_closed_at,
@@ -243,6 +252,34 @@ def _entry_hold(
     except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
         _logger.exception("scalping[%s]: re-entry check failed", bot_type)
         return (ReasonCode.REENTRY_GATE_CLOSED, "Re-entry check failed; holding off.")
+    if held is not None:
+        return held
+    return _fly_entry_filter(config, now, proc, user_id)
+
+
+def _fly_entry_filter(config: Any, now: Any, proc: Any, user_id: str) -> Optional[tuple[str, str]]:
+    """Bot 4's entry filter, asked last so the VIX fetch is spent only on a pass that would
+    otherwise enter -- and only inside a trading window. Fails closed."""
+    f = getattr(config, "entry_filter", None)
+    kind = getattr(f, "kind", "none")
+    if f is None or kind == "none":
+        return None
+    try:
+        if in_window(now, config.sessions) is None:
+            return None  # the window gate stands the bot down anyway; don't spend a VIX call
+        if kind == "expansion_neutral":
+            from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
+
+            return iron_fly_bot.expansion_neutral_hold(get_variant_signal(f.variant))
+        if kind == "vix_not_rising":
+            from icici_breeze_backend.app.services.bots.scalping import vix_minutes
+
+            return vix_minutes.filter_hold(
+                f, vix_minutes.live_series(proc, user_id), time.time()
+            )
+    except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
+        _logger.exception("scalping: iron fly entry filter failed")
+    return (ReasonCode.ENTRY_FILTER_CLOSED, "Entry filter could not be checked; holding off.")
 
 
 def _fresh_signal_hold(config: Any, totals: Any) -> Optional[tuple[str, str]]:
@@ -254,12 +291,25 @@ def _fresh_signal_hold(config: Any, totals: Any) -> Optional[tuple[str, str]]:
     if start is None or side is None:
         return None
     try:
-        from icici_breeze_backend.app.services.bots.scalping.signal import signal_run_unbroken
+        from icici_breeze_backend.app.services.bots.scalping.signal import (
+            signal_run_unbroken,
+            variant_call_unbroken,
+        )
 
-        candles = futures_feed.get_feed().builder.candles
-        if not signal_run_unbroken(
-            candles, config.signal, entry_candle_start=int(start), side=str(side)
-        ):
+        if momentum_bot.uses_variant(config):
+            from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
+
+            unbroken = variant_call_unbroken(
+                get_variant_signal(config.entry_signal),
+                entry_candle_start=int(start),
+                side=str(side),
+            )
+        else:
+            candles = futures_feed.get_feed().builder.candles
+            unbroken = signal_run_unbroken(
+                candles, config.signal, entry_candle_start=int(start), side=str(side)
+            )
+        if not unbroken:
             return None
     except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
         _logger.exception("scalping: fresh-signal check failed")

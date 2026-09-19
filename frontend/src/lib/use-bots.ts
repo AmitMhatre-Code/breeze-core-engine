@@ -297,6 +297,10 @@ export type MomentumLongScalperConfig = {
   /** Capital deployed, not risked. Lots = floor(outlay / cost), and an ATM option cheapens
    *  towards expiry, so this buys more lots the nearer expiry gets. */
   premium_outlay_inr: number;
+  /** "momentum" (the EMA/VWAP/volume `signal` below) or a signal variant id from
+   *  Settings → Index Signal (#38). On a variant the trade is held for the variant's window,
+   *  replacing the exits' time stop, and it is one trade per call. */
+  entry_signal: string;
   signal: {
     candle_seconds: number;
     ema_period: number;
@@ -345,9 +349,19 @@ export type IronFlyScalperConfig = {
     range_window_minutes: number;
     max_range_pct: number;
   };
+  /** An extra condition on opening a fly (#38). Fails closed: an unreadable input holds. */
+  entry_filter: {
+    kind: "none" | "vix_not_rising" | "expansion_neutral";
+    vix_lookback_minutes: number;
+    vix_max_rise_pct: number;
+    /** The signal variant whose live call holds a fly (either side). */
+    variant: string;
+  };
   execution: ScalperExecutionConfig;
   risk: ScalperRiskConfig;
 };
+
+export const MOMENTUM_ENTRY_SIGNAL = "momentum";
 
 /** One scalper round trip. `friction` is a first-class field, not a derived one: at roughly
  *  a hundred rupees a cycle it is the constraint that decides whether the strategy works. */

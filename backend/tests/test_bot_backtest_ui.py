@@ -309,6 +309,9 @@ def test_a_bot2_replay_with_no_enabled_index_is_refused(env, monkeypatch):
 def test_a_replay_runs_in_the_background_and_is_kept_with_its_settings(env, monkeypatch):
     _cache_trending(env["cache"])
     monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+    # The trending day is built to fire the momentum signal; Bot 3's default is now a signal
+    # variant, which needs an hour and more of history to warm before it can call (#38).
+    repo.update_bot("u1", "momentum_long_scalper", config={"entry_signal": "momentum"})
     jobs.start_replay("u1", "momentum", D(2026, 3, 9), D(2026, 3, 9), model=True)
     state = _wait_for_job()
     assert state["status"] == "completed", state

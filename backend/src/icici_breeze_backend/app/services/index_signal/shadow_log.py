@@ -265,6 +265,29 @@ def purge_label(label: str, db_path: str | None = None) -> int:
         return int(cursor.rowcount or 0)
 
 
+def purge_variant_label(label: str, db_path: str | None = None) -> int:
+    """Delete a deleted signal variant's evidence, live or replayed (#38).
+
+    The one exception to "live evidence only ages out": a variant's record belongs to its exact
+    definition, and a variant recreated later gets the same id -- its new record must not
+    inherit the old one's rows. Refuses anything that is not a user variant's label, which
+    rules out the incumbent (`nifty:expansion`) and every other mechanism's series.
+    """
+    from icici_breeze_backend.app.services.index_signal import variants
+
+    if not variants.is_variant_label(label):
+        raise ValueError(f"refusing to purge {label!r}: not a signal variant's label")
+    path = db_path or _db_path()
+    ensure_log_table(path)
+    with _lock:
+        _last_state.pop(label, None)
+        _last_minute.pop(label, None)
+    with sqlite3.connect(path) as conn:
+        cursor = conn.execute("DELETE FROM index_signal_log WHERE label = ?", (label,))
+        conn.commit()
+        return int(cursor.rowcount or 0)
+
+
 def load_rows(label: str, since_ts: float, db_path: str | None = None) -> list[dict[str, Any]]:
     """Oldest first; rows written by one publish keep their write order (transition, then
     sample), which is what `_flips` relies on to see the state a transition left."""

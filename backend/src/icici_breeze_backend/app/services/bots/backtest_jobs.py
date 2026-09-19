@@ -594,6 +594,9 @@ def start_signal_backtest(
         for text in notes:
             _log(text)
 
+        # Live readings are excluded on rollover days (`publisher._in_rollover_window`), so the
+        # replay must be too, or it scores days the live signal never speaks on.
+        rollover = bt.rollover_expiries(start, end, service.holidays())
         indices: dict[str, Any] = {}
         for label in bt.LABELS:
             if _cancel.is_set():
@@ -601,7 +604,26 @@ def start_signal_backtest(
                 _finish("stopped", message="Stopped at your request.", calls=calls)
                 return
             _log(f"Replaying {label.upper()}…")
-            indices[label] = {"summary": bt.replay(label, from_date=start, to_date=end)}
+            indices[label] = {
+                "summary": bt.replay(
+                    label, from_date=start, to_date=end,
+                    rollover_expiries=rollover if label == "nifty" else None,
+                )
+            }
+        # Every signal variant (#38), each under its own replay label.
+        from icici_breeze_backend.app.services.index_signal import variants as signal_variants
+
+        variant_runs: dict[str, Any] = {}
+        for variant in signal_variants.list_variants(fresh=True):
+            if _cancel.is_set():
+                _finish("stopped", message="Stopped at your request.", calls=calls)
+                return
+            _log(f"Replaying variant {variant.name}…")
+            variant_runs[variant.id] = {
+                "summary": bt.replay_variant(
+                    variant, from_date=start, to_date=end, rollover_expiries=rollover
+                )
+            }
         bt.save_last_run(
             {
                 "period": period,
@@ -611,6 +633,7 @@ def start_signal_backtest(
                 "calls": calls,
                 "notes": notes,
                 "indices": indices,
+                "variants": variant_runs,
             }
         )
         _finish("completed", message="Done.", calls=calls)

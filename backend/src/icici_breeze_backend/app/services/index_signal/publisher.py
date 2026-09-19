@@ -22,12 +22,13 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
 from icici_breeze_backend.app.services.index_signal import depth_feed, expansion, expansion_feed
-from icici_breeze_backend.app.services.index_signal import flow, shadow_log, weights
+from icici_breeze_backend.app.services.index_signal import flow, shadow_log, variants, weights
 from icici_breeze_backend.app.services.index_signal import settings as signal_settings
 from icici_breeze_backend.app.services.index_signal.engine import IndexSignalEngine
 from icici_breeze_backend.app.services.index_signal.settings import IndexSignalSettings
@@ -77,6 +78,14 @@ _challengers: dict[str, flow.FlowEngine] = {}
 # PUBLISHED_MECHANISM says so, published as the index's signal.
 _expansion: dict[str, expansion.ExpansionEngine] = {}
 _expansion_bars: dict[str, expansion_feed.BarAccumulator] = {}
+# Signal variants (#38): one engine per distinct parameter set, fed the same NIFTY bars. Variants
+# that differ only in direction share an engine, and one with the incumbent's windows shares the
+# incumbent's. Engines are created on the loop thread (seeding reads the cache), never on the
+# socket thread, which only feeds the ones that exist.
+_variant_engines: dict[expansion.ExpansionParams, expansion.ExpansionEngine] = {}
+# Today's live NIFTY bars, so a variant created mid-session is seeded with them too.
+_RECENT_BARS_MAX = 400
+_recent_bars: "deque[expansion.Bar]" = deque(maxlen=_RECENT_BARS_MAX)
 _weights_meta: dict[str, dict[str, Any]] = {}
 _applied_generation: int | None = None
 _applied_top_n: int | None = None
@@ -195,8 +204,45 @@ def _on_futures_quote(payload: Any, ts: float) -> None:
     eng = _expansion_engine("nifty")
     with _lock:
         bar = _expansion_bars["nifty"].ingest(ts, payload)
+        extra = [e for e in _variant_engines.values() if e is not eng] if bar is not None else []
+        if bar is not None:
+            _recent_bars.append(bar)
     if bar is not None:
         eng.on_bar(bar)
+        for other in extra:
+            other.on_bar(bar)
+
+
+def _variant_engine(params: expansion.ExpansionParams) -> expansion.ExpansionEngine | None:
+    """The engine a variant reads, or None if `sync_variant_engines` has not built it yet."""
+    incumbent = _expansion_engine("nifty")
+    if params == incumbent.params:
+        return incumbent
+    with _lock:
+        return _variant_engines.get(params)
+
+
+def sync_variant_engines(*, cache_path: str | None = None) -> int:
+    """Build an engine for every variant that lacks one, and drop engines no variant uses.
+
+    Runs on the loop thread. A new engine is warmed from the backtest cache and then from the
+    bars seen live today, so a variant created mid-session is ready as soon as the incumbent
+    would be, not an hour later. Returns how many engines were built."""
+    incumbent = _expansion_engine("nifty")
+    wanted = {v.params() for v in variants.list_variants()} - {incumbent.params}
+    with _lock:
+        for params in [p for p in _variant_engines if p not in wanted]:
+            del _variant_engines[params]
+        missing = [p for p in wanted if p not in _variant_engines]
+    for params in missing:
+        eng = expansion.ExpansionEngine("nifty", params)
+        _seed_engine(eng, cache_path=cache_path)
+        with _lock:
+            _variant_engines.setdefault(params, eng)
+            recent = list(_recent_bars)
+        # Bars that completed while it was seeding; duplicates are ignored by the engine.
+        eng.seed(recent)
+    return len(missing)
 
 
 def _attach_listeners() -> None:
@@ -370,6 +416,45 @@ def publish_once(
             except Exception:  # noqa: BLE001
                 _logger.debug("index signal: expansion log failed for %s", label, exc_info=True)
         out[label] = payload
+    try:
+        _publish_variants(
+            ts, session_open=session_open, excluded=excluded, valid_for=valid_for, interval=interval
+        )
+    except Exception:  # noqa: BLE001 -- a variant must never cost the published signal anything
+        _logger.debug("index signal: variant publication failed", exc_info=True)
+    return out
+
+
+def variant_signal_key(variant_id: str) -> str:
+    return index_signal_key(f"variant:{variant_id}")
+
+
+def _publish_variants(
+    ts: float, *, session_open: bool, excluded: bool, valid_for: float, interval: float
+) -> dict[str, dict[str, Any]]:
+    """Publish and shadow-log every signal variant (#38). Bots read these, via `reader`."""
+    out: dict[str, dict[str, Any]] = {}
+    spot = _index_spot("nifty", ts)
+    for v in variants.list_variants():
+        eng = _variant_engine(v.params())
+        if eng is None:
+            snap: dict[str, Any] = {"label": "nifty", "state": "unavailable", "reason": "warming_up",
+                                    "signal": None}
+        else:
+            # The rollover exclusion is about OI moving mechanically; a variant that reads no OI
+            # has nothing it would protect.
+            snap = eng.snapshot(ts, session_open=session_open, excluded=excluded and v.requires_oi)
+        payload = variants.apply_direction(snap, v)
+        payload["published_at"] = ts
+        payload["valid_until"] = ts + valid_for
+        payload["publish_interval_seconds"] = interval
+        _write_payload(f"variant:{v.id}", payload, valid_for)
+        if not v.incumbent:  # the incumbent's readings are already logged as the mechanism's
+            try:
+                shadow_log.record(v.log_label, payload, spot=spot, now=ts)
+            except Exception:  # noqa: BLE001
+                _logger.debug("index signal: variant log failed for %s", v.id, exc_info=True)
+        out[v.id] = payload
     return out
 
 
@@ -472,6 +557,10 @@ def _loop_tick(interval: float) -> None:
         _maybe_sync_depth_feed(changed, now_m)
     except Exception:  # noqa: BLE001 -- a subscription problem must not stop publication
         _logger.warning("index signal: basket/subscription upkeep failed", exc_info=True)
+    try:
+        sync_variant_engines()
+    except Exception:  # noqa: BLE001 -- variants are shadow evidence; never block publication
+        _logger.warning("index signal: variant engine upkeep failed", exc_info=True)
     publish_once(interval=interval)
 
 
@@ -485,6 +574,21 @@ def seed_expansion_from_cache(
     ICICI calls: it reads only what backtests have already fetched, so on an instance that has
     never run one it seeds nothing and the chip warms up live as before. Best-effort by design.
     """
+    n = _seed_engine(
+        _expansion_engine("nifty"), now=now, cache_path=cache_path, lookback_days=lookback_days
+    )
+    if n:
+        _logger.info("index signal: seeded NIFTY expansion with %d cached bar(s)", n)
+    return n
+
+
+def _seed_engine(
+    eng: expansion.ExpansionEngine,
+    *,
+    now: float | None = None,
+    cache_path: str | None = None,
+    lookback_days: int = 10,
+) -> int:
     import datetime as _dt
 
     from icici_breeze_backend.app.core.timezone import IST
@@ -507,13 +611,12 @@ def seed_expansion_from_cache(
     except Exception:  # noqa: BLE001
         _logger.debug("index signal: no cache to seed expansion from", exc_info=True)
         return 0
-    eng = _expansion_engine("nifty")
     p = eng.params
     session = [
         c for c in candles
         if SESSION_START <= c.ts.time() <= SESSION_END and c.ts.replace(tzinfo=IST).timestamp() < ts_now
     ]
-    tail = session[-(p.baseline_bars + p.window_minutes + 1):]
+    tail = session[-(p.baseline_bars + p.span_minutes + 1):]
     eng.seed(
         [
             expansion.Bar(
@@ -522,8 +625,6 @@ def seed_expansion_from_cache(
             for c in tail
         ]
     )
-    if tail:
-        _logger.info("index signal: seeded NIFTY expansion with %d cached bar(s)", len(tail))
     return len(tail)
 
 
@@ -566,6 +667,8 @@ def reset_state_for_tests() -> None:
         _challengers.clear()
         _expansion.clear()
         _expansion_bars.clear()
+        _variant_engines.clear()
+        _recent_bars.clear()
         _weights_meta.clear()
         _applied_generation = None
         _applied_top_n = None

@@ -72,7 +72,7 @@ def stubbed(monkeypatch, tmp_path):
 
 
 def test_a_pass_opens_a_session_run_and_heartbeats_it(db_path, stubbed):
-    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
     assert decision.action == "enter"  # gates clear; the bot layer would take it from here
 
     runs = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)
@@ -86,7 +86,7 @@ def test_a_pass_opens_a_session_run_and_heartbeats_it(db_path, stubbed):
 
 
 def test_repeated_passes_reuse_one_session_run(db_path, stubbed):
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     for _ in range(5):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
@@ -106,7 +106,7 @@ def test_no_signal_is_a_recorded_verdict_not_a_silent_return(db_path, stubbed, m
             side=None, reason="volume 0.9x the 20-bar mean", values={"volume_x": 0.9}
         ),
     )
-    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
 
     assert decision.action == "idle"
     assert decision.reason_code == ReasonCode.SIGNAL_NO_TRADE
@@ -144,6 +144,7 @@ def _fast_config():
     from icici_breeze_backend.app.domain.bots import MomentumSignalConfig
 
     return MomentumLongScalperConfig(
+        entry_signal="momentum",
         signal=MomentumSignalConfig(ema_period=3, volume_ma_period=3, volume_multiplier=1.5)
     )
 
@@ -221,7 +222,7 @@ def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
                     "ticks_seen": 18691, "counter_resets": 3, "stale_ticks": 12},
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
 
     feed = (repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail or {})["feed"]
     assert feed["counter_resets"] == 3
@@ -230,7 +231,7 @@ def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
 
 def test_step_3_places_nothing_and_opens_no_cycles(db_path, stubbed):
     """The whole point of this step: observable, and inert."""
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     for _ in range(3):
         assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg).action == "enter"
     assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []
@@ -240,7 +241,7 @@ def test_step_3_places_nothing_and_opens_no_cycles(db_path, stubbed):
 def test_a_session_run_is_written_even_on_a_quiet_day(db_path, stubbed, monkeypatch):
     """An unexplained no-trade day is exactly what the run log exists to prevent."""
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 12, 0))
-    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
     assert d.reason_code == ReasonCode.OUTSIDE_SESSION_WINDOW
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
 
@@ -251,7 +252,7 @@ def test_an_open_cycle_is_seen_as_a_held_position(db_path, stubbed):
         USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
         structure="long_ce", legs=[], lots=1, entry_value=1000.0,
     )
-    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
     assert d.action == "idle" and d.reason_code == "holding"
 
 
@@ -580,7 +581,7 @@ def test_the_running_row_carries_the_current_verdict(db_path, stubbed, monkeypat
             warm=False, stale=False, stale_seconds=1.0, detail=_feed_detail()
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
 
     run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
     assert run.status == "running"
@@ -600,7 +601,7 @@ def test_the_detail_distinguishes_a_live_feed_from_an_unsubscribed_one(db_path, 
                                 contract="24-Sep-2026"),
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
     feed = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["feed"]
     assert feed["subscribed"] is True and feed["ticks_seen"] == 812
     assert feed["candles"] == 6 and feed["candles_required"] == 20
@@ -618,7 +619,7 @@ def test_an_unchanged_verdict_is_republished_on_a_cadence_not_every_pass(db_path
     clock = [1000.0]
     monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
 
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     for _ in range(5):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(writes) == 1
@@ -632,7 +633,7 @@ def test_a_changed_verdict_publishes_immediately(db_path, stubbed, monkeypatch):
     """A transition is the interesting moment; it must not wait out the cadence."""
     clock = [1000.0]
     monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].reason_code == "gates_clear"
 
@@ -650,7 +651,7 @@ def test_publishing_never_overwrites_a_finished_session(db_path, stubbed):
         reason_text="The day's last trading window has closed.",
     )
     runtime.reset_state_for_tests()
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
 
     run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
     assert run.status == "completed" and run.reason_code == "session_complete"
@@ -662,7 +663,7 @@ def test_an_audit_write_failure_does_not_stop_the_bot(db_path, stubbed, monkeypa
         repo, "update_run_reason",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")),
     )
-    assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
 
 
 def _fly_at_noon(monkeypatch):

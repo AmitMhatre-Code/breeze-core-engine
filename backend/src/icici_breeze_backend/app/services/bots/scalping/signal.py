@@ -138,3 +138,55 @@ def signal_run_unbroken(
         if verdict.side is None and verdict.reason in _DECISIVE_OFF:
             return False
     return True
+
+
+# --------------------------------------------------------------------------------------
+# Signal variants (#38): the entry read from a published variant instead of the candles
+# --------------------------------------------------------------------------------------
+
+
+def evaluate_variant(payload: dict[str, Any], variant_id: str) -> SignalResult:
+    """A signal variant's published reading as an entry verdict.
+
+    The payload's state is already the *traded* side -- a fade variant has swapped it -- so
+    this only translates. `values["candle_start"]` carries when the call began, which is the
+    same field the momentum signal uses for its signal run: that is what lets the fresh-signal
+    rule and the day totals treat "one trade per call" and "one trade per run" identically.
+    Anything that is not a call is no trade, and `unavailable` says why rather than reading as
+    a quiet market (#30).
+    """
+    state = str(payload.get("state") or "unavailable")
+    values: dict[str, Any] = {
+        "source": "variant",
+        "variant_id": variant_id,
+        "variant_name": payload.get("variant_name"),
+        "direction": payload.get("direction"),
+        "state": state,
+        "source_state": payload.get("source_state"),
+        "strength": payload.get("signal"),
+        "components": payload.get("components") or {},
+        "hold_minutes": payload.get("hold_minutes"),
+        "held_until": payload.get("held_until"),
+    }
+    started = payload.get("call_started_at")
+    if state in SIDE_TO_RIGHT and started is not None:
+        values["candle_start"] = int(float(started))
+        return SignalResult(state, "variant_call", values)  # type: ignore[arg-type]
+    if state == "unavailable":
+        return SignalResult(None, f"signal_unavailable:{payload.get('reason') or 'unknown'}", values)
+    return SignalResult(None, "no_call", values)
+
+
+def variant_call_unbroken(
+    payload: dict[str, Any], *, entry_candle_start: int, side: str
+) -> bool:
+    """True while the call that opened the last trade is still the live call.
+
+    A variant's call is one run by construction: it starts when it fires and ends when it
+    lapses or turns, and a re-fire while it is held extends it rather than starting another
+    (`expansion.ExpansionEngine`). So the check is only whether the live call is that one.
+    """
+    started = payload.get("call_started_at")
+    if str(payload.get("state") or "") != side or started is None:
+        return False
+    return int(float(started)) == int(entry_candle_start)

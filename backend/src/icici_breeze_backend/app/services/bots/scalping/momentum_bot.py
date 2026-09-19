@@ -22,6 +22,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import parse_strike
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.domain.bots import (
+    MOMENTUM_ENTRY_SIGNAL,
     MomentumLongScalperConfig,
     ReasonCode,
 )
@@ -292,6 +293,41 @@ def risk_per_stop(plan: EntryPlan, stop_loss_pts: float) -> float:
     return round(float(stop_loss_pts) * plan.quantity, 2)
 
 
+def uses_variant(config: MomentumLongScalperConfig) -> bool:
+    """True when the bot trades a signal variant (#38) rather than its own momentum signal."""
+    return str(getattr(config, "entry_signal", MOMENTUM_ENTRY_SIGNAL)) != MOMENTUM_ENTRY_SIGNAL
+
+
+def current_signal(
+    config: MomentumLongScalperConfig, candles: list, session_vwap: Optional[float]
+) -> Any:
+    """The entry verdict from whichever signal the bot is set to. The one place that choice is
+    made, so the run row, the executor and the live path can never read different signals."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import (
+        evaluate_momentum,
+        evaluate_variant,
+    )
+
+    if not uses_variant(config):
+        return evaluate_momentum(candles, session_vwap, config.signal)
+    from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
+
+    return evaluate_variant(get_variant_signal(config.entry_signal), config.entry_signal)
+
+
+def hold_seconds_for(signal: Any) -> Optional[float]:
+    """The variant's hold, stamped on the cycle at entry -- so a later change to the bot's
+    signal, or the variant's deletion, never changes how an open trade exits."""
+    values = getattr(signal, "values", None) or {}
+    if values.get("source") != "variant":
+        return None
+    try:
+        minutes = float(values.get("hold_minutes"))
+    except (TypeError, ValueError):
+        return None
+    return minutes * 60.0 if minutes > 0 else None
+
+
 def cycle_detail(
     plan: EntryPlan, fill: SimulatedFill, state: ladder_mod.LadderState, charges: ChargesModel
 ) -> dict[str, Any]:
@@ -340,8 +376,19 @@ def manage_position(
         return state, False, None, quote
 
     state, moved = ladder_mod.advance(state, quote.bid, config.exits)
-    verdict = ladder_mod.exit_decision(state, quote.bid, time.time(), config.exits)
+    verdict = ladder_mod.exit_decision(
+        state, quote.bid, time.time(), config.exits,
+        hold_seconds=_stored_hold_seconds(cycle),
+    )
     return state, moved, verdict, quote
+
+
+def _stored_hold_seconds(cycle: Any) -> Optional[float]:
+    raw = (cycle.detail or {}).get("hold_seconds")
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def close_paper_cycle(
@@ -431,7 +478,6 @@ def execute(
     that call this directly can let it evaluate its own.
     """
     from icici_breeze_backend.app.repositories import bots as repo
-    from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
 
     if context is not None and context.state is not None and context.stop_moved:
         # Persist before acting on anything else: a crash between the ratchet and the exit
@@ -454,7 +500,7 @@ def execute(
 
     if live_path:
         _execute_live(proc, user_id, bot_type, config, run_id, decision, context, charges,
-                      candles, session_vwap)
+                      candles, session_vwap, signal=signal)
         return
 
     if decision.action == "exit" and context is not None:
@@ -463,7 +509,7 @@ def execute(
 
     if decision.action == "enter":
         if signal is None:
-            signal = evaluate_momentum(candles, session_vwap, config.signal)
+            signal = current_signal(config, candles, session_vwap)
         if not signal.fired:
             # Reached only when this evaluated its own signal: when the driver supplies one,
             # `decide` has already turned a no-fire into an `idle` verdict.
@@ -540,7 +586,11 @@ def _open(
         lots=plan.lots,
         entry_value=round(fill.value, 2),
         paper=True,
-        detail={**cycle_detail(plan, fill, state, charges), "signal": signal.values},
+        detail={
+            **cycle_detail(plan, fill, state, charges),
+            "signal": signal.values,
+            "hold_seconds": hold_seconds_for(signal),
+        },
     )
     _logger.info(
         "momentum bot: opened cycle %s -- %s %d %s x%d lots @ %.2f (stop %.2f)",
@@ -573,10 +623,10 @@ def _execute_live(
     charges: ChargesModel,
     candles: list,
     session_vwap: Optional[float],
+    signal: Any = None,
 ) -> None:
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.bots.scalping import guards
-    from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_momentum
 
     if context is not None and context.state is not None and context.stop_moved:
         _persist_ladder(context.cycle, context.state)
@@ -594,7 +644,8 @@ def _execute_live(
         _logger.warning("momentum bot: an unreconciled order is outstanding; not entering")
         return
 
-    signal = evaluate_momentum(candles, session_vwap, config.signal)
+    if signal is None:
+        signal = current_signal(config, candles, session_vwap)
     if not signal.fired:
         return
     plan, problem = plan_entry(proc, user_id, config, signal.right or "call")
@@ -610,6 +661,7 @@ def _execute_live(
         structure=f"long_{'ce' if plan.right == 'call' else 'pe'}",
         legs=[plan.as_leg()], lots=plan.lots, entry_value=None, paper=False,
         detail={"pending": True, "signal": signal.values,
+                "hold_seconds": hold_seconds_for(signal),
                 "intended_price": plan.quote.ask, "order_ids": []},
     )
 
@@ -665,6 +717,7 @@ def _execute_live(
             "charges": charges.breakdown(fill_price, filled_qty, is_buy=True),
         },
         "signal": signal.values,
+        "hold_seconds": hold_seconds_for(signal),
         # The leg is rewritten to what actually filled, so the exit sells the real size
         # rather than the size that was requested.
         "filled_quantity": filled_qty,

@@ -35,7 +35,13 @@ OPTION_EXCHANGE: dict[str, str] = {"NIFTY": "NFO", "BSESEN": "BFO"}
 # The cash index each option settles against, as (exchange_code, stock_code) for ICICI's
 # historical API. The bots read spot off the index, not the futures: a monthly future carries
 # a basis of a strike or two, so an ATM chosen off it is the wrong contract.
-SPOT_SOURCE: dict[str, tuple[str, str]] = {"NIFTY": ("NSE", "NIFTY"), "BSESEN": ("BSE", "BSESEN")}
+# INDVIX is not an index anything trades against, but its 1-minute bars are fetched and cached
+# the same way, for Bot 4's `vix_not_rising` entry filter (#38).
+SPOT_SOURCE: dict[str, tuple[str, str]] = {
+    "NIFTY": ("NSE", "NIFTY"),
+    "BSESEN": ("BSE", "BSESEN"),
+    "INDVIX": ("NSE", "INDVIX"),
+}
 
 WeekdayMap = Sequence[tuple[Optional[datetime.date], int]]
 

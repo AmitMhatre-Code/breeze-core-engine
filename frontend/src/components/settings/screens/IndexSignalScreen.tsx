@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
 import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
 import { cancelBacktestJob, fetchBacktestJobStatus, type BacktestPeriod } from "@/lib/bots-backtest";
@@ -26,6 +27,13 @@ import {
   MECHANISMS,
   mechanismLabel,
   refreshIndexSignalWeights,
+  createSignalVariant,
+  deleteSignalVariant,
+  describeVariant,
+  fetchSignalVariants,
+  SIGNAL_VARIANTS_QUERY_KEY,
+  type SignalVariantCreate,
+  type SignalVariantView,
   startExpansionBacktest,
   fetchExpansionLastBacktest,
   EXPANSION_BACKTEST_QUERY_KEY,
@@ -275,14 +283,15 @@ export function IndexSignalScreen() {
       <div className="space-y-4">
         <div className="rounded-[8px] border border-border-soft bg-panel2 px-3 py-2.5 text-xs leading-relaxed text-muted">
           <strong className="font-semibold text-foreground">Shadow mode.</strong>{" "}
-          The signal is shown in the navbar
-          and logged alongside what the index did next, but no bot acts on it yet. Review the shadow evidence at the
-          bottom of this page before letting bots trade on it. Changes here reach the running app within one P&amp;L
-          recompute cycle — no restart needed.
+          The signal is shown in the navbar and logged alongside what the index did next. A bot acts on it only
+          through a signal variant chosen in that bot&rsquo;s settings — run it in Simulation until the variant&rsquo;s
+          evidence below says it has an edge. Changes here reach the running app within one P&amp;L recompute cycle —
+          no restart needed.
         </div>
         <PreferencesSection />
         <WeightsSection />
         <ShadowEvidenceSection />
+        <SignalVariantsSection />
       </div>
     </div>
   );
@@ -1111,7 +1120,8 @@ function ExpansionBacktestDialog({ onClose }: { onClose: () => void }) {
         Backtest volume expansion
       </h2>
       <p className="mt-1 text-xs leading-relaxed text-muted">
-        Fetches NIFTY and SENSEX history from ICICI, replays it and scores it with the same test as live.
+        Fetches NIFTY and SENSEX history from ICICI, replays it — and every signal variant — and scores each with the
+        same test as live.
       </p>
 
       {!ours ? (
@@ -1174,6 +1184,376 @@ function ExpansionBacktestDialog({ onClose }: { onClose: () => void }) {
           </div>
         </>
       )}
+    </Modal>
+  );
+}
+
+const BOT_SHORT_NAME: Record<string, string> = {
+  momentum_long_scalper: "Bot 3",
+  iron_fly_scalper: "Bot 4",
+};
+
+/** Settings → Index Signal → Signal variants (#38): pre-registered readings of the expansion
+ * mechanism, each with its own evidence. Bots pick one by id; a variant is never edited in place,
+ * because its evidence belongs to the exact windows that produced it. */
+function SignalVariantsSection() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: SIGNAL_VARIANTS_QUERY_KEY, queryFn: fetchSignalVariants });
+  const backtest = useQuery({ queryKey: EXPANSION_BACKTEST_QUERY_KEY, queryFn: fetchExpansionLastBacktest });
+  const [selected, setSelected] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [backtesting, setBacktesting] = useState(false);
+  const [days, setDays] = useState(5);
+  const remove = useMutation({
+    mutationFn: deleteSignalVariant,
+    onSuccess: () => {
+      setSelected(null);
+      void qc.invalidateQueries({ queryKey: SIGNAL_VARIANTS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: EXPANSION_BACKTEST_QUERY_KEY });
+    },
+  });
+
+  const list = q.data?.variants ?? [];
+  const current = list.find((v) => v.id === selected) ?? list[0];
+  const run = backtest.data?.run ?? null;
+  const replay = current && run?.variants?.[current.id];
+
+  return (
+    <section className="app-card space-y-4 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-3xl">
+          <h3 className="text-heading font-bold text-foreground">Signal variants</h3>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            NIFTY volume expansion read with fixed windows: the price/volume move, the open-interest window that
+            confirms it, how long a call stands, and whether a bot follows it or trades against it (fade). Each runs
+            live in shadow and is judged by the same test as the mechanisms above; a bot set to one holds its trade
+            for that variant&rsquo;s window. To change a window, add a new variant — evidence belongs to the exact
+            definition that produced it.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setBacktesting(true)}
+            className="app-btn-outline inline-flex items-center gap-1.5 rounded-[9px] px-3 py-1.5 text-xs"
+          >
+            <ClockIcon />
+            Backtest
+          </button>
+          <button type="button" onClick={() => setCreating(true)} className="app-btn-primary px-3 py-1.5 text-xs">
+            New variant
+          </button>
+        </div>
+      </div>
+
+      {q.error ? (
+        <p className="text-xs text-down">{q.error instanceof Error ? q.error.message : "Could not load the variants"}</p>
+      ) : null}
+
+      <div className="overflow-x-auto rounded-[10px] border border-border">
+        <table className="min-w-full text-left text-table">
+          <thead>
+            <tr className="text-hint text-muted">
+              <th className="px-3 py-2 font-medium">Variant</th>
+              <th className="px-3 py-2 font-medium">Reads</th>
+              <th className="px-3 py-2 font-medium">Live evidence</th>
+              <th className="px-3 py-2 font-medium">Used by</th>
+              <th className="px-3 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((v) => {
+              const active = current?.id === v.id;
+              const headline = HEADLINE[v.readiness.status];
+              return (
+                <tr
+                  key={v.id}
+                  onClick={() => setSelected(v.id)}
+                  aria-selected={active}
+                  className={[
+                    "cursor-pointer border-t border-border-soft transition",
+                    active ? "bg-panel2" : "hover:bg-panel2/60",
+                  ].join(" ")}
+                >
+                  <td className="px-3 py-2">
+                    <span className="font-semibold text-foreground">{v.name}</span>
+                    {v.incumbent ? (
+                      <span className="ml-2 rounded-full border border-border px-1.5 py-px text-hint text-muted">
+                        In navbar
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted">{describeVariant(v)}</td>
+                  <td className="px-3 py-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-hint font-medium ${headline.tone}`}>
+                      {headline.text}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-muted">
+                    {v.used_by.length ? v.used_by.map((b) => BOT_SHORT_NAME[b] ?? b).join(", ") : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {v.builtin ? null : (
+                      <button
+                        type="button"
+                        className="text-hint text-muted underline-offset-2 hover:text-down hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={remove.isPending || v.used_by.length > 0}
+                        title={v.used_by.length ? "A bot is set to this variant" : "Delete this variant and its evidence"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Delete “${v.name}” and all of its evidence?`)) remove.mutate(v.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {remove.error ? (
+        <p className="text-xs text-down">
+          {remove.error instanceof Error ? remove.error.message : "Could not delete the variant"}
+        </p>
+      ) : null}
+
+      {current ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted">
+              <strong className="font-semibold text-foreground">{current.name}</strong> · {describeVariant(current)}
+              {current.requires_oi ? null : " — price and volume only, so it cannot tell a breakout from a blow-off"}
+            </p>
+            <div className="flex items-center gap-3">
+              <PillGroup label="Period" options={DAY_OPTIONS} value={days} onChange={setDays} format={(d) => `${d}d`} />
+              <SignalCsvDownloads label={current.log_label} days={days} span={`the last ${days}d`} />
+            </div>
+          </div>
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div className="min-w-0 space-y-3">
+              <ReadinessCard name={`${current.name} · live`} readiness={current.readiness} />
+              <FlipList label={current.log_label} name={current.name} days={days} />
+            </div>
+            <div className="min-w-0 space-y-3">
+              {replay && run ? (
+                replay.summary.verdict === "no_data" ? (
+                  <p className="rounded-[8px] border border-amber-accent/40 px-3 py-2 text-xs text-amber-accent">
+                    {replay.summary.message}
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-muted">
+                        <strong className="font-semibold text-foreground">Last backtest</strong> ·{" "}
+                        {run.from === run.to ? formatDay(run.from) : `${formatDay(run.from)} → ${formatDay(run.to)}`} ·{" "}
+                        {replay.summary.days} sessions · {replay.summary.directional_pct}% directional
+                      </p>
+                      <SignalCsvDownloads label={current.backtest_label} days={run.flip_days} span="the backtest" />
+                    </div>
+                    <ReadinessCard name={`${current.name} · backtest`} readiness={replay.readiness} />
+                    <FlipList label={current.backtest_label} name={`${current.name} (backtest)`} days={run.flip_days} />
+                  </>
+                )
+              ) : (
+                <p className="rounded-[8px] border border-border-soft bg-panel2 px-3 py-2 text-xs text-muted">
+                  No backtest of this variant yet. Backtest replays every variant over past ICICI history.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {creating && q.data ? (
+        <NewVariantDialog
+          bounds={q.data.bounds}
+          onClose={() => setCreating(false)}
+          onCreated={(v) => {
+            setSelected(v.id);
+            setCreating(false);
+          }}
+        />
+      ) : null}
+      {backtesting ? <ExpansionBacktestDialog onClose={() => setBacktesting(false)} /> : null}
+    </section>
+  );
+}
+
+function NewVariantDialog({
+  bounds,
+  onClose,
+  onCreated,
+}: {
+  bounds: { window_minutes: [number, number]; oi_window_minutes: [number, number]; hold_minutes: [number, number]; name_max: number };
+  onClose: () => void;
+  onCreated: (v: SignalVariantView) => void;
+}) {
+  const qc = useQueryClient();
+  const nameRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState("");
+  const [windowMin, setWindowMin] = useState("15");
+  const [useOi, setUseOi] = useState(true);
+  const [oiMin, setOiMin] = useState("15");
+  const [holdMin, setHoldMin] = useState("15");
+  const [direction, setDirection] = useState<"follow" | "fade">("fade");
+  const create = useMutation({
+    mutationFn: (body: SignalVariantCreate) => createSignalVariant(body),
+    onSuccess: (v) => {
+      void qc.invalidateQueries({ queryKey: SIGNAL_VARIANTS_QUERY_KEY });
+      onCreated(v);
+    },
+  });
+  const inRange = (raw: string, [lo, hi]: [number, number]) => {
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= lo && n <= hi;
+  };
+  const valid =
+    name.trim().length > 0 &&
+    name.trim().length <= bounds.name_max &&
+    inRange(windowMin, bounds.window_minutes) &&
+    inRange(holdMin, bounds.hold_minutes) &&
+    (!useOi || inRange(oiMin, bounds.oi_window_minutes));
+  const field =
+    "h-10 w-24 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 font-mono text-sm tabular-nums text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel";
+  const labelCls = "mb-1.5 block text-micro font-semibold uppercase tracking-[.06em] text-faint";
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      pending={create.isPending}
+      titleId="new-variant-title"
+      initialFocusRef={nameRef}
+      panelClassName="w-full max-w-md rounded-xl border border-border bg-panel p-5 shadow-pop"
+    >
+      <h2 id="new-variant-title" className="app-text-heading">
+        New signal variant
+      </h2>
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        NIFTY volume expansion with its own windows. It starts with no evidence and builds its own from now on (or
+        from a backtest).
+      </p>
+      <form
+        className="mt-4 space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid) return;
+          create.mutate({
+            name: name.trim(),
+            window_minutes: Number(windowMin),
+            oi_window_minutes: useOi ? Number(oiMin) : null,
+            hold_minutes: Number(holdMin),
+            direction,
+          });
+        }}
+      >
+        <div>
+          <label htmlFor="variant-name" className={labelCls}>
+            Name
+          </label>
+          <input
+            id="variant-name"
+            ref={nameRef}
+            maxLength={bounds.name_max}
+            className={`${field} w-full font-sans`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. 10m fade"
+          />
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <div>
+            <label htmlFor="variant-window" className={labelCls}>
+              Price/volume window
+            </label>
+            <input
+              id="variant-window"
+              type="number"
+              min={bounds.window_minutes[0]}
+              max={bounds.window_minutes[1]}
+              className={field}
+              value={windowMin}
+              onChange={(e) => setWindowMin(e.target.value)}
+            />{" "}
+            <span className="text-xs text-muted">min</span>
+          </div>
+          <div>
+            <label htmlFor="variant-hold" className={labelCls}>
+              Call stands for
+            </label>
+            <input
+              id="variant-hold"
+              type="number"
+              min={bounds.hold_minutes[0]}
+              max={bounds.hold_minutes[1]}
+              className={field}
+              value={holdMin}
+              onChange={(e) => setHoldMin(e.target.value)}
+            />{" "}
+            <span className="text-xs text-muted">min</span>
+          </div>
+        </div>
+        <div>
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <Checkbox checked={useOi} onChange={setUseOi} />
+            Confirm with open interest
+          </label>
+          {useOi ? (
+            <div className="mt-2">
+              <label htmlFor="variant-oi" className={labelCls}>
+                Open-interest window
+              </label>
+              <input
+                id="variant-oi"
+                type="number"
+                min={bounds.oi_window_minutes[0]}
+                max={bounds.oi_window_minutes[1]}
+                className={field}
+                value={oiMin}
+                onChange={(e) => setOiMin(e.target.value)}
+              />{" "}
+              <span className="text-xs text-muted">min · at least {bounds.oi_window_minutes[0]}</span>
+            </div>
+          ) : (
+            <p className="mt-1 text-hint text-muted">Price and volume only: it cannot tell a breakout from a blow-off.</p>
+          )}
+        </div>
+        <fieldset>
+          <legend className={labelCls}>Direction</legend>
+          <div className="flex gap-2">
+            {(["follow", "fade"] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                aria-pressed={direction === d}
+                onClick={() => setDirection(d)}
+                className={[
+                  "rounded-full border px-3 py-1 text-xs font-medium transition",
+                  direction === d ? "border-accent text-accent" : "border-border text-muted hover:text-foreground",
+                ].join(" ")}
+              >
+                {d === "follow" ? "Follow the call" : "Fade the call"}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        {create.error ? (
+          <p className="text-xs text-down">
+            {create.error instanceof Error ? create.error.message : "Could not create the variant"}
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="app-btn-secondary" onClick={onClose} disabled={create.isPending}>
+            Cancel
+          </button>
+          <button type="submit" className="app-btn-primary" disabled={!valid || create.isPending}>
+            <AsyncLabelSpan busy={create.isPending} idleLabel="Create variant" busyLabel="Creating…" />
+          </button>
+        </div>
+      </form>
     </Modal>
   );
 }

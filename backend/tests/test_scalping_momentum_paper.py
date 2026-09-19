@@ -137,7 +137,7 @@ def test_atm_ties_go_to_the_lower_strike():
 def test_sizing_uses_the_ask_and_floors_to_whole_lots(env, monkeypatch):
     _, proc = env
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
-    cfg = MomentumLongScalperConfig(premium_outlay_inr=20_000.0)
+    cfg = MomentumLongScalperConfig(entry_signal="momentum", premium_outlay_inr=20_000.0)
     plan, problem = momentum_bot.plan_entry(proc, USER, cfg, "call")
     assert problem is None
     # 101 x 75 = 7,575 per lot -> 2 lots fit in 20,000, not 2.6
@@ -147,7 +147,7 @@ def test_sizing_uses_the_ask_and_floors_to_whole_lots(env, monkeypatch):
 def test_an_outlay_below_one_lot_is_a_logged_skip_not_a_crash(env, monkeypatch):
     _, proc = env
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
-    cfg = MomentumLongScalperConfig(premium_outlay_inr=5_000.0)
+    cfg = MomentumLongScalperConfig(entry_signal="momentum", premium_outlay_inr=5_000.0)
     plan, problem = momentum_bot.plan_entry(proc, USER, cfg, "call")
     assert plan is None and problem[0] == ReasonCode.OUTLAY_BELOW_ONE_LOT
 
@@ -155,7 +155,7 @@ def test_an_outlay_below_one_lot_is_a_logged_skip_not_a_crash(env, monkeypatch):
 def test_a_one_sided_quote_blocks_entry(env, monkeypatch):
     _, proc = env
     _set_quotes(monkeypatch, bid=0.0, ask=101.0)
-    plan, problem = momentum_bot.plan_entry(proc, USER, MomentumLongScalperConfig(), "call")
+    plan, problem = momentum_bot.plan_entry(proc, USER, MomentumLongScalperConfig(entry_signal="momentum"), "call")
     assert plan is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
 
 
@@ -165,7 +165,7 @@ def test_a_one_sided_quote_blocks_entry(env, monkeypatch):
 def test_a_signal_opens_a_paper_cycle_with_a_ladder(env, monkeypatch):
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
 
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
 
@@ -184,7 +184,7 @@ def test_no_second_position_is_opened_while_one_is_held(env, monkeypatch):
     """Exactly one position at a time is what makes the outlay a real ceiling."""
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     for _ in range(3):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
@@ -193,7 +193,7 @@ def test_no_second_position_is_opened_while_one_is_held(env, monkeypatch):
 def test_a_full_paper_round_trip_is_recorded_net_of_friction(env, monkeypatch):
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)  # opens at 101.5, stop 95.5
 
     # Rally past level 2, then collapse through the trailed stop.
@@ -215,7 +215,7 @@ def test_a_ratcheted_stop_is_persisted_so_a_restart_resumes_it(env, monkeypatch)
     """The reason ladder state is written at all -- portal upgrades recreate the container."""
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert repo.open_cycles(USER, BOT_MOMENTUM_LONG_SCALPER)[0].detail["ladder"][
         "stop_price"
@@ -235,7 +235,7 @@ def test_a_ratcheted_stop_is_persisted_so_a_restart_resumes_it(env, monkeypatch)
 def test_the_hard_square_off_closes_an_open_paper_position(env, monkeypatch):
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig()
+    cfg = MomentumLongScalperConfig(entry_signal="momentum")
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
 
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 15, 20))
@@ -277,7 +277,7 @@ def test_an_open_live_position_is_never_closed_at_a_simulated_price(env, monkeyp
     )
 
     # The bot is set to paper and switched off -- the exact state that used to strand it.
-    cfg = MomentumLongScalperConfig(mode="paper")
+    cfg = MomentumLongScalperConfig(entry_signal="momentum", mode="paper")
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 15, 20))
     runtime.tick_bot(
         USER, BOT_MOMENTUM_LONG_SCALPER, cfg, entries_suspended=True
@@ -290,7 +290,7 @@ def test_a_suspended_bot_opens_nothing_once_it_is_flat(env, monkeypatch):
     """The other half of exit-only: entries are refused the instant the user switches off."""
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, _bullish_candles())
-    cfg = MomentumLongScalperConfig(mode="paper")
+    cfg = MomentumLongScalperConfig(entry_signal="momentum", mode="paper")
     decision = runtime.tick_bot(
         USER, BOT_MOMENTUM_LONG_SCALPER, cfg, entries_suspended=True
     )
@@ -303,5 +303,5 @@ def test_no_signal_means_no_cycle_and_no_noise(env, monkeypatch):
     flat = [Candle(i * 60, 100.0, 100.0, 100.0, 100.0, 1000, None, 5) for i in range(25)]
     _set_quotes(monkeypatch, bid=100.0, ask=101.0)
     _feed(monkeypatch, flat)
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
     assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []

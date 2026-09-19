@@ -203,6 +203,7 @@ const EXIT_LABELS: Record<string, string> = {
   trailing_stop: "Trailing stop",
   stop_loss: "Stop-loss",
   time_invalidation: "Time stop",
+  signal_window_ended: "Signal window over",
   credit_decay_target: "Decay target",
   drift_stop: "Drift stop",
   terminated_for_day: "Daily loss cap",

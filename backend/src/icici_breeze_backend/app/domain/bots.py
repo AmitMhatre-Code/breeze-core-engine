@@ -96,6 +96,8 @@ class ReasonCode:
     # Bot 3 fired, but on the same signal run that opened its last trade. It re-enters only
     # after the signal has switched off and fired again (plan section 3.4).
     SIGNAL_NOT_FRESH = "signal_not_fresh"
+    # Bot 4's entry filter (#38): VIX rising, or an expansion call live.
+    ENTRY_FILTER_CLOSED = "entry_filter_closed"
     # The user set the bot Off (or back to Paper) while a real position was still open. The
     # loop keeps ticking it so the exit path runs -- section 5.5's "a gate that blocks
     # entering never blocks leaving", extended past the arming switch itself -- but nothing
@@ -111,6 +113,8 @@ class ReasonCode:
     TRAILING_STOP = "trailing_stop"
     STOP_LOSS = "stop_loss"
     TIME_INVALIDATION = "time_invalidation"
+    # Bot 3 on a signal variant: the variant's hold elapsed -- the horizon the call was about.
+    SIGNAL_WINDOW_ENDED = "signal_window_ended"
     DRIFT_STOP = "drift_stop"
     CREDIT_DECAY_TARGET = "credit_decay_target"
     SQUARE_OFF = "square_off"
@@ -606,6 +610,17 @@ class TrailingLadderConfig(BaseModel):
         return self
 
 
+# What a scalper's `entry_signal` may name: its own EMA/VWAP momentum signal, or a signal
+# variant's id (`index_signal.variants`, #38). Only the shape is checked here -- whether the
+# variant exists is checked where a config is saved, since this module does no I/O.
+MOMENTUM_ENTRY_SIGNAL = "momentum"
+SIGNAL_VARIANT_ID_PATTERN = r"[a-z]+-w\d+-(oi\d+|nooi)-h\d+-(follow|fade)"
+ENTRY_SIGNAL_PATTERN = rf"^({MOMENTUM_ENTRY_SIGNAL}|{SIGNAL_VARIANT_ID_PATTERN})$"
+# Mirrors `index_signal.variants.FADE_15_ID` / `INCUMBENT_ID`, which a test holds in step.
+EXPANSION_FADE_15_VARIANT = "nifty-w15-oi15-h15-fade"
+EXPANSION_FOLLOW_15_VARIANT = "nifty-w15-oi15-h15-follow"
+
+
 class MomentumLongScalperConfig(BaseModel):
     """Bot 3 -- buys one ATM option on a momentum signal and manages it with a ladder.
 
@@ -645,6 +660,16 @@ class MomentumLongScalperConfig(BaseModel):
     # 6-point stop), so the largest positions sit where gamma is highest. Every cycle records
     # `risk_per_stop_inr` so that swing is visible in the run log rather than implicit.
     premium_outlay_inr: float = Field(25000.0, gt=0)
+    # Which signal opens a trade: "momentum" (the EMA/VWAP/volume signal in `signal` below) or
+    # a signal variant's id, chosen on the Settings -> Index Signal screen (#38). On a variant,
+    # a trade is held for that variant's hold minutes in place of `exits`' time-invalidation,
+    # and it is one trade per call.
+    #
+    # Defaults to the 15-minute expansion FADE (2026-09-19): the 21-session backtest found
+    # NIFTY's expansion calls reliably wrong-way, and the user switched the scalper to fade
+    # them in paper mode to gather evidence on real option prices. The fade was measured at
+    # 3-6 index points, below a round trip -- paper results, not this default, decide it.
+    entry_signal: str = Field(EXPANSION_FADE_15_VARIANT, pattern=ENTRY_SIGNAL_PATTERN)
     signal: MomentumSignalConfig = Field(default_factory=MomentumSignalConfig)
     exits: TrailingLadderConfig = Field(default_factory=TrailingLadderConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
@@ -732,6 +757,31 @@ class IronFlyReentryConfig(BaseModel):
     max_range_pct: float = Field(0.15, gt=0, le=10)
 
 
+IronFlyEntryFilterKind = Literal["none", "vix_not_rising", "expansion_neutral"]
+
+
+class IronFlyEntryFilterConfig(BaseModel):
+    """An extra condition on opening a fly, on top of the re-entry gate (#38).
+
+    A fly earns its credit when the market moves less than implied volatility priced in, so
+    both filters try to skip the moments that premise is visibly failing:
+
+    * `vix_not_rising` -- India VIX has not risen more than `vix_max_rise_pct` over the last
+      `vix_lookback_minutes`. Rising implied volatility marks every short leg up at once.
+    * `expansion_neutral` -- the named signal variant has no live call. An expansion call is,
+      by construction, a move with volume behind it: the opposite of the quiet a fly wants.
+
+    Both fail closed: a VIX series or a variant that cannot be read holds the entry.
+    """
+
+    kind: IronFlyEntryFilterKind = "none"
+    vix_lookback_minutes: int = Field(15, ge=1, le=120)
+    vix_max_rise_pct: float = Field(2.0, ge=0, le=50)
+    variant: str = Field(
+        EXPANSION_FOLLOW_15_VARIANT, pattern=rf"^{SIGNAL_VARIANT_ID_PATTERN}$"
+    )
+
+
 class IronFlyScalperConfig(BaseModel):
     """Bot 4 -- ATM iron fly, booked on credit decay, re-entered behind a gate."""
 
@@ -758,6 +808,7 @@ class IronFlyScalperConfig(BaseModel):
     structure: IronFlyStructureConfig = Field(default_factory=IronFlyStructureConfig)
     exits: IronFlyExitConfig = Field(default_factory=IronFlyExitConfig)
     reentry: IronFlyReentryConfig = Field(default_factory=IronFlyReentryConfig)
+    entry_filter: IronFlyEntryFilterConfig = Field(default_factory=IronFlyEntryFilterConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
 
