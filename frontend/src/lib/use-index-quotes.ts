@@ -16,23 +16,19 @@ export type IndexQuote = {
 export type IndexSignalState = "bullish" | "bearish" | "neutral" | "unavailable";
 
 /** The slim per-index direction-signal view the backend adds to this poll
- * (`index_signal.reader.navbar_view`). `reason` is set whenever `state` is
- * "unavailable"; "disabled" means switched off in Settings → Index Signal. */
+ * (`index_signal.reader.navbar_view`): the 15-minute reading of the mechanism chosen on the
+ * Signals page. `reason` says why whenever `state` is "unavailable". */
 export type IndexSignalSummary = {
   state: IndexSignalState;
   reason: string | null;
   signal: number | null;
-  coverage: number | null;
-  /** Order-book imbalance carries enter/exit; volume expansion carries percentiles (#34). */
-  thresholds:
-    | { enter: number; exit: number }
-    | { price_percentile: number; volume_percentile: number }
-    | null;
-  /** Which mechanism produced this reading. Absent from payloads written before #34. */
-  mechanism?: "wobi" | "expansion" | null;
+  mechanism?: "expansion" | "momentum" | null;
+  duration_minutes?: number | null;
   computed_at: number | null;
-  weights_source: string | null;
-  weights_as_of: string | null;
+  thin_data?: boolean | null;
+  uses_oi?: boolean | null;
+  call_started_at?: number | null;
+  held_until?: number | null;
 };
 
 export type IndexQuotesResponse = {

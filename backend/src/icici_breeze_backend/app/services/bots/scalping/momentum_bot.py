@@ -22,7 +22,6 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import parse_strike
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.domain.bots import (
-    MOMENTUM_ENTRY_SIGNAL,
     MomentumLongScalperConfig,
     ReasonCode,
 )
@@ -89,8 +88,10 @@ def _f(raw: Any) -> Optional[float]:
     return value if value > 0 else None
 
 
-def option_expiries(proc: Any) -> list[str]:
-    """Every NIFTY option expiry the scrip master knows, as DD-MMM-YYYY.
+def option_expiries(
+    proc: Any, stock_code: str = INDEX_STOCK_CODE, exchange: str = INDEX_EXCHANGE
+) -> list[str]:
+    """Every option expiry the scrip master knows for an index (NIFTY by default), DD-MMM-YYYY.
 
     Shared with the futures feed, which has no scrip master of its own: local reference data
     holds only CE/PE rows, so `futures_feed.monthly_expiries` derives the futures calendar
@@ -101,14 +102,14 @@ def option_expiries(proc: Any) -> list[str]:
     )
 
     try:
-        universe = proc.fetch_stock_codes(INDEX_EXCHANGE) or []
+        universe = proc.fetch_stock_codes(exchange) or []
     except Exception:  # noqa: BLE001
-        _logger.warning("momentum bot: could not read the %s universe", INDEX_EXCHANGE, exc_info=True)
+        _logger.warning("momentum bot: could not read the %s universe", exchange, exc_info=True)
         return []
     out: list[str] = []
     seen: set[str] = set()
     for entry in universe:
-        if str(entry.get("stock_code") or "").strip().upper() != INDEX_STOCK_CODE:
+        if str(entry.get("stock_code") or "").strip().upper() != stock_code:
             continue
         for raw in entry.get("expiry_dates") or []:
             try:
@@ -293,39 +294,76 @@ def risk_per_stop(plan: EntryPlan, stop_loss_pts: float) -> float:
     return round(float(stop_loss_pts) * plan.quantity, 2)
 
 
-def uses_variant(config: MomentumLongScalperConfig) -> bool:
-    """True when the bot trades a signal variant (#38) rather than its own momentum signal."""
-    return str(getattr(config, "entry_signal", MOMENTUM_ENTRY_SIGNAL)) != MOMENTUM_ENTRY_SIGNAL
+def series_id(config: MomentumLongScalperConfig) -> str:
+    """The grid cell the bot trades, e.g. `nifty:expansion:15m`."""
+    return config.signal.series_id(config.index)
 
 
-def current_signal(
-    config: MomentumLongScalperConfig, candles: list, session_vwap: Optional[float]
-) -> Any:
-    """The entry verdict from whichever signal the bot is set to. The one place that choice is
-    made, so the run row, the executor and the live path can never read different signals."""
-    from icici_breeze_backend.app.services.bots.scalping.signal import (
-        evaluate_momentum,
-        evaluate_variant,
-    )
+def read_signal(config: MomentumLongScalperConfig) -> dict[str, Any]:
+    """The bot's series' published reading, already turned the bot's way (follow or fade)."""
+    from icici_breeze_backend.app.services.index_signal.reader import get_signal
 
-    if not uses_variant(config):
-        return evaluate_momentum(candles, session_vwap, config.signal)
-    from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
-
-    return evaluate_variant(get_variant_signal(config.entry_signal), config.entry_signal)
+    return get_signal(series_id(config), direction=config.signal.direction)
 
 
-def hold_seconds_for(signal: Any) -> Optional[float]:
-    """The variant's hold, stamped on the cycle at entry -- so a later change to the bot's
-    signal, or the variant's deletion, never changes how an open trade exits."""
+def current_signal(config: MomentumLongScalperConfig) -> Any:
+    """The entry verdict. The one place it is read, so the run row, the executor and the live
+    path can never act on different signals."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import evaluate_reading
+
+    return evaluate_reading(read_signal(config), series_id(config))
+
+
+def call_stamp(signal: Any) -> Optional[dict[str, Any]]:
+    """What a trade remembers about the call that opened it, stamped on the cycle at entry --
+    so changing the bot's signal later never changes how an open trade exits."""
     values = getattr(signal, "values", None) or {}
-    if values.get("source") != "variant":
+    if values.get("source") != "signal" or values.get("call_started_at") is None:
+        return None
+    return {
+        "series": values.get("series"),
+        "direction": values.get("direction") or "follow",
+        "side": getattr(signal, "side", None),
+        "started_at": float(values["call_started_at"]),
+        "until": values.get("held_until"),
+    }
+
+
+def call_exit(cycle: Any, *, now: Optional[float] = None) -> Optional[tuple[str, str]]:
+    """Close the trade once the call that opened it has ended (decision 5).
+
+    Reads the stamped series live each pass. A reading that cannot be had holds the trade
+    until the call would have lapsed on its own. Persists the call's latest known end so a
+    restart mid-trade keeps it."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_ended
+    from icici_breeze_backend.app.services.index_signal.reader import get_signal
+
+    detail = cycle.detail or {}
+    call = detail.get("call")
+    ts = time.time() if now is None else now
+    if not isinstance(call, dict) or not call.get("series"):
         return None
     try:
-        minutes = float(values.get("hold_minutes"))
-    except (TypeError, ValueError):
+        reading = get_signal(str(call["series"]), direction=str(call.get("direction") or "follow"))
+    except Exception:  # noqa: BLE001 -- unreadable is not evidence the call ended
+        reading = {"state": "unavailable"}
+    ended, until = call_ended(
+        reading, started_at=float(call["started_at"]), side=str(call.get("side")),
+        known_until=call.get("until"), now=ts,
+    )
+    if until is not None and until != call.get("until"):
+        from icici_breeze_backend.app.repositories import bots as repo
+
+        updated = {**detail, "call": {**call, "until": until}}
+        repo.update_cycle_detail(cycle.id, updated)
+        cycle.detail = updated
+    if not ended:
         return None
-    return minutes * 60.0 if minutes > 0 else None
+    return (
+        ReasonCode.SIGNAL_WINDOW_ENDED,
+        f"The {call.get('side')} call that opened this trade has ended "
+        f"({reading.get('state')}{': ' + str(reading.get('reason')) if reading.get('reason') else ''}).",
+    )
 
 
 def cycle_detail(
@@ -376,19 +414,10 @@ def manage_position(
         return state, False, None, quote
 
     state, moved = ladder_mod.advance(state, quote.bid, config.exits)
-    verdict = ladder_mod.exit_decision(
-        state, quote.bid, time.time(), config.exits,
-        hold_seconds=_stored_hold_seconds(cycle),
-    )
+    verdict = ladder_mod.exit_decision(state, quote.bid, time.time(), config.exits)
+    if verdict is None:
+        verdict = call_exit(cycle)
     return state, moved, verdict, quote
-
-
-def _stored_hold_seconds(cycle: Any) -> Optional[float]:
-    raw = (cycle.detail or {}).get("hold_seconds")
-    try:
-        return float(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def close_paper_cycle(
@@ -465,8 +494,6 @@ def execute(
     decision: Any,
     context: Optional[PositionContext],
     charges: ChargesModel,
-    candles: list,
-    session_vwap: Optional[float],
     signal: Any = None,
 ) -> None:
     """Carry out one decision.
@@ -500,7 +527,7 @@ def execute(
 
     if live_path:
         _execute_live(proc, user_id, bot_type, config, run_id, decision, context, charges,
-                      candles, session_vwap, signal=signal)
+                      signal=signal)
         return
 
     if decision.action == "exit" and context is not None:
@@ -509,7 +536,7 @@ def execute(
 
     if decision.action == "enter":
         if signal is None:
-            signal = current_signal(config, candles, session_vwap)
+            signal = current_signal(config)
         if not signal.fired:
             # Reached only when this evaluated its own signal: when the driver supplies one,
             # `decide` has already turned a no-fire into an `idle` verdict.
@@ -589,7 +616,7 @@ def _open(
         detail={
             **cycle_detail(plan, fill, state, charges),
             "signal": signal.values,
-            "hold_seconds": hold_seconds_for(signal),
+            "call": call_stamp(signal),
         },
     )
     _logger.info(
@@ -621,8 +648,6 @@ def _execute_live(
     decision: Any,
     context: Optional["PositionContext"],
     charges: ChargesModel,
-    candles: list,
-    session_vwap: Optional[float],
     signal: Any = None,
 ) -> None:
     from icici_breeze_backend.app.repositories import bots as repo
@@ -645,7 +670,7 @@ def _execute_live(
         return
 
     if signal is None:
-        signal = current_signal(config, candles, session_vwap)
+        signal = current_signal(config)
     if not signal.fired:
         return
     plan, problem = plan_entry(proc, user_id, config, signal.right or "call")
@@ -661,7 +686,7 @@ def _execute_live(
         structure=f"long_{'ce' if plan.right == 'call' else 'pe'}",
         legs=[plan.as_leg()], lots=plan.lots, entry_value=None, paper=False,
         detail={"pending": True, "signal": signal.values,
-                "hold_seconds": hold_seconds_for(signal),
+                "call": call_stamp(signal),
                 "intended_price": plan.quote.ask, "order_ids": []},
     )
 
@@ -717,7 +742,7 @@ def _execute_live(
             "charges": charges.breakdown(fill_price, filled_qty, is_buy=True),
         },
         "signal": signal.values,
-        "hold_seconds": hold_seconds_for(signal),
+        "call": call_stamp(signal),
         # The leg is rewritten to what actually filled, so the exit sells the real size
         # rather than the size that was requested.
         "filled_quantity": filled_qty,

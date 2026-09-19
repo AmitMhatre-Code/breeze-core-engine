@@ -1,13 +1,12 @@
-"""Volume-confirmed price expansion with OI quadrants (#34): the pure engine."""
+"""Volume-confirmed price expansion with OI quadrants (#34): the pure evaluation.
+
+A call's lifetime and availability belong to the series engine now; see test_signal_series.py."""
 from __future__ import annotations
 
 import pytest
 
 from icici_breeze_backend.app.services.index_signal import expansion as ex
-from icici_breeze_backend.app.services.index_signal.engine import (
-    REASON_MARKET_CLOSED,
-    REASON_WARMING_UP,
-)
+from icici_breeze_backend.app.services.index_signal.states import REASON_WARMING_UP
 
 B = 1_800_000_000.0  # bar 0's start; every bar below is a minute apart
 
@@ -158,77 +157,7 @@ def test_a_zero_oi_bar_is_treated_as_absent_not_as_a_reading_of_zero():
     assert strength == pytest.approx(1.0)
 
 
-# -- the engine --------------------------------------------------------------------------
-
-
-def _engine(**kw) -> ex.ExpansionEngine:
-    return ex.ExpansionEngine("nifty", params(**kw))
-
-
-def test_a_call_stands_while_the_feed_keeps_arriving_then_lapses_to_neutral():
-    eng = _engine()
-    eng.seed(_burst(up=True, oi_rises=True))
-    fired_at = B + 60 * 99
-    assert eng.snapshot(fired_at, session_open=True)["state"] == "bullish"
-
-    # Keep the feed alive at the new price level. The step stays inside the 15-bar window for
-    # 15 more bars, so the call legitimately re-fires; past that the window flattens.
-    ts = fired_at
-    for i in range(1, 60):
-        ts = fired_at + 60 * i
-        eng.on_bar(ex.Bar(ts=ts, close=102.0, volume=100.0, oi=1_050_000.0))
-    assert eng.snapshot(ts, session_open=True)["state"] == "neutral"
-
-
-def test_a_held_call_goes_unavailable_when_the_feed_stops_rather_than_standing():
-    eng = _engine()
-    eng.seed(_burst(up=True, oi_rises=True))
-    fired_at = B + 60 * 99
-    assert eng.snapshot(fired_at, session_open=True)["state"] == "bullish"
-    # Nothing has arrived for longer than stale_seconds: fail closed, do not keep asserting.
-    snap = eng.snapshot(fired_at + 400, session_open=True)
-    assert snap["state"] == "unavailable"
-    assert snap["reason"] == ex.REASON_STALE
-
-
-def test_a_closed_market_and_an_excluded_session_are_both_unavailable():
-    eng = _engine()
-    eng.seed(_burst(up=True, oi_rises=True))
-    at = B + 60 * 99
-    assert eng.snapshot(at, session_open=False)["reason"] == REASON_MARKET_CLOSED
-    # Expiry day and rollover week: OI moves because contracts die, not because anyone's view
-    # changed. The engine owns no calendar, so the caller says so.
-    excluded = eng.snapshot(at, session_open=True, excluded=True)
-    assert excluded["state"] == "unavailable"
-    assert excluded["reason"] == ex.REASON_EXCLUDED_SESSION
-
-
-def test_a_replayed_or_out_of_order_bar_is_ignored():
-    eng = _engine()
-    eng.seed(flat(100))
-    before = len(eng._bars)
-    eng.on_bar(ex.Bar(ts=B, close=100.0, volume=100.0, oi=1_000_000.0))  # ancient
-    eng.on_bar(ex.Bar(ts=B + 60 * 99, close=100.0, volume=100.0, oi=1_000_000.0))  # duplicate
-    assert len(eng._bars) == before
-
-
-def test_changing_the_window_discards_the_baseline_it_was_ranked_against():
-    eng = _engine()
-    eng.seed(flat(100))
-    assert len(eng._bars) > 0
-    eng.set_params(params(window_minutes=30))
-    assert len(eng._bars) == 0
-    # A threshold change keeps the bars: the distribution is still the right one.
-    eng.seed(flat(100))
-    eng.set_params(params(window_minutes=30, price_percentile=0.9))
-    assert len(eng._bars) > 0
-
-
-def test_the_payload_says_when_only_half_the_mechanism_is_running():
-    full = _engine().snapshot(B, session_open=True)
-    half = ex.ExpansionEngine("sensex", params(require_oi=False)).snapshot(B, session_open=True)
-    assert full["requires_oi"] is True and full["coverage"] == 1.0
-    assert half["requires_oi"] is False and half["coverage"] == 0.5
+# -- windows and gaps ---------------------------------------------------------------------
 
 
 def test_a_window_spanning_the_overnight_break_is_not_a_reading():
@@ -244,22 +173,6 @@ def test_a_window_spanning_the_overnight_break_is_not_a_reading():
     assert reading is None
 
 
-def test_seeding_across_sessions_keeps_the_baseline_and_drops_only_the_straddling_windows():
-    """`seed` exists so the first live call does not wait an hour for a distribution. Yesterday's
-    windows are good samples of a typical window; only the ones crossing the break are not."""
-    eng = _engine()
-    eng.seed(flat(100))
-    overnight = 17 * 3600
-    base_ts = B + 60 * 99 + overnight
-    for i in range(20):
-        eng.on_bar(ex.Bar(ts=base_ts + 60 * i, close=100.0, volume=100.0, oi=1_000_000.0))
-    # 20 bars into the new session is far short of min_baseline_bars on its own, yet the
-    # engine already has a reading rather than warming up.
-    snap = eng.snapshot(base_ts + 60 * 19, session_open=True)
-    assert snap["reason"] == ex.REASON_NO_EXPANSION
-    assert snap["state"] == "neutral"
-
-
 def test_a_small_feed_hole_is_tolerated_and_a_large_one_invalidates_the_window():
     """The tolerance is deliberate. Invalidating a window for one missing bar would make the
     signal fragile on a feed that drops ticks by design; the cost is that the volume sum is
@@ -271,119 +184,3 @@ def test_a_small_feed_hole_is_tolerated_and_a_large_one_invalidates_the_window()
     # Six consecutive bars gone is a seven-minute hole, past max_gap_seconds.
     many_missing = [b for i, b in enumerate(bars) if not 88 <= i <= 93]
     assert ex._window_reading(many_missing, len(many_missing) - 1, 15) is None
-
-
-# -- replay over stored history (#34) ------------------------------------------------------
-
-
-def _store_bars(cache: str, n: int, *, with_oi: bool = True) -> None:
-    import datetime as dtm
-
-    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
-
-    store.ensure_tables(cache)
-    start = dtm.datetime(2026, 9, 14, 9, 15)
-    rows = []
-    for i in range(n):
-        ts = start + dtm.timedelta(minutes=i)
-        if ts.time() > dtm.time(15, 15):  # roll to the next day's open
-            start = dtm.datetime(ts.year, ts.month, ts.day, 9, 15) + dtm.timedelta(days=1)
-            ts = start
-        row = {
-            "datetime": ts.strftime("%Y-%m-%d %H:%M:%S"),
-            "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 100,
-        }
-        if with_oi:
-            row["open_interest"] = 1_000_000 + i
-        rows.append(row)
-    store.store_candles(rows, stock_code="NIFTY", path=cache)
-
-
-def test_a_replay_with_no_stored_bars_says_so_instead_of_scoring_nothing(tmp_path):
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-
-    out = bt.replay(
-        "nifty", cache_path=str(tmp_path / "b.sqlite3"), db_path=str(tmp_path / "u.sqlite3")
-    )
-    assert out["verdict"] == "no_data"
-    assert out["readings"] == 0
-
-
-def test_a_replay_logs_under_its_own_label_and_never_the_live_one(tmp_path):
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-    from icici_breeze_backend.app.services.index_signal import shadow_log
-
-    cache, db = str(tmp_path / "b.sqlite3"), str(tmp_path / "u.sqlite3")
-    _store_bars(cache, 200)
-    out = bt.replay("nifty", cache_path=cache, db_path=db)
-
-    assert out["label"] == "nifty:expansion:backtest"
-    assert shadow_log.load_rows("nifty:expansion:backtest", 0.0, db)
-    # The live evidence the readiness gate counts must be untouched by a replay.
-    assert shadow_log.load_rows("nifty", 0.0, db) == []
-    assert shadow_log.load_rows("nifty:expansion", 0.0, db) == []
-
-
-def test_replaying_twice_does_not_score_the_first_run_as_well(tmp_path):
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-    from icici_breeze_backend.app.services.index_signal import shadow_log
-
-    cache, db = str(tmp_path / "b.sqlite3"), str(tmp_path / "u.sqlite3")
-    _store_bars(cache, 200)
-    bt.replay("nifty", cache_path=cache, db_path=db)
-    first = len(shadow_log.load_rows("nifty:expansion:backtest", 0.0, db))
-    bt.replay("nifty", cache_path=cache, db_path=db)
-    assert len(shadow_log.load_rows("nifty:expansion:backtest", 0.0, db)) == first
-
-
-def test_only_a_replay_label_may_be_purged_wholesale(tmp_path):
-    from icici_breeze_backend.app.services.index_signal import shadow_log
-
-    db = str(tmp_path / "u.sqlite3")
-    # Live evidence ages out on the retention setting; nothing may clear it in one call, or
-    # the readiness gate's "10 sessions" would stop meaning ten real ones.
-    with pytest.raises(ValueError, match="refusing to purge"):
-        shadow_log.purge_label("nifty", db_path=db)
-    with pytest.raises(ValueError, match="refusing to purge"):
-        shadow_log.purge_label("nifty:expansion", db_path=db)
-
-
-def test_a_replayed_call_reaches_the_calls_csv_with_what_fired_it(tmp_path):
-    """Engine -> log -> report: the per-call file must carry the inputs the engine fired on."""
-    import csv
-    import datetime as dtm
-    import io
-
-    from icici_breeze_backend.app.core.timezone import IST
-    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-    from icici_breeze_backend.app.services.index_signal import shadow_log
-
-    cache, db = str(tmp_path / "b.sqlite3"), str(tmp_path / "u.sqlite3")
-    store.ensure_tables(cache)
-    start = dtm.datetime(2026, 9, 14, 9, 15)
-    rows, close = [], 100.0
-    for i in range(240):
-        rally = 150 <= i < 170  # a volume-backed rally on rising OI, after a quiet baseline
-        close += 0.05 if rally else 0.0
-        rows.append({
-            "datetime": (start + dtm.timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S"),
-            "open": close, "high": close, "low": close, "close": close,
-            "volume": 500 if rally else 100,
-            "open_interest": 1_000_000 + (50 * i if rally else i),
-        })
-    store.store_candles(rows, stock_code="NIFTY", path=cache)
-    bt.replay("nifty", cache_path=cache, db_path=db)
-
-    now = dtm.datetime(2026, 9, 15, tzinfo=IST).timestamp()
-    calls = list(csv.DictReader(io.StringIO(
-        shadow_log.calls_csv("nifty:expansion:backtest", days=5, min_move_bps=1.0, db_path=db, now=now)
-    )))
-    assert calls and calls[0]["turned"] == "bullish"
-    first = calls[0]
-    assert first["quadrant"] == "new_longs"
-    assert float(first["price_rank"]) >= 0.8 and float(first["volume_rank"]) >= 0.8
-    assert first["price_threshold"] == "0.80" and first["volume_threshold"] == "0.80"
-    assert first["weaker_side"] in ("price", "volume")
-    assert float(first["oi_change"]) > 0
-    assert first["result_5m"] == "right"  # the rally carried on past the call

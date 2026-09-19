@@ -27,8 +27,8 @@ from icici_breeze_backend.app.services.bots.scalping.decide import (
 )
 
 MINUTE = datetime.timedelta(minutes=1)
-# `runtime._feed_health` warms on max(EMA 9, volume MA 20) candles for both scalpers; Bot 4 has
-# no signal config, so it takes the same defaults.
+# Bot 4's re-entry range needs 20 of today's candles (`runtime._feed_health`); Bot 3's warm-up
+# is its signal's, which reads `unavailable` until the series is warm.
 WARM_CANDLES = 20
 _FULL_API_BUDGET = 90
 _TS = "%Y-%m-%d %H:%M:%S"
@@ -93,31 +93,33 @@ def gate(
     return decide(snapshot, config)
 
 
-def variant_readings(
+def series_readings(
     bars: Sequence[Any],
-    variant: Any,
+    key: Any,
     *,
-    rollover_expiries: Optional[set[datetime.date]] = None,
+    rollover_days: Optional[set[datetime.date]] = None,
 ) -> dict[datetime.datetime, dict[str, Any]]:
-    """A signal variant's reading as each bar closed, keyed by the bar's start (#38).
+    """A signal series' reading as each bar closed, keyed by the bar's start (naive IST).
 
-    Built with the signal backtest's own replay loop over the whole range at once, so the
-    percentile baseline carries across days exactly as it does live, and a bot replay acts on
-    the very calls the signal replay scores. Pass bars from a few days before the range too:
-    they only warm the baseline."""
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest, variants
+    Built with the signal backtest's own replay loop (`index_signal.series.replay_series`) over
+    the whole range at once, so the baselines carry across days exactly as they do live, and a
+    bot replay acts on the very calls the signal backtest scores. Pass bars from a few days
+    before the range too: they only warm the series. Readings are as published (`follow`); a
+    bot that fades turns them itself, as it does live."""
+    from icici_breeze_backend.app.services.index_signal.bars import from_hist
+    from icici_breeze_backend.app.services.index_signal.series import replay_series
 
+    by_start = {from_hist(c).ts: c.ts for c in bars}
+    excluded = (rollover_days or set()) if key.uses_oi else set()
     return {
-        candle.ts: variants.apply_direction(snap, variant)
-        for candle, snap in expansion_backtest.replay_states(
-            bars, variant.params(), rollover_expiries=rollover_expiries
-        )
+        by_start[bar.ts]: snap
+        for bar, snap in replay_series([from_hist(c) for c in bars], key, excluded_days=excluded)
     }
 
 
-def unavailable_reading(variant_id: str) -> dict[str, Any]:
+def unavailable_reading(series_id: str) -> dict[str, Any]:
     """What a minute with no replayed reading looks like: no trade, and says why."""
-    return {"state": "unavailable", "reason": "no_reading", "variant_id": variant_id}
+    return {"state": "unavailable", "reason": "no_reading", "key": series_id}
 
 
 def tally_idle(idle: dict[str, int], decision: Decision) -> None:

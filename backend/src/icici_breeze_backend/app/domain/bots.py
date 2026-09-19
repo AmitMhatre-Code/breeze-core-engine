@@ -8,6 +8,7 @@ rather than a zero.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -554,19 +555,53 @@ class ScalperExecutionConfig(BaseModel):
     exit_limit_band_pct: float = Field(1.0, gt=0, le=20)
 
 
-class MomentumSignalConfig(BaseModel):
-    """The 1-minute NIFTY *futures* signal.
+SignalMechanism = Literal["expansion", "momentum"]
+SignalDuration = Literal[1, 5, 15]
+SignalDirection = Literal["follow", "fade"]
 
-    Futures, not the index: an index has no traded volume, so neither the volume filter nor
-    VWAP is computable against it (plan section 3.2). VWAP itself needs no warm-up -- it
-    comes from the tick's cumulative `avgPrice` -- so only these two periods gate arming.
+
+class SignalChoice(BaseModel):
+    """Which signal a bot trades on (docs/signals-streamline-plan.md section 7).
+
+    A cell of the fixed grid -- a mechanism and a duration -- plus the bot's own direction:
+    `follow` trades the call, `fade` trades against it. The duration is both the window the
+    signal reads and how long a call stands, so a bot trading a call holds it until the call
+    ends. The index is the bot's, not the signal's. A combination is usable only once a signal
+    backtest has covered 30 days (`index_signal.gate`), which the save and arm paths enforce.
     """
 
-    candle_seconds: int = Field(60, ge=60, le=300)
-    ema_period: int = Field(9, ge=2, le=200)
-    volume_ma_period: int = Field(20, ge=2, le=200)
-    volume_multiplier: float = Field(1.5, gt=0, le=10)
-    require_vwap: bool = True
+    mechanism: SignalMechanism = "expansion"
+    duration: SignalDuration = 15
+    direction: SignalDirection = "follow"
+
+    def series_id(self, index: str) -> str:
+        return f"{index.lower()}:{self.mechanism}:{self.duration}m"
+
+    def label(self) -> str:
+        name = {"expansion": "Volume expansion", "momentum": "Momentum"}[self.mechanism]
+        return f"{name} {self.duration}m" + (" · fade" if self.direction == "fade" else "")
+
+
+# Retired signal-variant ids (#38) and what each became on the grid. A user-created id is read
+# from its own parameters (`_legacy_signal`).
+_LEGACY_VARIANT = re.compile(r"^[a-z]+-w(\d+)-(?:oi\d+|nooi)-h\d+-(follow|fade)$")
+
+
+def _nearest_duration(minutes: int) -> int:
+    return min((1, 5, 15), key=lambda d: (abs(d - minutes), -d))
+
+
+def _legacy_signal(entry_signal: Any, default: dict[str, Any]) -> dict[str, Any]:
+    """The grid cell a stored pre-grid choice maps to: Bot 3's own `momentum` (1-minute
+    candles) or a variant id (its price window and direction)."""
+    raw = str(entry_signal or "").strip().lower()
+    if raw == "momentum":
+        return {"mechanism": "momentum", "duration": 1, "direction": "follow"}
+    m = _LEGACY_VARIANT.match(raw)
+    if m:
+        return {"mechanism": "expansion", "duration": _nearest_duration(int(m.group(1))),
+                "direction": m.group(2)}
+    return dict(default)
 
 
 class TrailingLadderConfig(BaseModel):
@@ -581,8 +616,6 @@ class TrailingLadderConfig(BaseModel):
 
     target_pts: float = Field(10.0, gt=0)
     stop_loss_pts: float = Field(6.0, gt=0)
-    time_invalidation_seconds: int = Field(90, ge=5, le=3600)
-    time_invalidation_min_move_pts: float = Field(3.0, ge=0)
     level_1_trigger_pts: float = Field(5.0, gt=0)
     level_1_lock_pts: float = Field(1.2, description="Locked above cost; covers fees")
     level_2_trigger_pts: float = Field(8.0, gt=0)
@@ -610,15 +643,7 @@ class TrailingLadderConfig(BaseModel):
         return self
 
 
-# What a scalper's `entry_signal` may name: its own EMA/VWAP momentum signal, or a signal
-# variant's id (`index_signal.variants`, #38). Only the shape is checked here -- whether the
-# variant exists is checked where a config is saved, since this module does no I/O.
-MOMENTUM_ENTRY_SIGNAL = "momentum"
-SIGNAL_VARIANT_ID_PATTERN = r"[a-z]+-w\d+-(oi\d+|nooi)-h\d+-(follow|fade)"
-ENTRY_SIGNAL_PATTERN = rf"^({MOMENTUM_ENTRY_SIGNAL}|{SIGNAL_VARIANT_ID_PATTERN})$"
-# Mirrors `index_signal.variants.FADE_15_ID` / `INCUMBENT_ID`, which a test holds in step.
-EXPANSION_FADE_15_VARIANT = "nifty-w15-oi15-h15-fade"
-EXPANSION_FOLLOW_15_VARIANT = "nifty-w15-oi15-h15-follow"
+_BOT3_DEFAULT_SIGNAL = {"mechanism": "expansion", "duration": 15, "direction": "fade"}
 
 
 class MomentumLongScalperConfig(BaseModel):
@@ -633,8 +658,9 @@ class MomentumLongScalperConfig(BaseModel):
     expiry_preference: Literal["nearest_weekly"] = "nearest_weekly"
     trade_on_expiry_day: bool = False
     mode: ScalperMode = "paper"
-    # 09:35, not 09:20: the candle builder starts at market open and needs 20 bars before the
-    # volume MA exists, so an earlier window would only log `not_warm` (plan section 3.2).
+    # 09:35 by default. The signal itself is warm from the open (its volume ranking carries
+    # across the night); a 15-minute momentum reading needs nine of today's candles, so it
+    # first speaks at 11:30 whatever the window says.
     sessions: List[SessionWindow] = Field(
         default_factory=lambda: [
             SessionWindow(start="09:35", end="11:30"),
@@ -660,20 +686,32 @@ class MomentumLongScalperConfig(BaseModel):
     # 6-point stop), so the largest positions sit where gamma is highest. Every cycle records
     # `risk_per_stop_inr` so that swing is visible in the run log rather than implicit.
     premium_outlay_inr: float = Field(25000.0, gt=0)
-    # Which signal opens a trade: "momentum" (the EMA/VWAP/volume signal in `signal` below) or
-    # a signal variant's id, chosen on the Settings -> Index Signal screen (#38). On a variant,
-    # a trade is held for that variant's hold minutes in place of `exits`' time-invalidation,
-    # and it is one trade per call.
+    # The signal that opens a trade (docs/signals-streamline-plan.md section 7). A trade is held
+    # until the call that opened it ends -- the stop and the ladder still apply -- and it is one
+    # trade per call.
     #
-    # Defaults to the 15-minute expansion FADE (2026-09-19): the 21-session backtest found
-    # NIFTY's expansion calls reliably wrong-way, and the user switched the scalper to fade
-    # them in paper mode to gather evidence on real option prices. The fade was measured at
-    # 3-6 index points, below a round trip -- paper results, not this default, decide it.
-    entry_signal: str = Field(EXPANSION_FADE_15_VARIANT, pattern=ENTRY_SIGNAL_PATTERN)
-    signal: MomentumSignalConfig = Field(default_factory=MomentumSignalConfig)
+    # Defaults to the 15-minute expansion FADE, the setting Bot 3 was running in Simulation
+    # when the grid replaced the variants (2026-09-19); the per-signal backtest now shows how
+    # every other cell would have done.
+    signal: SignalChoice = Field(default_factory=lambda: SignalChoice(**_BOT3_DEFAULT_SIGNAL))
     exits: TrailingLadderConfig = Field(default_factory=TrailingLadderConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_retired_signal(cls, data: Any) -> Any:
+        """Stored configs from before the grid carry `entry_signal` (a variant id or
+        "momentum") and a `signal` block of EMA/volume settings. Map them onto the grid."""
+        if not isinstance(data, dict):
+            return data
+        signal = data.get("signal")
+        if isinstance(signal, dict) and "mechanism" in signal:
+            return data
+        out = {k: v for k, v in data.items() if k != "entry_signal"}
+        if "entry_signal" in data or isinstance(signal, dict):
+            out["signal"] = _legacy_signal(data.get("entry_signal"), _BOT3_DEFAULT_SIGNAL)
+        return out
 
     @model_validator(mode="after")
     def _windows_are_tradeable(self) -> "MomentumLongScalperConfig":
@@ -757,29 +795,41 @@ class IronFlyReentryConfig(BaseModel):
     max_range_pct: float = Field(0.15, gt=0, le=10)
 
 
-IronFlyEntryFilterKind = Literal["none", "vix_not_rising", "expansion_neutral"]
+IronFlyEntryFilterKind = Literal["none", "vix_not_rising", "signal_quiet"]
 
 
 class IronFlyEntryFilterConfig(BaseModel):
-    """An extra condition on opening a fly, on top of the re-entry gate (#38).
+    """An extra condition on opening a fly, on top of the re-entry gate.
 
     A fly earns its credit when the market moves less than implied volatility priced in, so
     both filters try to skip the moments that premise is visibly failing:
 
     * `vix_not_rising` -- India VIX has not risen more than `vix_max_rise_pct` over the last
       `vix_lookback_minutes`. Rising implied volatility marks every short leg up at once.
-    * `expansion_neutral` -- the named signal variant has no live call. An expansion call is,
-      by construction, a move with volume behind it: the opposite of the quiet a fly wants.
+    * `signal_quiet` -- the chosen signal has no live call. A call of either side is a move the
+      signal thinks is under way: the opposite of the quiet a fly wants. Direction is
+      irrelevant here, so `signal.direction` is ignored.
 
-    Both fail closed: a VIX series or a variant that cannot be read holds the entry.
+    Both fail closed: a VIX series or a signal that cannot be read holds the entry.
     """
 
     kind: IronFlyEntryFilterKind = "none"
     vix_lookback_minutes: int = Field(15, ge=1, le=120)
     vix_max_rise_pct: float = Field(2.0, ge=0, le=50)
-    variant: str = Field(
-        EXPANSION_FOLLOW_15_VARIANT, pattern=rf"^{SIGNAL_VARIANT_ID_PATTERN}$"
-    )
+    signal: SignalChoice = Field(default_factory=SignalChoice)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_retired_filter(cls, data: Any) -> Any:
+        """`expansion_neutral` on a variant id (#38) is `signal_quiet` on its grid cell."""
+        if not isinstance(data, dict):
+            return data
+        out = {k: v for k, v in data.items() if k != "variant"}
+        if data.get("kind") == "expansion_neutral":
+            out["kind"] = "signal_quiet"
+        if "variant" in data and not isinstance(data.get("signal"), dict):
+            out["signal"] = _legacy_signal(data.get("variant"), {"mechanism": "expansion", "duration": 15})
+        return out
 
 
 class IronFlyScalperConfig(BaseModel):
@@ -893,13 +943,14 @@ class CasBingoCreditConfig(BaseModel):
 
 
 class CasBingoDebitConfig(BaseModel):
-    """Debit spread: a strong signal flip, held for `sustain_minutes`, buys the inner leg
-    (0% = ATM) and sells the outer one, in the direction of the flip. Strikes are measured
-    from spot at the moment of deploying."""
+    """Debit spread: a signal flip, held for `sustain_minutes`, buys the inner leg (0% = ATM)
+    and sells the outer one, in the direction of the flip (against it when the bot's signal is
+    set to fade). Strikes are measured from spot at the moment of deploying.
+
+    There is no strength threshold: it was a W-OBI-scale number, and on the grid every
+    expansion call is already a top-fifth move and momentum has no strength at all."""
 
     premium_budget_inr: float = Field(10000.0, gt=0, le=10_000_000)
-    # Above the navbar's 0.30 entry on purpose: "a strong upcoming move", not merely a side.
-    strong_threshold: float = Field(0.50, gt=0, le=1)
     sustain_minutes: float = Field(3.0, ge=0, le=60)
     inner_pct: float = Field(0.0, ge=0, le=20)
     outer_pct: float = Field(0.5, gt=0, le=25)
@@ -958,6 +1009,9 @@ class CasBingoConfig(BaseModel):
         default_factory=lambda: SessionWindow(start="15:15", end="15:29")
     )
     strategy: CasBingoStrategy = "debit_spread"
+    # The signal both spreads read their flips from. `direction` applies to the debit spread
+    # only: the credit spread's rule is already "a flip against the day's move".
+    signal: SignalChoice = Field(default_factory=SignalChoice)
     credit: CasBingoCreditConfig = Field(default_factory=CasBingoCreditConfig)
     debit: CasBingoDebitConfig = Field(default_factory=CasBingoDebitConfig)
     strangle: CasBingoStrangleConfig = Field(default_factory=CasBingoStrangleConfig)

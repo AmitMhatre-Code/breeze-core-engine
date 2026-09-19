@@ -12,7 +12,6 @@ import { BotAuditLogsScreen } from "./screens/BotAuditLogsScreen";
 import { BrokerCredentialsScreen } from "./screens/BrokerCredentialsScreen";
 import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
 import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
-import { IndexSignalScreen } from "./screens/IndexSignalScreen";
 import { QuantityLimitsScreen } from "./screens/QuantityLimitsScreen";
 import { ReferenceDataLoadsScreen } from "./screens/ReferenceDataLoadsScreen";
 import { TelegramAlertsScreen } from "./screens/TelegramAlertsScreen";
@@ -26,7 +25,6 @@ type ScreenKey =
   | "reference-data-loads"
   | "exchange-calendar"
   | "advanced-pnl-engine"
-  | "index-signal"
   | "telegram-alerts"
   | "audit-logs"
   | "bot-audit-logs"
@@ -54,7 +52,6 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "reference-data-loads": ReferenceDataLoadsScreen,
   "exchange-calendar": ExchangeCalendarScreen,
   "advanced-pnl-engine": AdvancedPnlEngineScreen,
-  "index-signal": IndexSignalScreen,
   "telegram-alerts": TelegramAlertsScreen,
   "audit-logs": AuditLogsScreen,
   "bot-audit-logs": BotAuditLogsScreen,
@@ -88,7 +85,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Advanced",
     items: [
       { key: "advanced-pnl-engine", label: "Engine Settings", icon: WarningIcon },
-      { key: "index-signal", label: "Index Signal", icon: ActivityIcon },
     ],
   },
   {

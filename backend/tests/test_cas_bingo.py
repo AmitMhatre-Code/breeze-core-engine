@@ -4,12 +4,14 @@ Each test pins a decision the user made while the requirements were validated, s
 "fix" that quietly reverses one fails here first:
 
 * live state flips, not bars; a flip out of `unavailable` is not a flip;
-* debit = strong flip then sustain; credit = move from the OPEN, then ANY flip against it;
+* debit = a flip of the chosen signal, then sustain (no strength threshold on the grid);
+  credit = move from the OPEN, then ANY flip against it;
 * credit strikes from the open (an ITM short is allowed and noted), debit/strangle from spot;
 * buys before sells, and a failed sell unwinds the buy;
 * liquidation: most-captured first, capped at the minimum-% price, just enough lots,
   and no margin_calculator call;
-* Autonomous spreads need readiness == ready.
+* spreads need the chosen signal to have passed the 30-day backtest gate, in Simulation and
+  Live alike; the strangle and the auction rule read no signal and are not gated.
 """
 from __future__ import annotations
 
@@ -51,13 +53,12 @@ def row(kind, at, state, signal=None, spot=None):
 
 
 class TestDebitTrigger:
-    def _eval(self, rows, now="15:10", live_state="bullish", live_signal=0.4, strong=0.5, sustain=180):
+    def _eval(self, rows, now="15:10", live_state="bullish", sustain=180):
         return triggers.evaluate_debit(
-            rows, live_state=live_state, live_signal=live_signal, now_ts=ts(now),
-            windows=WINDOWS, strong_threshold=strong, sustain_seconds=sustain,
+            rows, live_state=live_state, now_ts=ts(now), windows=WINDOWS, sustain_seconds=sustain,
         )
 
-    def test_strong_flip_held_for_the_sustain_period_buys_a_call_spread(self):
+    def test_a_flip_held_for_the_sustain_period_buys_a_call_spread(self):
         rows = [
             row("sample", "15:00", "neutral", 0.1),
             row("transition", "15:05", "bullish", 0.32, 24000),
@@ -68,21 +69,21 @@ class TestDebitTrigger:
 
     def test_bearish_goes_on_the_put_side(self):
         rows = [row("sample", "15:00", "neutral"), row("transition", "15:05", "bearish", -0.6)]
-        verdict = self._eval(rows, now="15:09", live_state="bearish", live_signal=-0.6)
+        verdict = self._eval(rows, now="15:09", live_state="bearish")
         assert verdict.trigger.right == "put"
 
-    def test_a_flip_that_never_got_strong_does_not_fire(self):
-        rows = [row("sample", "15:00", "neutral"), row("transition", "15:05", "bullish", 0.32)]
-        verdict = self._eval(rows, now="15:12", live_signal=0.35)
-        assert verdict.trigger is None and "strong" in verdict.reason
+    def test_there_is_no_strength_threshold_on_the_grid(self):
+        # Every expansion call is already a top-fifth move and momentum has no strength at all.
+        rows = [row("sample", "15:00", "neutral"), row("transition", "15:05", "bullish", 0.1)]
+        assert self._eval(rows, now="15:12").trigger is not None
 
     def test_not_yet_sustained(self):
         rows = [row("sample", "15:00", "neutral"), row("transition", "15:05", "bullish", 0.7)]
         assert self._eval(rows, now="15:06").trigger is None
 
     def test_waking_up_from_unavailable_is_not_a_flip(self):
-        # 15:15-15:20 the constituent books are empty; the first reading after is the signal
-        # waking up, which the readiness verdict never scored.
+        # The first reading after a gap is the signal waking up; a signal backtest's calls never
+        # count that as a flip either.
         rows = [row("sample", "15:16", "unavailable"), row("transition", "15:21", "bullish", 0.8)]
         verdict = self._eval(rows, now="15:26")
         assert verdict.trigger is None and "woke up" in verdict.reason
@@ -479,14 +480,32 @@ def test_short_margin_with_liquidation_off_is_refused(db, monkeypatch):
     assert not outcome.opened and outcome.reason_code == ReasonCode.MARGIN_INSUFFICIENT
 
 
-def test_autonomous_spread_waits_for_a_ready_signal(db, monkeypatch):
-    monkeypatch.setattr(runtime, "readiness_status", lambda label: "too_early")
+def _gate_closed(monkeypatch):
+    from icici_breeze_backend.app.services.bots import signal_gate
+
+    monkeypatch.setattr(signal_gate, "refusal", lambda bot_type, config: "Needs a 30-day signal backtest.")
+
+
+@pytest.mark.parametrize("mode", ["simulation", "live"])
+def test_a_spread_waits_for_the_30_day_signal_backtest(db, monkeypatch, mode):
+    _gate_closed(monkeypatch)
     monkeypatch.setattr(runtime, "sg_conflict", lambda *a: False)
     now = datetime.datetime(2026, 9, 15, 15, 0, tzinfo=IST)
-    code, _text = runtime._entry_for_index(
-        FakeProc(), USER, CasBingoConfig(mode="live"), "r", "NIFTY", EXPIRY, now
+    code, text = runtime._entry_for_index(
+        FakeProc(), USER, CasBingoConfig(mode=mode), "r", "NIFTY", EXPIRY, now
     )
-    assert code == ReasonCode.SIGNAL_NOT_READY
+    assert code == ReasonCode.SIGNAL_NOT_READY and "30-day" in text
+
+
+def test_the_strangle_reads_no_signal_and_is_not_gated(db, monkeypatch):
+    _gate_closed(monkeypatch)
+    monkeypatch.setattr(runtime, "sg_conflict", lambda *a: False)
+    monkeypatch.setattr(runtime, "evaluate_trigger", lambda *a: triggers.Verdict(None, "not yet"))
+    now = datetime.datetime(2026, 9, 15, 15, 0, tzinfo=IST)
+    code, _ = runtime._entry_for_index(
+        FakeProc(), USER, CasBingoConfig(strategy="long_strangle"), "r", "NIFTY", EXPIRY, now
+    )
+    assert code == ReasonCode.SIGNAL_NO_TRADE
 
 
 def test_a_live_pbsl_rule_on_the_expiry_blocks_entry(db, monkeypatch):
@@ -505,7 +524,7 @@ def _credit_config(**kw):
 def test_inside_the_auction_the_credit_trigger_reads_the_indicative_index(monkeypatch):
     monkeypatch.setattr(runtime.market, "index_spot", lambda code, **k: 24300.0)
     monkeypatch.setattr(runtime, "day_open", lambda code: 24000.0)
-    monkeypatch.setattr(runtime, "_signal", lambda label: ("unavailable", None, "auction"))
+    monkeypatch.setattr(runtime, "_signal", lambda *a: ("unavailable", None, "auction"))
     at = datetime.datetime(2026, 9, 15, 15, 22, tzinfo=IST)
     v = runtime.evaluate_trigger(_credit_config(), "NIFTY", at)
     assert v.trigger is not None and v.trigger.right == "call"  # the signal was never needed
@@ -518,9 +537,9 @@ def test_between_15_15_and_15_20_the_auction_rule_waits(monkeypatch):
     assert v.trigger is None and "15:20" in v.reason
 
 
-def test_the_auction_rule_is_not_gated_on_the_signals_readiness(db, monkeypatch):
-    """Readiness vouches for the signal; the auction rule does not read it."""
-    monkeypatch.setattr(runtime, "readiness_status", lambda label: "too_early")
+def test_the_auction_rule_is_not_gated_on_the_signal_backtest(db, monkeypatch):
+    """The gate vouches for the signal; the auction rule does not read it."""
+    _gate_closed(monkeypatch)
     monkeypatch.setattr(runtime, "sg_conflict", lambda *a: False)
     monkeypatch.setattr(runtime, "evaluate_trigger", lambda *a: triggers.Verdict(None, "quiet"))
     live_credit = _credit_config(mode="live")

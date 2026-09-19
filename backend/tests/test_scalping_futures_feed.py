@@ -65,8 +65,18 @@ def test_no_contract_when_every_expiry_is_in_the_past():
 
 def test_symbol_formatting_accepts_bare_and_prefixed_tokens():
     """The real SDK returns '4.1!71472'; a bare token must still be usable."""
-    assert NiftyFuturesFeed._format_symbol("4.1!71472") == "4.1!71472"
-    assert NiftyFuturesFeed._format_symbol("71472") == "4.1!71472"
+    feed = NiftyFuturesFeed()
+    assert feed._format_symbol("4.1!71472") == "4.1!71472"
+    assert feed._format_symbol("71472") == "4.1!71472"
+
+
+def test_the_sensex_feed_subscribes_bsesen_on_bfo():
+    """The signal grid reads SENSEX from BSESEN futures, whose ticks arrive in BFO's `8.1` room."""
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+    feed = futures_feed.get_feed("sensex")
+    assert (feed.stock_code, feed.exchange) == ("BSESEN", "BFO")
+    assert feed._format_symbol("123") == "8.1!123"
 
 
 def test_token_resolution_survives_the_sdk_returning_an_exception():

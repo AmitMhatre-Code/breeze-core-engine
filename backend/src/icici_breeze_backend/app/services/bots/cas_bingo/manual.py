@@ -44,6 +44,14 @@ def _indices(proc: Any, config: CasBingoConfig) -> dict[str, str]:
     return {c: expiring[c] for c in chosen}
 
 
+def _signal_blocked(config: CasBingoConfig) -> Optional[str]:
+    """Why the bot's signal is not yet available to it, or None (the 30-day backtest gate)."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_CAS_BINGO
+    from icici_breeze_backend.app.services.bots.signal_gate import refusal
+
+    return refusal(BOT_CAS_BINGO, config)
+
+
 def sheet(proc: Any, user_id: str, config: CasBingoConfig) -> dict[str, Any]:
     indices = _indices(proc, config)
     if not indices:
@@ -52,12 +60,11 @@ def sheet(proc: Any, user_id: str, config: CasBingoConfig) -> dict[str, Any]:
     available = execution._available(proc, user_id)
     out: list[dict[str, Any]] = []
     for code, expiry in indices.items():
-        label = market.SIGNAL_LABEL[code]
         calls = market.chain_rows(proc, user_id, code, expiry, "call")
         puts = market.chain_rows(proc, user_id, code, expiry, "put")
         opening = runtime.day_open(code)
         spot = market.index_spot(code) or market.spot_from(calls) or market.spot_from(puts)
-        state, value, _reason = runtime._signal(label)
+        state, value, _reason = runtime._signal(config, code)
 
         book: Optional[list[liq.BookLeg]] = None
         quotes: dict = {}
@@ -102,8 +109,8 @@ def sheet(proc: Any, user_id: str, config: CasBingoConfig) -> dict[str, Any]:
                 "expiry_display": expiry,
                 "day_open": opening,
                 "spot": spot,
-                "signal": {"state": state, "value": value},
-                "readiness": runtime.readiness_status(label),
+                "signal": {"state": state, "value": value, "name": config.signal.label()},
+                "signal_blocked": _signal_blocked(config),
                 "sg_conflict": runtime.sg_conflict(user_id, code, expiry),
                 "candidates": candidates,
             }

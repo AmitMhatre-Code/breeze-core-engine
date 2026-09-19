@@ -8,6 +8,14 @@ import {
   rangeDays,
   type DateRange,
 } from "@/lib/bot-run-bundles";
+import {
+  SIGNALS_QUERY_KEY,
+  type MechanismAvailability,
+  type SignalDirection,
+  type SignalDuration,
+  type SignalMechanism,
+  type SignalsOverview,
+} from "@/lib/signals";
 
 export const BOT_HOLDINGS_WRITER = "holdings_writer" as const;
 export const BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer" as const;
@@ -40,6 +48,8 @@ export type CasBingoConfig = {
   pre_cas_window: SessionWindow;
   cas_window: SessionWindow;
   strategy: CasBingoStrategy;
+  /** The signal both spreads read flips from. `direction` applies to the debit spread only. */
+  signal: SignalChoice;
   credit: {
     margin_lakhs: number;
     move_trigger_pct: number;
@@ -52,7 +62,6 @@ export type CasBingoConfig = {
   };
   debit: {
     premium_budget_inr: number;
-    strong_threshold: number;
     sustain_minutes: number;
     inner_pct: number;
     outer_pct: number;
@@ -142,8 +151,9 @@ export type CasBingoSheetIndex = {
   expiry_display: string;
   day_open: number | null;
   spot: number | null;
-  signal: { state: string; value: number | null };
-  readiness: string;
+  signal: { state: string; value: number | null; name: string };
+  /** Why the chosen signal is not yet available to the bot (the 30-day backtest gate), or null. */
+  signal_blocked: string | null;
   sg_conflict: boolean;
   candidates: CasBingoCandidate[];
 };
@@ -187,17 +197,19 @@ export function useCasBingoExecute() {
   });
 }
 
-/** The signal's readiness verdict per index — Autonomous spread entries need `ready`. */
-export function useSignalReadiness(enabled = true) {
+/** Whether each signal mechanism is available to bots: a signal backtest covering 30 days on
+ *  its current version (docs/signals-streamline-plan.md section 5). */
+export function useSignalAvailability(enabled = true) {
   return useQuery({
-    queryKey: ["bots", "signal-readiness"],
+    queryKey: SIGNALS_QUERY_KEY,
     enabled,
-    staleTime: 5 * 60_000,
-    queryFn: ({ signal }) =>
-      apiClient.get<{ indices: Record<string, { status: string }> }>(
-        "/api/settings/index-signal/readiness",
-        signal,
-      ),
+    staleTime: 60_000,
+    queryFn: ({ signal }) => apiClient.get<SignalsOverview>("/api/signals", signal),
+    select: (d): Record<SignalMechanism, MechanismAvailability> =>
+      Object.fromEntries(d.mechanisms.map((m) => [m.id, m.availability])) as Record<
+        SignalMechanism,
+        MechanismAvailability
+      >,
   });
 }
 
@@ -297,23 +309,13 @@ export type MomentumLongScalperConfig = {
   /** Capital deployed, not risked. Lots = floor(outlay / cost), and an ATM option cheapens
    *  towards expiry, so this buys more lots the nearer expiry gets. */
   premium_outlay_inr: number;
-  /** "momentum" (the EMA/VWAP/volume `signal` below) or a signal variant id from
-   *  Settings → Index Signal (#38). On a variant the trade is held for the variant's window,
-   *  replacing the exits' time stop, and it is one trade per call. */
-  entry_signal: string;
-  signal: {
-    candle_seconds: number;
-    ema_period: number;
-    volume_ma_period: number;
-    volume_multiplier: number;
-    require_vwap: boolean;
-  };
+  /** The signal that opens a trade. A trade is held until the call that opened it ends; the
+   *  stop and the ladder still apply. One trade per call. */
+  signal: SignalChoice;
   exits: {
     /** A trailing trigger, not a take-profit: reaching it starts the runner. */
     target_pts: number;
     stop_loss_pts: number;
-    time_invalidation_seconds: number;
-    time_invalidation_min_move_pts: number;
     level_1_trigger_pts: number;
     level_1_lock_pts: number;
     level_2_trigger_pts: number;
@@ -349,19 +351,24 @@ export type IronFlyScalperConfig = {
     range_window_minutes: number;
     max_range_pct: number;
   };
-  /** An extra condition on opening a fly (#38). Fails closed: an unreadable input holds. */
+  /** An extra condition on opening a fly. Fails closed: an unreadable input holds. */
   entry_filter: {
-    kind: "none" | "vix_not_rising" | "expansion_neutral";
+    kind: "none" | "vix_not_rising" | "signal_quiet";
     vix_lookback_minutes: number;
     vix_max_rise_pct: number;
-    /** The signal variant whose live call holds a fly (either side). */
-    variant: string;
+    /** `signal_quiet`: the signal whose live call (either side) holds a fly. Direction unused. */
+    signal: SignalChoice;
   };
   execution: ScalperExecutionConfig;
   risk: ScalperRiskConfig;
 };
 
-export const MOMENTUM_ENTRY_SIGNAL = "momentum";
+/** A cell of the signal grid, plus the bot's own direction (docs/signals-streamline-plan.md 7). */
+export type SignalChoice = {
+  mechanism: SignalMechanism;
+  duration: SignalDuration;
+  direction: SignalDirection;
+};
 
 /** One scalper round trip. `friction` is a first-class field, not a derived one: at roughly
  *  a hundred rupees a cycle it is the constraint that decides whether the strategy works. */
@@ -467,7 +474,7 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
   },
   [BOT_MOMENTUM_LONG_SCALPER]: {
     title: "Momentum Long Scalper",
-    blurb: "Buys one ATM option on a 1-minute NIFTY futures signal, trails it out.",
+    blurb: "Buys one ATM option on a NIFTY signal of your choice, holds it for the call.",
   },
   [BOT_IRON_FLY_SCALPER]: {
     title: "Iron Fly Scalper",

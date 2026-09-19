@@ -56,7 +56,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle, OptionKey
 from icici_breeze_backend.app.services.bots.scalping.iron_fly_bot import (
     evaluate_exit,
-    expansion_neutral_hold,
+    signal_quiet_hold,
     reentry_blocked,
     wing_width_for,
 )
@@ -101,6 +101,8 @@ class FlyResult:
     skipped_no_data: int = 0
     skipped_no_fill: int = 0
     idle: dict[str, int] = field(default_factory=dict)
+    # Every minute's entry verdict while flat, for the backtest zip's decisions.csv.
+    decisions: list[dict[str, Any]] = field(default_factory=list)
     lots: int = DEFAULT_LOTS
     price_source: str = ""
     spread_source: str = ""
@@ -175,9 +177,10 @@ def run_fly_backtest(
     default_iv: float = 0.13,
     filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
     vix_series: Optional[Sequence[tuple[float, float]]] = None,
+    record_decisions: bool = False,
 ) -> FlyResult:
-    """`filter_readings` / `vix_series` feed the entry filter (#38), when it is switched on:
-    the named variant's replayed readings, or India VIX 1-minute bars."""
+    """`filter_readings` / `vix_series` feed the entry filter, when it is switched on: the
+    chosen signal series' replayed readings, or India VIX 1-minute bars."""
     pricer = pricer or ModelPricer()
     spots = spot_map(spot_bars)
     spot_days = {ts.date() for ts in spots}
@@ -198,7 +201,7 @@ def run_fly_backtest(
         expiry = regime.next_expiry(day, weekday_map, holidays)
         _run_day(
             day_bars, day, expiry, sigma, vix, config, charges, spread, pricer, spots, lots, result,
-            filter_readings=filter_readings, vix_series=vix_series,
+            filter_readings=filter_readings, vix_series=vix_series, record_decisions=record_decisions,
         )
     return result
 
@@ -213,9 +216,10 @@ def _entry_filter_hold(
     """The live filter (`runtime._fly_entry_filter`), on replayed inputs. Fails closed the
     same way: a minute with no reading, or no VIX bars, holds the entry."""
     f = config.entry_filter
-    if f.kind == "expansion_neutral":
-        reading = (filter_readings or {}).get(bar_start) or unavailable_reading(f.variant)
-        return expansion_neutral_hold(reading)
+    if f.kind == "signal_quiet":
+        series = f.signal.series_id(config.index)
+        reading = (filter_readings or {}).get(bar_start) or unavailable_reading(series)
+        return signal_quiet_hold(reading, f.signal.label())
     if f.kind == "vix_not_rising":
         return vix_minutes.filter_hold(f, vix_series or (), now.replace(tzinfo=IST).timestamp())
     return None
@@ -237,10 +241,12 @@ def _run_day(
     *,
     filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
     vix_series: Optional[Sequence[tuple[float, float]]] = None,
+    record_decisions: bool = False,
 ) -> None:
     pre_open, day_bars = split_session(day_bars)
     quantity = lots * regime.lot_size_for(INDEX, day)
     saved = checkpoint(result, ("skipped_no_data", "skipped_no_fill"))
+    saved_decisions = len(result.decisions)
     ledger = DayLedger()
     vwap = SessionVwap(pre_open)
     candles: list = []
@@ -297,6 +303,19 @@ def _run_day(
             )
             or _entry_filter_hold(config, bar.ts, now, filter_readings, vix_series),
         )
+        if record_decisions:
+            reading = (filter_readings or {}).get(bar.ts) or {}
+            result.decisions.append({
+                "date": day.isoformat(),
+                "time": now.strftime("%H:%M"),
+                "futures_close": bar.close,
+                "action": decision.action,
+                "reason_code": decision.reason_code,
+                "reason": decision.reason_text,
+                "signal_state": reading.get("state"),
+                "signal_reason": reading.get("reason"),
+                "strength": reading.get("signal"),
+            })
         if decision.action != "enter":
             tally_idle(result.idle, decision)
             continue
@@ -312,6 +331,7 @@ def _run_day(
         statuses = {status for status, _ in priced}
         if MISSING in statuses:
             rollback(result, saved)
+            del result.decisions[saved_decisions:]
             result.days_awaiting_data += 1
             return
         if NO_DATA in statuses:

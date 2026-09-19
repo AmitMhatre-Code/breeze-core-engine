@@ -138,10 +138,18 @@ class FakeBook:
         return OK, bars
 
 
+MOMENTUM_1M = {"mechanism": "momentum", "duration": 1, "direction": "follow"}
+
+
 def _momentum(underlying, pricer=None, config=None, spot_bars=None):
+    """Bot 3 on the momentum 1-minute series, replayed from the same futures bars."""
+    from icici_breeze_backend.app.services.bots.scalping.backtest_common import series_readings
+    from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
+
     return run_backtest(
         underlying,
-        config=config or MomentumLongScalperConfig(entry_signal="momentum"),
+        config=config or MomentumLongScalperConfig(signal=MOMENTUM_1M),
+        readings=series_readings(underlying, SeriesKey("momentum", 1, "nifty")),
         charges=CHARGES,
         spread=SPREAD,
         vix_by_day={},
@@ -430,7 +438,7 @@ def test_real_pricing_needs_the_cash_index_for_its_strike():
 
 
 def test_session_windows_come_from_the_live_gate_stack():
-    config = MomentumLongScalperConfig(entry_signal="momentum", sessions=[SessionWindow(start="10:30", end="11:30")])
+    config = MomentumLongScalperConfig(signal=MOMENTUM_1M, sessions=[SessionWindow(start="10:30", end="11:30")])
     result = _momentum(_trending(), config=config)
     assert result.cycles == []
     assert result.idle.get(ReasonCode.OUTSIDE_SESSION_WINDOW, 0) > 0

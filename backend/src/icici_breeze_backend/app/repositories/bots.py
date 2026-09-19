@@ -180,28 +180,6 @@ def list_enabled_bots(bot_type: str) -> list[BotRecord]:
     return [_row_to_bot(r) for r in rows]
 
 
-def bots_using_signal_variant(variant_id: str) -> list[tuple[str, BotRecord]]:
-    """Every scalper, on any account, set to trade on or filter by this signal variant (#38).
-
-    Asked before a variant is deleted: a bot left pointing at one would read `unavailable` for
-    ever and quietly never trade."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM bots WHERE bot_type IN (?, ?)",
-            (BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER),
-        ).fetchall()
-    out: list[tuple[str, BotRecord]] = []
-    for row in rows:
-        bot = _row_to_bot(row)
-        config = bot.config or {}
-        entry_filter = config.get("entry_filter") or {}
-        if config.get("entry_signal") == variant_id or (
-            entry_filter.get("kind") == "expansion_neutral" and entry_filter.get("variant") == variant_id
-        ):
-            out.append((str(row["user_id"]), bot))
-    return out
-
-
 def list_enabled_bots_by_user() -> dict[str, list[BotRecord]]:
     """Every enabled bot, grouped by owner and ordered by cross-bot priority.
 

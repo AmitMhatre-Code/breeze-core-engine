@@ -82,8 +82,6 @@ def env(monkeypatch):
         "_force_order_feed",
         lambda: state.__setitem__("forced_order_feed", state["forced_order_feed"] + 1),
     )
-    monkeypatch.setattr(wd, "_index_depth_ticking", lambda: True)
-    monkeypatch.setattr(wd, "_force_index_depth", lambda: None)
     monkeypatch.setattr(bwm, "_sdk", MagicMock())
     monkeypatch.setattr(bwm, "_connected", True)
     monkeypatch.setattr(bwm, "_sdk_user_id", "u1")

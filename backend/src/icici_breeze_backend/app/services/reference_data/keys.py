@@ -106,10 +106,18 @@ def index_spot_key(label: str) -> str:
     return f"quotes:index_spot:{label.lower()}"
 
 
-def index_signal_key(label: str) -> str:
-    """Published W-OBI direction signal per index (see `index_signal.publisher`). Read only via
-    `index_signal.reader`, which judges the payload's own `valid_until`, not this key's TTL."""
-    return f"signal:index:{label.lower()}"
+def signal_series_key(series_id: str) -> str:
+    """One signal series' CURRENT reading (`index_signal.publisher`), e.g. `nifty:momentum:5m`.
+    Never a history: readings are reproducible from ICICI's bars once the session ends, so none
+    is stored (docs/signals-streamline-plan.md decision 4). Read only via `index_signal.reader`,
+    which judges the payload's own `valid_until`, not this key's TTL."""
+    return f"signal:series:{series_id.lower()}"
+
+
+def signal_bars_key(index: str, day: str) -> str:
+    """Today's live one-minute bars for one index (inputs, not signals), kept until midnight so
+    a restart rebuilds the day's readings exactly (decision 15)."""
+    return f"signal:bars:{index.lower()}:{day}"
 
 
 WS_TICK_DIRTY_CHANNEL = "ws:tick:dirty"

@@ -1,4 +1,8 @@
-"""The signal backtest (services.bots.scalping.backtest, .backtest_store, .spreads).
+"""Bot 3's backtest (services.bots.scalping.backtest, .backtest_store, .spreads).
+
+The bot trades a cell of the signal grid; these replays feed it that series' readings
+(`backtest_common.series_readings`) -- real momentum readings where the mechanism matters, a
+scripted call where a rule of the bot's (one trade per call, exit at the call's end) does.
 
 What matters here is that the harness is honest about its own limits and consistent with
 paper mode: the same trade must not look better in a backtest than it does on the live-price
@@ -22,7 +26,13 @@ from icici_breeze_backend.app.services.bots.scalping.backtest import (
     theoretical_price,
     years_to_expiry,
 )
-from icici_breeze_backend.app.services.bots.scalping.backtest_common import SessionVwap, split_session
+from icici_breeze_backend.app.core.timezone import IST
+from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
+    SessionVwap,
+    series_readings,
+    split_session,
+)
+from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
@@ -101,6 +111,35 @@ def _bars(day: datetime.date, closes: list[float], volumes: list[int]) -> list[H
     ]
 
 
+MOMENTUM_1M = {"mechanism": "momentum", "duration": 1, "direction": "follow"}
+
+
+def _config(**kw) -> MomentumLongScalperConfig:
+    return MomentumLongScalperConfig(signal=kw.pop("signal", MOMENTUM_1M), **kw)
+
+
+def _replay(bars, config=None, **kw):
+    """Bot 3 on the momentum 1-minute series, read from these same bars."""
+    config = config or _config()
+    readings = series_readings(bars, SeriesKey(config.signal.mechanism, config.signal.duration, "nifty"))
+    return run_backtest(bars, config=config, readings=readings, charges=kw.pop("charges", CHARGES),
+                        spread=SPREAD, **kw)
+
+
+def _scripted_call(bars, first: int, last: int, side: str = "bullish") -> dict:
+    """A reading per bar: one call standing from bar `first` through bar `last`, quiet around it."""
+    out = {}
+    started = bars[first].ts.replace(tzinfo=IST).timestamp() + 60
+    for k, b in enumerate(bars):
+        close = b.ts.replace(tzinfo=IST).timestamp() + 60
+        if first <= k <= last:
+            out[b.ts] = {"state": side, "call_started_at": started, "held_until": close + 60,
+                         "signal": 0.9, "reason": None}
+        else:
+            out[b.ts] = {"state": "neutral", "reason": "no_expansion", "signal": 0.1}
+    return out
+
+
 def _bar_at(day: datetime.date, hour: int, minute: int, o, h, l, c, v) -> HistCandle:
     return HistCandle(datetime.datetime.combine(day, datetime.time(hour, minute)), o, h, l, c, v)
 
@@ -140,13 +179,7 @@ def _trending_day(day=_NEAR_EXPIRY):
 
 
 def test_a_trending_day_produces_cycles(and_config=None):
-    result = run_backtest(
-        _trending_day(),
-        config=MomentumLongScalperConfig(entry_signal="momentum"),
-        charges=CHARGES,
-        spread=SPREAD,
-        vix_by_day={_NEAR_EXPIRY: 13.0},
-    )
+    result = _replay(_trending_day(), vix_by_day={_NEAR_EXPIRY: 13.0})
     assert result.days == 1
     assert len(result.cycles) >= 1
     c = result.cycles[0]
@@ -157,20 +190,14 @@ def test_a_trending_day_produces_cycles(and_config=None):
 def test_a_flat_day_produces_no_cycles():
     day = datetime.date(2026, 3, 5)
     bars = _bars(day, [24_000.0] * 60, [1_000] * 60)
-    result = run_backtest(
-        bars, config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES, spread=SPREAD,
-        vix_by_day={day: 13.0},
-    )
+    result = _replay(bars, vix_by_day={day: 13.0})
     assert result.cycles == []
     assert result.skipped_no_signal > 0
 
 
 def test_every_cycle_carries_friction():
     """Friction is the binding constraint; a cycle without it is not a cycle."""
-    result = run_backtest(
-        _trending_day(), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
-        spread=SPREAD, vix_by_day={_NEAR_EXPIRY: 13.0},
-    )
+    result = _replay(_trending_day(), vix_by_day={_NEAR_EXPIRY: 13.0})
     assert all(c.friction > 0 for c in result.cycles)
     assert result.summary()["friction"] > 0
 
@@ -178,53 +205,68 @@ def test_every_cycle_carries_friction():
 def test_slippage_is_adverse_on_both_legs_as_in_paper_mode():
     """An earlier draft applied it only on entry, which made backtests flatter paper mode."""
     day = _NEAR_EXPIRY
-    generous = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"),
-        charges=ChargesModel(slippage_spread_fraction=0.0), spread=SPREAD,
-        vix_by_day={day: 13.0},
-    )
-    penalised = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"),
-        charges=ChargesModel(slippage_spread_fraction=0.5), spread=SPREAD,
-        vix_by_day={day: 13.0},
-    )
+    generous = _replay(_trending_day(day), charges=ChargesModel(slippage_spread_fraction=0.0),
+                       vix_by_day={day: 13.0})
+    penalised = _replay(_trending_day(day), charges=ChargesModel(slippage_spread_fraction=0.5),
+                        vix_by_day={day: 13.0})
     assert penalised.cycles and generous.cycles
     assert penalised.cycles[0].entry_price > generous.cycles[0].entry_price
     assert penalised.cycles[0].exit_price < generous.cycles[0].exit_price
 
 
 def test_only_one_position_is_held_at_a_time():
-    result = run_backtest(
-        _trending_day(), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
-        spread=SPREAD, vix_by_day={_NEAR_EXPIRY: 13.0},
-    )
+    result = _replay(_trending_day(), vix_by_day={_NEAR_EXPIRY: 13.0})
     for a, b in zip(result.cycles, result.cycles[1:]):
         assert a.exited_at <= b.entered_at
 
 
-def test_one_signal_run_buys_once_in_the_backtest_too():
-    """A slow grind on ever-rising volume fires every bar. The first trade times out (it does
-    not make +3 points in 90s); the run is unbroken, so nothing is re-bought on it -- the same
-    rule the live runtime applies, or the backtest would describe a different strategy."""
+def test_one_call_buys_once_in_the_backtest_too():
+    """A call stopped out while it still stands is not re-bought on the same call -- the rule
+    the live runtime applies, or the backtest would describe a different strategy."""
     day = _NEAR_EXPIRY
-    closes = [24_000.0] * 25 + [24_000.0 + 2 * i for i in range(1, 20)]
-    volumes = [1_000] * 25 + [int(2_000 * 1.2 ** i) for i in range(1, 20)]
-    result = run_backtest(
-        _bars(day, closes, volumes), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
-        spread=SPREAD, vix_by_day={day: 13.0},
-    )
+    # The call stands from 09:40; spot falls through it, so the long call is stopped out early.
+    closes = [24_000.0] * 25 + [24_000.0 - 15 * i for i in range(1, 30)]
+    bars = _bars(day, closes, [1_000] * len(closes))
+    readings = _scripted_call(bars, 25, len(bars) - 2)
+    result = run_backtest(bars, config=_config(), readings=readings, charges=CHARGES, spread=SPREAD,
+                          vix_by_day={day: 13.0})
     assert len(result.cycles) == 1
+    assert result.cycles[0].exit_reason == "stop_loss"
     assert result.skipped_same_signal > 0
     assert result.summary()["skipped_same_signal"] == result.skipped_same_signal
+
+
+def test_a_trade_is_closed_when_its_call_ends():
+    """The duration is the horizon the call is about: the trade is held until the call lapses,
+    then closed, however the option has moved (stop and ladder permitting)."""
+    day = _NEAR_EXPIRY
+    closes = [24_000.0] * 25 + [24_000.0 + 1 * i for i in range(1, 30)]
+    bars = _bars(day, closes, [1_000] * len(closes))
+    readings = _scripted_call(bars, 25, 30)  # stands six minutes, then goes quiet
+    result = run_backtest(bars, config=_config(), readings=readings, charges=CHARGES, spread=SPREAD,
+                          vix_by_day={day: 13.0})
+    assert len(result.cycles) == 1
+    c = result.cycles[0]
+    assert c.exit_reason == "signal_window_ended"
+    # Seen at the close of the first quiet bar (index 31, 09:46), i.e. 09:47.
+    assert c.exited_at == datetime.datetime.combine(day, datetime.time(9, 47))
+
+
+def test_fade_buys_the_put_on_a_bullish_call():
+    day = _NEAR_EXPIRY
+    closes = [24_000.0] * 40
+    bars = _bars(day, closes, [1_000] * 40)
+    readings = _scripted_call(bars, 25, 30)
+    faded = _config(signal={**MOMENTUM_1M, "direction": "fade"})
+    result = run_backtest(bars, config=faded, readings=readings, charges=CHARGES, spread=SPREAD,
+                          vix_by_day={day: 13.0})
+    assert result.cycles and result.cycles[0].right == "put"
 
 
 def test_a_position_never_carries_across_days():
     """A candle history is not a position; each session starts flat."""
     d1, d2 = _NEAR_EXPIRY, datetime.date(2026, 3, 10)
-    result = run_backtest(
-        _trending_day(d1) + _trending_day(d2), config=MomentumLongScalperConfig(entry_signal="momentum"),
-        charges=CHARGES, spread=SPREAD, vix_by_day={d1: 13.0, d2: 13.0},
-    )
+    result = _replay(_trending_day(d1) + _trending_day(d2), vix_by_day={d1: 13.0, d2: 13.0})
     assert result.days == 2
     for c in result.cycles:
         assert c.entered_at.date() == c.exited_at.date()
@@ -233,17 +275,11 @@ def test_a_position_never_carries_across_days():
 def test_the_result_states_its_iv_and_spread_sources():
     """A run priced off a fallback must never be mistaken for a calibrated one."""
     day = _NEAR_EXPIRY
-    with_vix = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
-        spread=SPREAD, vix_by_day={day: 13.0},
-    )
+    with_vix = _replay(_trending_day(day), vix_by_day={day: 13.0})
     assert with_vix.summary()["iv_source"] == "daily India VIX"
     assert "no calibration yet" in with_vix.summary()["spread_source"]
 
-    without = run_backtest(
-        _trending_day(day), config=MomentumLongScalperConfig(entry_signal="momentum"), charges=CHARGES,
-        spread=SPREAD, vix_by_day={},
-    )
+    without = _replay(_trending_day(day), vix_by_day={})
     assert without.summary()["iv_source"].startswith("constant")
 
 
@@ -339,19 +375,12 @@ def test_the_raised_outlay_is_what_makes_a_full_week_tradeable():
     """
     far = datetime.date(2026, 3, 4)  # Wednesday; expiry the following Tuesday, 6 days out
 
-    at_old_default = run_backtest(
-        _trending_day(far),
-        config=MomentumLongScalperConfig(entry_signal="momentum", premium_outlay_inr=10_000.0),
-        charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0},
-    )
+    at_old_default = _replay(_trending_day(far), config=_config(premium_outlay_inr=10_000.0),
+                             vix_by_day={far: 13.0})
     assert at_old_default.cycles == []
     assert at_old_default.skipped_unaffordable > 0
 
-    at_new_default = run_backtest(
-        _trending_day(far),
-        config=MomentumLongScalperConfig(entry_signal="momentum"),  # 25,000
-        charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0},
-    )
+    at_new_default = _replay(_trending_day(far), vix_by_day={far: 13.0})  # 25,000
     assert at_new_default.cycles
 
 
@@ -363,13 +392,8 @@ def test_position_size_rises_towards_expiry_on_a_fixed_outlay():
     highest. Pinned here so the behaviour is deliberate rather than discovered later.
     """
     near, far = datetime.date(2026, 3, 9), datetime.date(2026, 3, 4)  # 1 DTE vs 6 DTE
-    cfg = MomentumLongScalperConfig(entry_signal="momentum")
-    near_lots = run_backtest(
-        _trending_day(near), config=cfg, charges=CHARGES, spread=SPREAD, vix_by_day={near: 13.0}
-    ).cycles[0].lots
-    far_lots = run_backtest(
-        _trending_day(far), config=cfg, charges=CHARGES, spread=SPREAD, vix_by_day={far: 13.0}
-    ).cycles[0].lots
+    near_lots = _replay(_trending_day(near), vix_by_day={near: 13.0}).cycles[0].lots
+    far_lots = _replay(_trending_day(far), vix_by_day={far: 13.0}).cycles[0].lots
     assert near_lots > far_lots
 
 

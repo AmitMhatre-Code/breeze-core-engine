@@ -155,7 +155,8 @@ function IndexSection({
         <span className="font-mono text-hint text-faint">spot {level(index.spot)}</span>
         <span className="font-mono text-hint text-faint">
           signal {index.signal.state}
-          {index.signal.value !== null ? ` (${index.signal.value.toFixed(2)})` : ""} · readiness {index.readiness}
+          {index.signal.value !== null ? ` (${index.signal.value.toFixed(2)})` : ""} · {index.signal.name}
+          {index.signal_blocked ? <span className="text-amber-on-tint"> · {index.signal_blocked}</span> : null}
         </span>
       </header>
       {index.sg_conflict && (

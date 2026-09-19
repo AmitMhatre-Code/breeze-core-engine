@@ -103,18 +103,19 @@ def _interval_seconds() -> float:
             return 2.0
 
 
-def _feed_health(config: Any) -> FeedHealth:
+def _feed_health(bot_type: str, config: Any) -> FeedHealth:
     from icici_breeze_backend.app.services import ws_tick_pipeline
     from icici_breeze_backend.app.services.portfolio_pnl_engine import is_tick_stream_stale
 
     feed = futures_feed.get_feed()
-    status = feed.status(
-        ema_period=config.signal.ema_period if hasattr(config, "signal") else 9,
-        volume_ma_period=config.signal.volume_ma_period if hasattr(config, "signal") else 20,
-    )
+    status = feed.status(ema_period=9, volume_ma_period=20)
     age = ws_tick_pipeline.last_tick_age_seconds()
+    # Bot 3's warm-up is its signal's: a series still warming up publishes `unavailable`, which
+    # is already a no-trade verdict with its reason. Bot 4 still needs 20 of today's candles to
+    # judge whether spot has settled (its re-entry range).
+    warm = True if bot_type == BOT_MOMENTUM_LONG_SCALPER else bool(status.get("warm"))
     return FeedHealth(
-        warm=bool(status.get("warm")),
+        warm=warm,
         stale=is_tick_stream_stale(),
         stale_seconds=float(age) if age is not None else float("inf"),
         detail=status,
@@ -179,7 +180,7 @@ def build_snapshot(
         # `is_trading_day` takes a datetime and calls .astimezone() on it -- a date raises.
         is_trading_day=bool(is_trading_day(now)),
         is_expiry_day=_is_expiry_day(config),
-        feed=_feed_health(config),
+        feed=_feed_health(bot_type, config),
         totals=totals,
         has_open_position=bool(open_cycles),
         api_calls_remaining=_api_calls_remaining(user_id),
@@ -202,14 +203,20 @@ def _entry_signal(bot_type: str, config: Any) -> Any:
     """The bot's entry signal, or None for a bot that has no signal gate.
 
     Evaluated here rather than inside the executor so `decide` can turn a signal that did
-    not fire into a recorded verdict. Cheap enough to run every pass -- an EMA and a mean
-    over at most `_MAX_CANDLES` bars already in memory, with no broker call behind it.
+    not fire into a recorded verdict. Cheap enough to run every pass: one Redis read of the
+    bot's published series (`index_signal.reader`), no broker call behind it.
     """
     if bot_type != BOT_MOMENTUM_LONG_SCALPER:
         return None
     try:
-        feed = futures_feed.get_feed()
-        return momentum_bot.current_signal(config, feed.builder.candles, feed.builder.session_vwap)
+        from icici_breeze_backend.app.services.bots.signal_gate import refusal
+        from icici_breeze_backend.app.services.bots.scalping.signal import SignalResult
+
+        blocked = refusal(bot_type, config)
+        if blocked:
+            # The gate closed under a running bot (a mechanism's version changed): no entries.
+            return SignalResult(None, f"signal_not_available: {blocked}", {"source": "gate"})
+        return momentum_bot.current_signal(config)
     except Exception:  # noqa: BLE001 -- a signal failure must not stop the gate stack
         _logger.exception("scalping[%s]: signal evaluation failed", bot_type)
         return None
@@ -267,10 +274,16 @@ def _fly_entry_filter(config: Any, now: Any, proc: Any, user_id: str) -> Optiona
     try:
         if in_window(now, config.sessions) is None:
             return None  # the window gate stands the bot down anyway; don't spend a VIX call
-        if kind == "expansion_neutral":
-            from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
+        if kind == "signal_quiet":
+            from icici_breeze_backend.app.services.bots.signal_gate import refusal
+            from icici_breeze_backend.app.services.index_signal.reader import get_signal
 
-            return iron_fly_bot.expansion_neutral_hold(get_variant_signal(f.variant))
+            blocked = refusal(BOT_IRON_FLY_SCALPER, config)
+            if blocked:
+                return (ReasonCode.ENTRY_FILTER_CLOSED, blocked)
+
+            series = f.signal.series_id(config.index)
+            return iron_fly_bot.signal_quiet_hold(get_signal(series), f.signal.label())
         if kind == "vix_not_rising":
             from icici_breeze_backend.app.services.bots.scalping import vix_minutes
 
@@ -285,30 +298,17 @@ def _fly_entry_filter(config: Any, now: Any, proc: Any, user_id: str) -> Optiona
 def _fresh_signal_hold(config: Any, totals: Any) -> Optional[tuple[str, str]]:
     """Bot 3 holds while the signal run that opened its last trade is still going.
 
-    See `signal.signal_run_unbroken`. No earlier entry today means nothing to hold.
+    One trade per call: see `signal.call_unbroken`. No earlier entry today means nothing to hold.
     """
     start, side = totals.last_entry_candle_start, totals.last_entry_side
     if start is None or side is None:
         return None
     try:
-        from icici_breeze_backend.app.services.bots.scalping.signal import (
-            signal_run_unbroken,
-            variant_call_unbroken,
+        from icici_breeze_backend.app.services.bots.scalping.signal import call_unbroken
+
+        unbroken = call_unbroken(
+            momentum_bot.read_signal(config), entry_candle_start=int(start), side=str(side)
         )
-
-        if momentum_bot.uses_variant(config):
-            from icici_breeze_backend.app.services.index_signal.reader import get_variant_signal
-
-            unbroken = variant_call_unbroken(
-                get_variant_signal(config.entry_signal),
-                entry_candle_start=int(start),
-                side=str(side),
-            )
-        else:
-            candles = futures_feed.get_feed().builder.candles
-            unbroken = signal_run_unbroken(
-                candles, config.signal, entry_candle_start=int(start), side=str(side)
-            )
         if not unbroken:
             return None
     except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
@@ -322,8 +322,8 @@ def _fresh_signal_hold(config: Any, totals: Any) -> Optional[tuple[str, str]]:
     since = _dt.datetime.fromtimestamp(int(start), tz=IST).strftime("%H:%M")
     return (
         ReasonCode.SIGNAL_NOT_FRESH,
-        f"Still the {side} signal run that opened the last trade (its {since} candle); "
-        "waiting for the signal to switch off and fire again.",
+        f"Still the {side} call that opened the last trade (it began at {since}); "
+        "waiting for it to end and a new one to fire.",
     )
 
 
@@ -527,8 +527,7 @@ def tick_bot(
     else:
         momentum_bot.execute(
             proc, user_id, bot_type, config, run_id, decision, context,
-            load_charges(), feed.builder.candles, feed.builder.session_vwap,
-            signal=snapshot.signal,
+            load_charges(), signal=snapshot.signal,
         )
     # Disarming happens AFTER the executor has run, so the position is closed first: a bot
     # switched off with an open position would leave it unmanaged.

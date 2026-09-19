@@ -56,16 +56,18 @@ shown (#34).
 """
 from __future__ import annotations
 
-import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Deque, Literal, Optional
 
-from icici_breeze_backend.app.services.index_signal.engine import (
+from icici_breeze_backend.app.services.index_signal import bars as bars_mod
+from icici_breeze_backend.app.services.index_signal.bars import Bar
+from icici_breeze_backend.app.services.index_signal.states import (
     REASON_MARKET_CLOSED,
     REASON_WARMING_UP,
     DirectionalState,
+    Evaluation,
     SignalState,
 )
 
@@ -142,22 +144,6 @@ class ExpansionParams:
                 "the baseline must be longer than the window it ranks, or the first reading "
                 "is ranked against the bars that produced it"
             )
-
-
-@dataclass(frozen=True)
-class Bar:
-    """One completed one-minute bar of the underlying.
-
-    `volume` and `oi` are None when *unknown*, never zero-as-unknown. A dropped tick leaves
-    volume unknown (`candles.Candle` says why), and ICICI serves OI as 0 on pre-open bars and
-    on every BSE bar -- a zero that means absent. Callers normalise both to None; this module
-    treats None as "no reading" and never as a low number.
-    """
-
-    ts: float  # epoch seconds, the bar's START
-    close: float
-    volume: Optional[float] = None
-    oi: Optional[float] = None
 
 
 def percentile_rank(values: list[float], reading: float) -> Optional[float]:
@@ -322,125 +308,24 @@ def _history_len(params: ExpansionParams) -> int:
     return params.baseline_bars + params.span_minutes + 1
 
 
-class ExpansionEngine:
-    """One index's live state.
+class ExpansionEvaluator:
+    """Feeds on one-minute bars and evaluates every in-session bar (the series engine owns the
+    call's lifetime). Bars outside 09:15-15:14 are ignored in both paths, so live and replay rank
+    against exactly the same windows."""
 
-    `on_bar` runs on whichever thread completes a candle and `snapshot` on the publisher's, so
-    both take the lock; neither does I/O.
-    """
-
-    def __init__(self, label: str, params: ExpansionParams) -> None:
-        self.label = label
-        self._lock = threading.Lock()
-        self._params = params
+    def __init__(self, params: ExpansionParams) -> None:
+        self.params = params
         self._bars: Deque[Bar] = deque(maxlen=_history_len(params))
-        self._held: Optional[DirectionalState] = None
-        self._held_until: float = 0.0
-        #: When the call now held first fired. A call re-fired while it is still held is the
-        #: same call, extended: "one trade per call" keys on this (#38).
-        self._call_started: Optional[float] = None
-        self._last: dict[str, Any] = {}
 
-    @property
-    def params(self) -> ExpansionParams:
-        with self._lock:
-            return self._params
-
-    def set_params(self, params: ExpansionParams) -> None:
-        """Swap tuning in place. A different window or baseline discards the bars: they were
-        ranked on a distribution that no longer applies."""
-        with self._lock:
-            if params == self._params:
-                return
-            rebuild = _history_len(params) != _history_len(self._params) or (
-                params.window_minutes != self._params.window_minutes
-                or params.oi_window != self._params.oi_window
-            )
-            self._params = params
-            if rebuild:
-                self._bars = deque(maxlen=_history_len(params))
-                self._held, self._held_until, self._call_started = None, 0.0, None
-
-    def on_bar(self, bar: Bar) -> None:
-        """Feed one completed bar. Out-of-order and duplicate bars are ignored rather than
-        appended: the percentile baseline assumes an ordered series, and a replayed bar would
-        rank against a window that already contains it."""
-        with self._lock:
-            if self._bars and bar.ts <= self._bars[-1].ts:
-                return
-            self._bars.append(bar)
-            side, strength, components, reason = evaluate(list(self._bars), self._params)
-            self._last = {"strength": strength, "components": components, "reason": reason}
-            if side is not None:
-                if side != self._held or bar.ts >= self._held_until:
-                    self._call_started = bar.ts
-                self._held = side
-                self._held_until = bar.ts + self._params.hold_minutes * 60.0
-
-    def seed(self, bars: list[Bar]) -> None:
-        """Warm the baseline from history (the previous session's bars) so the first live call
-        does not wait an hour for a distribution to rank against."""
-        for bar in bars:
-            self.on_bar(bar)
-
-    def snapshot(self, now: float, *, session_open: bool, excluded: bool = False) -> dict[str, Any]:
-        """The published view at `now`.
-
-        `excluded` is passed in by the caller for the sessions where this mechanism must not
-        speak at all -- expiry day and rollover week, where OI moves because contracts die
-        rather than because anyone changed their mind. The engine owns no calendar.
-        """
-        with self._lock:
-            p = self._params
-            last_ts = self._bars[-1].ts if self._bars else None
-            reason: Optional[str] = self._last.get("reason")
-            state: SignalState
-
-            if not session_open:
-                reason = REASON_MARKET_CLOSED
-            elif excluded:
-                reason = REASON_EXCLUDED_SESSION
-            elif last_ts is None:
-                reason = REASON_NO_BARS
-            elif now - last_ts > p.stale_seconds:
-                reason = REASON_STALE
-
-            if reason in (
-                REASON_MARKET_CLOSED,
-                REASON_EXCLUDED_SESSION,
-                REASON_NO_BARS,
-                REASON_STALE,
-                REASON_WARMING_UP,
-                REASON_NO_OI,
-            ):
-                self._held, self._held_until, self._call_started = None, 0.0, None
-                state = "unavailable"
-            elif self._held is not None and now < self._held_until:
-                state = self._held
-                reason = None
-            else:
-                # The call has lapsed, or nothing expanded. Both are readings: neutral.
-                self._held, self._held_until, self._call_started = None, 0.0, None
-                state = "neutral"
-
-            return {
-                "label": self.label,
-                "state": state,
-                "reason": reason,
-                "signal": self._last.get("strength"),
-                "raw_wobi": None,
-                # Price and volume alone is a coverage of one half, and the payload says so.
-                "coverage": 1.0 if p.require_oi else 0.5,
-                "requires_oi": p.require_oi,
-                "window_minutes": p.window_minutes,
-                "oi_window_minutes": p.oi_window if p.require_oi else None,
-                "hold_minutes": p.hold_minutes,
-                "call_started_at": self._call_started if state in ("bullish", "bearish") else None,
-                "thresholds": {
-                    "price_percentile": p.price_percentile,
-                    "volume_percentile": p.volume_percentile,
-                },
-                "components": dict(self._last.get("components") or {}),
-                "held_until": self._held_until or None,
-                "computed_at": now,
-            }
+    def on_bar(self, bar: Bar) -> Optional[Evaluation]:
+        if not bars_mod.in_session(bar):
+            return None
+        if self._bars and bar.ts <= self._bars[-1].ts:
+            return None  # out of order or a duplicate: the baseline assumes an ordered series
+        self._bars.append(bar)
+        side, strength, components, reason = evaluate(list(self._bars), self.params)
+        if reason == REASON_STALE:
+            # The latest window reaches back across the overnight break or a feed hole: there
+            # is no whole window yet, which is warming up, not a dead feed.
+            reason = REASON_WARMING_UP
+        return Evaluation(side, strength, components, reason)

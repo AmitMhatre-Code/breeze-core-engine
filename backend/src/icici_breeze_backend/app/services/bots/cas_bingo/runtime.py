@@ -32,7 +32,6 @@ _logger = logging.getLogger(__name__)
 
 # The auction matches 15:30-15:35; after this the last index level is the auction's close.
 SETTLE_AFTER_IST = "15:40"
-READINESS_TTL_SECONDS = 300.0
 # How long a pricing miss (chain warming, a quote missing, a margin call that blipped) stands
 # an index down before the next try. Short -- the window is ~15 minutes -- but not every pass,
 # because a credit plan spends margin_calculator calls.
@@ -41,7 +40,6 @@ PUBLISH_INTERVAL_SECONDS = 60.0
 
 _stop = threading.Event()
 _thread: Optional[threading.Thread] = None
-_readiness: dict[str, tuple[float, str]] = {}
 # (user_id, index_code) -> (IST date, reason_code, reason_text): a genuine "no" for the day.
 _resolved: dict[tuple[str, str], tuple[datetime.date, str, str]] = {}
 _retry_after: dict[tuple[str, str], float] = {}
@@ -54,29 +52,25 @@ _finalised: dict[str, datetime.date] = {}
 # --------------------------------------------------------------------------------------
 
 
-def readiness_status(label: str) -> str:
-    """The signal's readiness verdict, cached: it scans 60 days of shadow-log rows."""
-    now = time.monotonic()
-    held = _readiness.get(label)
-    if held is not None and now - held[0] < READINESS_TTL_SECONDS:
-        return held[1]
+def _series(config: CasBingoConfig, index_code: str) -> Any:
+    from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
+
+    choice = config.signal
+    return SeriesKey(choice.mechanism, choice.duration, market.SIGNAL_LABEL[index_code])
+
+
+def _direction(config: CasBingoConfig) -> str:
+    """The debit spread trades the bot's direction; the credit spread's rule is already "a
+    flip against the day's move", so it always reads the signal as published."""
+    return config.signal.direction if config.strategy == "debit_spread" else "follow"
+
+
+def _signal(config: CasBingoConfig, index_code: str) -> tuple[str, Optional[float], Optional[str]]:
+    """(state, strength, reason) of the chosen series now. `unavailable` is never `neutral`."""
     try:
-        from icici_breeze_backend.app.services.index_signal import shadow_log
+        from icici_breeze_backend.app.services.index_signal.reader import get_signal
 
-        status = str(shadow_log.readiness(label).get("status") or "too_early")
-    except Exception:  # noqa: BLE001 -- fail closed: an unknown verdict is not "ready"
-        _logger.exception("cas bingo: readiness lookup failed for %s", label)
-        status = "unknown"
-    _readiness[label] = (now, status)
-    return status
-
-
-def _signal(label: str) -> tuple[str, Optional[float], Optional[str]]:
-    """(state, smoothed signal, reason). `unavailable` is never `neutral` (#30)."""
-    try:
-        from icici_breeze_backend.app.services.index_signal.reader import get_index_signal
-
-        payload = get_index_signal(label)
+        payload = get_signal(_series(config, index_code), direction=_direction(config))
     except Exception:  # noqa: BLE001
         return "unavailable", None, "unreadable"
     try:
@@ -86,11 +80,36 @@ def _signal(label: str) -> tuple[str, Optional[float], Optional[str]]:
     return str(payload.get("state") or "unavailable"), value, payload.get("reason")
 
 
-def _today_rows(label: str, now: datetime.datetime) -> list[dict[str, Any]]:
-    from icici_breeze_backend.app.services.index_signal import shadow_log
+def _today_rows(config: CasBingoConfig, index_code: str, now: datetime.datetime) -> list[dict[str, Any]]:
+    """Today's readings of the chosen series as the rows `triggers` reads, oldest first.
 
-    midnight = datetime.datetime.combine(now.date(), datetime.time(0, 0), tzinfo=IST)
-    return shadow_log.load_rows(label, midnight.timestamp())
+    No reading is stored (decision 4), so the day's history is recomputed from today's bars by
+    the publisher -- the same computation the live engine did, which is also what lets a
+    restart at 15:18 still find the flip at 15:12. `spot` is the futures level at each reading:
+    a move measured against the futures' own open keeps the basis out of it."""
+    from icici_breeze_backend.app.services.index_signal import publisher
+    from icici_breeze_backend.app.services.index_signal.series import apply_direction
+
+    rows: list[dict[str, Any]] = []
+    prev: Optional[str] = None
+    for bar, snap in publisher.today_series(_series(config, index_code), now=now.timestamp()):
+        snap = apply_direction(snap, _direction(config))
+        state = str(snap.get("state") or "unavailable")
+        rows.append({
+            "ts": bar.close_ts,
+            "kind": "transition" if state != prev else "sample",
+            "state": state,
+            "signal": snap.get("signal"),
+            "spot": bar.close,
+        })
+        prev = state
+    return rows
+
+
+def futures_open(index_code: str) -> Optional[float]:
+    from icici_breeze_backend.app.services.index_signal import publisher
+
+    return publisher.today_open(market.SIGNAL_LABEL[index_code])
 
 
 def day_open(index_code: str) -> Optional[float]:
@@ -170,20 +189,22 @@ def evaluate_trigger(
             indicative=market.index_spot(index_code), day_open=day_open(index_code), now_ts=ts
         )
 
-    label = market.SIGNAL_LABEL[index_code]
-    state, value, reason = _signal(label)
+    state, _value, reason = _signal(config, index_code)
     if state == "unavailable":
-        return triggers.Verdict(None, f"The {market.INDEX_LABEL[index_code]} signal is unavailable ({reason or 'no reading'}).")
-    rows = _today_rows(label, now)
+        return triggers.Verdict(
+            None,
+            f"{config.signal.label()} on {market.INDEX_LABEL[index_code]} is unavailable "
+            f"({reason or 'no reading'}).",
+        )
+    rows = _today_rows(config, index_code, now)
     if config.strategy == "debit_spread":
         return triggers.evaluate_debit(
-            rows, live_state=state, live_signal=value, now_ts=ts, windows=windows,
-            strong_threshold=config.debit.strong_threshold,
+            rows, live_state=state, now_ts=ts, windows=windows,
             sustain_seconds=config.debit.sustain_minutes * 60.0,
         )
     return triggers.evaluate_credit(
         rows, live_state=state, now_ts=ts, windows=windows,
-        day_open=day_open(index_code), move_trigger_pct=config.credit.move_trigger_pct,
+        day_open=futures_open(index_code), move_trigger_pct=config.credit.move_trigger_pct,
     )
 
 
@@ -227,15 +248,14 @@ def _entry_for_index(
 
     live = config.mode == "live"
     auction = _auction_credit(config, now)
-    # The readiness verdict is evidence about the signal; a trigger that does not read the
-    # signal (the strangle's clock, the auction rule) has nothing for it to vouch for.
-    if live and config.strategy != "long_strangle" and not auction:
-        status = readiness_status(market.SIGNAL_LABEL[index_code])
-        if status != "ready":
-            return ReasonCode.SIGNAL_NOT_READY, (
-                f"{label}: the signal's readiness verdict is '{status}', and Autonomous spread "
-                f"entries need 'ready'."
-            )
+    # The 30-day backtest gate (decision 7), for Simulation and Live alike. A trigger that does
+    # not read the signal -- the strangle's clock, the auction rule -- has nothing to gate.
+    if config.strategy != "long_strangle" and not auction:
+        from icici_breeze_backend.app.services.bots.signal_gate import refusal
+
+        blocked = refusal(BOT_CAS_BINGO, config)
+        if blocked:
+            return ReasonCode.SIGNAL_NOT_READY, f"{label}: {blocked}"
 
     verdict = evaluate_trigger(config, index_code, now)
     if verdict.trigger is None:
@@ -475,7 +495,6 @@ def stop_cas_bingo_loop() -> None:
 
 
 def reset_state_for_tests() -> None:
-    _readiness.clear()
     _resolved.clear()
     _retry_after.clear()
     _last_published.clear()

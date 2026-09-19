@@ -125,7 +125,6 @@ def _config(bot: str, args: argparse.Namespace) -> Any:
                 for k, v in (
                     ("target_pts", getattr(args, "target_pts", None)),
                     ("stop_loss_pts", getattr(args, "stop_loss_pts", None)),
-                    ("time_invalidation_seconds", getattr(args, "time_stop", None)),
                 )
                 if v is not None
             }
@@ -291,8 +290,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
     pricer = _pricer(args)
     config = _config("momentum", args)
     result = _replay("momentum", args, pricer, start, end, config=config)
-    print(f"  ladder    : target {config.exits.target_pts} / stop {config.exits.stop_loss_pts} "
-          f"/ time {config.exits.time_invalidation_seconds}s")
+    print(f"  signal    : {config.signal.label()}, held until the call ends")
+    print(f"  ladder    : target {config.exits.target_pts} / stop {config.exits.stop_loss_pts}")
     _print("Bot 3 momentum scalper backtest", result.summary())
     _queue_needs(pricer)
     if args.csv:
@@ -413,7 +412,6 @@ def main() -> int:
     replay_opts(p)
     p.add_argument("--target-pts", type=float, help="Override the runner trigger")
     p.add_argument("--stop-loss-pts", type=float, help="Override the initial stop")
-    p.add_argument("--time-stop", type=int, help="Override time invalidation, seconds")
     p.set_defaults(func=cmd_replay)
 
     p = sub.add_parser("replay-fly", help="Bot 4, the iron fly")

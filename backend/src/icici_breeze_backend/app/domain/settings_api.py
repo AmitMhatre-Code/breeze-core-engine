@@ -192,52 +192,6 @@ class PnlEnginePreferencesUpdateBody(BaseModel):
     pnl_recompute_interval_seconds: float = Field(ge=1.0, le=30.0)
 
 
-class IndexSignalFieldBounds(BaseModel):
-    min: float
-    max: float
-    recommended_min: float
-    recommended_max: float
-    default: float
-    integer: bool = False
-
-
-class IndexSignalPreferencesResponse(BaseModel):
-    """Settings -> Index Signal (docs/design-decisions.md #30).
-
-    Global, not per-user -- the signal is app-wide -- and applied by the running publisher within
-    one loop, no restart. `bounds` is served from `app.services.index_signal.settings` so the
-    frontend never duplicates the hard or recommended ranges.
-    """
-
-    enabled: bool
-    top_n: int
-    tau_seconds: float
-    enter_threshold: float
-    exit_threshold: float
-    min_coverage: float
-    book_stale_seconds: float
-    depth_levels: int
-    shadow_retention_days: int
-    bounds: dict[str, IndexSignalFieldBounds]
-
-
-class IndexSignalPreferencesUpdateBody(BaseModel):
-    """Partial update: omitted fields keep their stored value. Range checks deliberately live in
-    the service alone (one source of bounds), which the route maps to a 422."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: Optional[bool] = None
-    top_n: Optional[int] = None
-    tau_seconds: Optional[float] = None
-    enter_threshold: Optional[float] = None
-    exit_threshold: Optional[float] = None
-    min_coverage: Optional[float] = None
-    book_stale_seconds: Optional[float] = None
-    depth_levels: Optional[int] = None
-    shadow_retention_days: Optional[int] = None
-
-
 class BreezeApiTesterWsSubscribeBody(BaseModel):
     model_config = ConfigDict(extra="allow")
 

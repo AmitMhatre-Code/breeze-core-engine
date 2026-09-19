@@ -200,3 +200,52 @@ def test_pending_proposal_is_served_then_rejected(client):
 
 def test_rejecting_nothing_is_404(client):
     assert client.post(f"/bots/proposal/reject?bot_type={BOT_HOLDINGS_WRITER}").status_code == 404
+
+
+# --- the 30-day signal backtest gate (docs/signals-streamline-plan.md section 5) --------------
+
+
+@pytest.fixture
+def gate_closed(monkeypatch):
+    from icici_breeze_backend.app.services.index_signal import gate
+
+    monkeypatch.setattr(gate, "refusal", lambda mechanism, db_path=None: "Needs a 30-day signal backtest.")
+
+
+def test_arming_a_bot_on_an_unavailable_signal_is_refused(client, gate_closed):
+    r = client.patch(f"/bots/config?bot_type={BOT_MOMENTUM_LONG_SCALPER}", json={"enabled": True})
+    assert r.status_code == 409
+    assert "not yet available to bots" in r.json()["detail"] and "30-day" in r.json()["detail"]
+    assert client.get(f"/bots/config?bot_type={BOT_MOMENTUM_LONG_SCALPER}").json()["enabled"] is False
+
+
+def test_a_disarmed_bot_can_still_be_edited_and_switched_off(client, gate_closed):
+    change = {"config": {"signal": {"mechanism": "momentum", "duration": 5, "direction": "follow"}}}
+    assert client.patch(f"/bots/config?bot_type={BOT_MOMENTUM_LONG_SCALPER}", json=change).status_code == 200
+    assert client.patch(f"/bots/config?bot_type={BOT_MOMENTUM_LONG_SCALPER}", json={"enabled": False}).status_code == 200
+
+
+def test_a_bot_that_reads_no_signal_is_never_gated(client, gate_closed):
+    # Bot 4 with no signal filter, and Bot 2, read no signal at all.
+    assert client.patch(f"/bots/config?bot_type={BOT_IRON_FLY_SCALPER}", json={"enabled": True}).status_code == 200
+    assert client.patch(f"/bots/config?bot_type={BOT_EXPIRY_INDEX_WRITER}", json={"enabled": True}).status_code == 200
+
+
+def test_turning_on_a_signal_filter_on_an_armed_fly_is_gated(client, gate_closed, monkeypatch):
+    from icici_breeze_backend.app.services.index_signal import gate
+
+    assert client.patch(f"/bots/config?bot_type={BOT_IRON_FLY_SCALPER}", json={"enabled": True}).status_code == 200
+    r = client.patch(
+        f"/bots/config?bot_type={BOT_IRON_FLY_SCALPER}",
+        json={"config": {"entry_filter": {"kind": "signal_quiet",
+                                          "signal": {"mechanism": "expansion", "duration": 5}}}},
+    )
+    assert r.status_code == 409
+    monkeypatch.setattr(gate, "refusal", lambda mechanism, db_path=None: None)
+    r = client.patch(
+        f"/bots/config?bot_type={BOT_IRON_FLY_SCALPER}",
+        json={"config": {"entry_filter": {"kind": "signal_quiet",
+                                          "signal": {"mechanism": "expansion", "duration": 5}}}},
+    )
+    assert r.status_code == 200
+    assert r.json()["config"]["entry_filter"]["signal"]["duration"] == 5

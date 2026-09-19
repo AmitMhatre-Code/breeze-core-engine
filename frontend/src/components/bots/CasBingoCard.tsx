@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { BacktestButton } from "@/components/bots/BacktestButton";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { CasBingoSheet } from "@/components/bots/CasBingoSheet";
@@ -12,7 +13,7 @@ import {
   CAS_BINGO_CREDIT_WARNING,
   CAS_BINGO_REGIME_NOTE,
   INDEX_LABEL,
-  useSignalReadiness,
+  useSignalAvailability,
   useTodaysCycles,
   useTodaysRun,
   useUpdateBot,
@@ -47,12 +48,12 @@ export const CAS_STRATEGY_LABEL: Record<CasBingoStrategy, string> = {
   long_strangle: "Long strangle",
 };
 
-const READINESS_LABEL: Record<string, string> = {
-  ready: "ready",
-  too_early: "too early",
-  no_edge: "no edge",
-  worse: "worse than trend",
-};
+function signalLabel(config: CasBingoConfig): string {
+  const sig = config.signal ?? { mechanism: "expansion", duration: 15, direction: "follow" };
+  const name = sig.mechanism === "momentum" ? "Momentum" : "Volume expansion";
+  const fade = config.strategy === "debit_spread" && sig.direction === "fade" ? " (faded)" : "";
+  return `${name} ${sig.duration}m${fade}`;
+}
 
 function GearIcon() {
   return (
@@ -95,7 +96,7 @@ function scheduleSummary(config: CasBingoConfig): string {
 function AutonomousConfirm({
   open,
   config,
-  readiness,
+  availability,
   pending,
   error,
   onConfirm,
@@ -103,7 +104,7 @@ function AutonomousConfirm({
 }: {
   open: boolean;
   config: CasBingoConfig;
-  readiness: Record<string, { status: string }> | undefined;
+  availability: { available: boolean; reason: string | null; from: string | null; to: string | null } | undefined;
   pending: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -135,22 +136,15 @@ function AutonomousConfirm({
         {spreads && (
           <div className="rounded-lg border border-border bg-panel2 p-3 text-hint">
             <p className="text-faint">
-              Spread entries wait for the signal&apos;s readiness verdict to be <em>ready</em>:
+              Spreads read {signalLabel(config)} on {indices.map((c) => INDEX_LABEL[c] ?? c).join(" & ")}.
             </p>
-            <ul className="mt-1.5 space-y-1">
-              {indices.map((code) => {
-                const label = code === "BSESEN" ? "sensex" : "nifty";
-                const status = readiness?.[label]?.status ?? "unknown";
-                return (
-                  <li key={code} className="flex justify-between gap-3">
-                    <span>{INDEX_LABEL[code] ?? code}</span>
-                    <span className={`font-mono ${status === "ready" ? "text-up" : "text-amber-on-tint"}`}>
-                      {READINESS_LABEL[status] ?? status}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            <p className={`mt-1 ${availability?.available ? "text-up" : "text-amber-on-tint"}`}>
+              {availability === undefined
+                ? "Checking whether it is available to bots…"
+                : availability.available
+                  ? `Available to bots — backtested ${availability.from} to ${availability.to}.`
+                  : (availability.reason ?? "Not yet available to bots.")}
+            </p>
           </div>
         )}
         {config.strategy === "credit_spread" && (
@@ -190,9 +184,9 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
   const mode = cardMode(bot);
   const { data: cycles } = useTodaysCycles(bot.bot_type, true, bot.enabled);
   const { data: todaysRun } = useTodaysRun(bot.bot_type, bot.enabled);
-  // Only the Autonomous confirmation shows readiness (the other cards carry no signal line),
-  // so it is fetched when that dialog opens rather than on every card render.
-  const { data: readiness } = useSignalReadiness(confirmOpen && config.strategy !== "long_strangle");
+  // Only the Autonomous confirmation shows the signal's availability, so it is fetched when
+  // that dialog opens rather than on every card render.
+  const { data: availability } = useSignalAvailability(confirmOpen && config.strategy !== "long_strangle");
 
   const open = (cycles ?? []).filter((c) => c.closed_at === null);
   const closed = (cycles ?? []).filter((c) => c.closed_at !== null);
@@ -235,6 +229,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
             <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
+            <BacktestButton botType={bot.bot_type} className={HEADER_ICON_BTN} />
             <button
               type="button"
               aria-label={`Start a run for ${meta.title}`}
@@ -337,7 +332,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
       <AutonomousConfirm
         open={confirmOpen}
         config={config}
-        readiness={readiness?.indices}
+        availability={availability?.[config.signal?.mechanism ?? "expansion"]}
         pending={update.isPending}
         error={error}
         onConfirm={() => void applyMode("live")}

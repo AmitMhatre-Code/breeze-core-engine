@@ -425,6 +425,8 @@ Those spellings used to be reconciled by hand in four places that disagreed with
 
 ## 30. The index direction signal is one published value built from heavyweight L2 books, and "unavailable" is a state of its own
 
+> **Superseded by #39 (2026-09-19).** Kept for the history of why; the code it describes has been retired.
+
 **Decision**: NIFTY/SENSEX bullish / bearish / neutral comes from exactly one place, `app/services/index_signal/`. For each index's ten heaviest constituents it takes the top-5 bid and ask quantities from the L2 depth feed (NIFTY on NSE books, SENSEX on BSE books), computes each stock's order-book imbalance `(Σbid − Σask)/(Σbid + Σask)`, weights those by free-float index weight (W-OBI), smooths with a 3-second EWMA and applies hysteresis: take a side past ±0.30, fall back to neutral only inside ±0.20. `publisher` writes the result to Redis at the **P&L recompute interval** (Settings → Advanced), and every consumer — the navbar, any other screen, the bots — reads it through `index_signal.reader`.
 
 **Why one published value**: a signal computed separately by each consumer would disagree with itself, because the smoother and the hysteresis carry state. The navbar showing "bullish" while a bot trades a bearish view is the failure this rules out. Redis makes the answer the same in every process, and the payload carries its own `valid_until` (three publish intervals, floor 10s) so a stalled publisher reads as `unavailable` instead of as the last verdict it wrote.
@@ -505,6 +507,8 @@ Each flow is a ratio of time-decayed signed and absolute sums, on W-OBI's −1..
 ---
 
 ## 33. The first shadow evidence disqualified both W-OBI and the flow blend, and the challenger's components are now logged apart
+
+> **Superseded by #39 (2026-09-19).** Kept for the history of why; the code it describes has been retired.
 
 **Decision**: On the evidence of the 2026-09-15 and 2026-09-16 sessions, **neither W-OBI nor the `:flow` challenger may be promoted**, and neither is retired: W-OBI remains the published value because nothing has qualified to replace it, and both keep running in shadow. `index_signal_log` now stores the futures challenger's two halves (`ofi`, `aggressor`) next to the blended `signal`, so the next verdict is about one mechanism at a time rather than about an average of two.
 
@@ -625,6 +629,8 @@ The engine's own per-build margin dictionaries (`margin_key`, `structural_margin
 
 ## 38. Signal variants: the expansion mechanism is read through named, pre-registered variants, and a bot picks one rather than owning a window
 
+> **Superseded by #39 (2026-09-19).** Kept for the history of why; the code it describes has been retired.
+
 **Decision**: `app/services/index_signal/variants.py` holds **signal variants** — the expansion mechanism (#34) with its windows fixed and a direction attached: a price/volume window, an open-interest window (or none), a hold, and `follow` or `fade`. Each is published under its own Redis key (`signal:index:variant:<id>`, read through `reader.get_variant_signal`), shadow-logged under its own label (`nifty:expansion:<id>`) and judged by the same fixed readiness test (#33). Bot 3's `entry_signal` names either its own momentum signal or a variant; Bot 4's `entry_filter` can hold a fly while a named variant has a live call, or while India VIX is rising. Settings → Index Signal lists, creates and deletes variants.
 
 **Why (2026-09-19)**: the 21-session expansion backtest found NIFTY calls reliably wrong-way (39% right at +5 min, mean −1.3 bps; P(mean<0) ≈ 0.97 on a day-block bootstrap), but the fade is ~3–6 index points, below an option round trip, and 68–78% of it came from 3 days. The honest next step was to run candidate readings side by side, each with its own evidence, and let paper trading on real option prices decide — not to hand-flip a sign in one bot. The starting set: the incumbent (15m / 15m OI / hold 15 / follow — it keeps the `nifty:expansion` label and its month of evidence, and cannot be deleted), its fade, 5m price/volume confirmed by 15m OI, and 5m price/volume with no OI.
@@ -642,3 +648,28 @@ The engine's own per-build margin dictionaries (`margin_key`, `structural_margin
 **VIX filter**: judged on ICICI's 1-minute INDVIX bars both live (today's bars, at most one call a minute, only on a pass that would otherwise enter inside a window) and in replay (cached under `spot_candles` / `INDVIX`, fetched with every fly backtest). That ICICI serves INDVIX at 1-minute granularity was **not verified against the live broker** when this was written; if it does not, the filter reads "no series" and holds every entry, which is the fail-closed reading.
 
 **Defaults**: Bot 3's `entry_signal` defaults to the 15-minute fade — the user's decision, to gather paper evidence; existing stored configs pick it up on read. Bot 4's filter ships `none`. Both scalpers still ship in paper mode, and a changed `entry_signal` or `entry_filter` is a material config change, so any earlier paper unlock does not carry over.
+
+---
+
+## 39. Signals are a fixed grid of replayable mechanisms, nothing about a reading is stored, and a bot may trade a signal only after a 30-day backtest
+
+**Decision** (2026-09-19; the full requirement set and every decision behind it are in `docs/signals-streamline-plan.md`). NIFTY/SENSEX direction signals are a fixed grid: **volume expansion** (#34) and **momentum** (Bot 3's EMA/VWAP/volume signal, lifted out of the bot) × **1, 5 and 15 minutes** × **NIFTY and SENSEX**, twelve series in `app/services/index_signal/`. Every series reads only one-minute OHLCV+OI futures bars — NIFTY near-month on NFO, BSESEN near-month on BFO — which is exactly what ICICI's `get_historical_data_v2` serves. W-OBI, both `:flow` challengers, the constituent depth feed and weight fetching, user-created variants (#38), the shadow log and its readiness verdict are retired, with their tables. This supersedes #30, #33 and #38; #34's mechanism stands, and #36's backtest rules are extended.
+
+**Why only what history serves**: a signal that reads something history does not carry (depth, bid/ask, the tick's `avgPrice`) can only be judged by accumulating live sessions, two a week — #33's non-converging position. A signal that reads bars can be judged over months in an afternoon, and its live readings need no recording: once ICICI serves the day's bars, a backtest of that day *is* the live session's audit trail. So nothing about a reading is stored; Redis holds only each series' current payload.
+
+**Live equals replay by construction**: one `SeriesEngine` (`series.py`) owns a call's lifetime for both paths; the publisher feeds it tick-built bars, `replay_series` feeds it history. Four things make the two agree, each found while building it:
+- **Readings are timed at the bar's close.** #34's engine timed a call from the bar's start, which the live publisher (seeing a bar only once it closes) could never see — a one-minute call would have lapsed before it was published.
+- **A re-fire at the lapse moment extends the call.** A momentum candle is judged exactly when the previous candle's call would end; consecutive firing candles are one call, one trade.
+- **Momentum's VWAP is rebuilt from bars live too** (OHLC/4 × volume, pre-open included), not read from `avgPrice` — 0.98 pts mean difference, never a side flip (#36's measurement).
+- **Live warms from the same bars a replay warms from.** Each trading day the engines are rebuilt from the history cache's last two sessions plus today's bars; missing sessions are fetched (about one call per index, advisory — the only history call made in market hours). Levels (EMA, VWAP, window anchors) reset every session; only size rankings carry over, and no window spans the overnight break, so a gap at the open is never read as a move. Today's bars — inputs, not readings — stay in Redis until midnight, so a restart rebuilds the day exactly.
+The live bar builder writes a flat zero-volume bar for a quiet minute (as ICICI's history does) only within five minutes of the last print; a longer silence stays a gap. The first bar after a (re)start has unknown volume. Tick-built bars match history on ~97% of closes (#36), and those rare differences are the only way live and replay can disagree.
+
+**Momentum's volume test is a percentile**: the candle's volume must rank in the top fifth of the trailing 20 candles (#33's finding that 1.5× the mean sat past the 95th percentile). Its parameters are fixed constants; the per-bot tunables are gone.
+
+**The gate is coverage, not merit**: a mechanism is available to bots once a completed signal backtest's range spans ≥30 calendar days on the mechanism's current version (`gate.py`; gaps allowed). The verdict is shown beside it for the user to judge. It applies to Simulation and Live alike, is checked when a bot is armed or an armed bot is saved (switching off and editing a switched-off bot are never refused), and on every runtime pass — a version bump closes a mechanism under a running bot. Backtests are never gated. **Consequence on deploy: nothing is available until a 30-day signal backtest has run on the new versions**, so every signal-reading bot stands down, with a run-log reason, until then.
+
+**Bots choose a cell and a direction** (`SignalChoice`: mechanism, duration, follow/fade). Bot 3 trades it and holds each trade until its call ends — the 90-second time stop is retired; stop and ladder still apply. Live, an unreadable reading holds the trade until the call would have lapsed on its own, then closes it (`signal.call_ended`, which the replay uses too). Bot 4's `signal_quiet` filter holds a fly while the chosen series has a live call. CAS Bingo reads flips from its chosen series, recomputed for the day from today's bars (`publisher.today_series`) rather than a log; its strength threshold is gone (every expansion call is already a top-fifth move; momentum has none); the credit rule's "move since the open" is measured on the futures' own open so the basis stays out of a 0.5% trigger; the direction applies to the debit spread only. Stored configs map onto the grid on read (the 15m fade stays the 15m fade; `momentum` becomes momentum 1m).
+
+**Bot backtests compare every signal setting**: Bot 3 twelve ways (mechanism × duration × direction), Bot 4 seven (no signal filter, plus each series' quiet test), CAS Bingo six or twelve depending on strategy; the saved setting's trades are the Activity row's own, and one zip per run holds the comparison, each setting's trades/daily/decisions, and the trail (`bots/backtest_combos.py`). CAS Bingo is newly backtestable (`cas_bingo/backtest.py`), with two stated approximations: credit spreads are sized by maximum loss per lot (margin has no history), and liquidation of other positions is not replayed.
+
+**SENSEX runs on thin data, labelled as such**: BSESEN futures trade a median 20 contracts a minute and carry no OI (#34), so SENSEX expansion reads price and volume only, and its 1-minute series is mostly silent. The backtests and the gate decide whether it is usable; nothing here assumes it is.

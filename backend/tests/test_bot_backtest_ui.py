@@ -152,6 +152,9 @@ def _cache_trending(cache, day=D(2026, 3, 9)):
     store.store_candles(_rows(day, closes, volumes), path=cache)
 
 
+MOMENTUM_1M = {"mechanism": "momentum", "duration": 1, "direction": "follow"}
+
+
 def _wait_for_job():
     if jobs._thread is not None:
         jobs._thread.join(timeout=30)
@@ -309,9 +312,9 @@ def test_a_bot2_replay_with_no_enabled_index_is_refused(env, monkeypatch):
 def test_a_replay_runs_in_the_background_and_is_kept_with_its_settings(env, monkeypatch):
     _cache_trending(env["cache"])
     monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
-    # The trending day is built to fire the momentum signal; Bot 3's default is now a signal
-    # variant, which needs an hour and more of history to warm before it can call (#38).
-    repo.update_bot("u1", "momentum_long_scalper", config={"entry_signal": "momentum"})
+    # The trending day is built to fire the 1-minute momentum series; Bot 3's default is the
+    # 15-minute expansion fade, which needs more history to warm than one cached day.
+    repo.update_bot("u1", "momentum_long_scalper", config={"signal": MOMENTUM_1M})
     jobs.start_replay("u1", "momentum", D(2026, 3, 9), D(2026, 3, 9), model=True)
     state = _wait_for_job()
     assert state["status"] == "completed", state
@@ -480,9 +483,23 @@ class TestOneClickBacktest:
         # Mock mode: nothing fetched, and the row says so rather than pretending it did.
         assert any("mode" in n for n in row.detail["summary"]["notes"])
 
+        # Bot 3 is compared across every signal setting it could trade (plan section 8).
+        comparison = row.detail["summary"]["comparison"]
+        assert len(comparison) == 12 and sum(1 for c in comparison if c["is_saved"]) == 1
+
+        # The row downloads one zip: the comparison, each setting's files, and the trail.
+        import json
+        import zipfile
+
         name = audit.find_for_backtest_run("u1", row.bot_type, row.id)
-        assert name and audit.resolve_backtest_file_for_user(name, "u1")
-        events = [__import__("json").loads(line)["event"] for line in open(audit.resolve_backtest_file_for_user(name, "u1"))]
+        assert name and name.endswith(".zip") and audit.resolve_backtest_file_for_user(name, "u1")
+        with zipfile.ZipFile(audit.resolve_backtest_file_for_user(name, "u1")) as zf:
+            names = set(zf.namelist())
+            assert {"README.txt", "run.json", "summary.csv", "audit.jsonl"} <= names
+            assert {"momentum-1m-follow/trades.csv", "momentum-1m-follow/daily.csv",
+                    "momentum-1m-follow/decisions.csv"} <= names
+            assert len(zf.read("summary.csv").decode().strip().splitlines()) == 13
+            events = [json.loads(line)["event"] for line in zf.read("audit.jsonl").decode().splitlines()]
         assert events[0] == "backtest_started" and events[-1] == "backtest_finished"
 
     def test_the_row_never_stands_a_live_session_down(self, env, audit, monkeypatch):
@@ -510,52 +527,3 @@ class TestOneClickBacktest:
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
         with pytest.raises(ValueError, match="margin"):
             jobs.start_bot_backtest("u1", "fly", "last_week")
-
-
-class TestSignalBacktest:
-    """The signals page's clock: a period, a fetch of what is missing, a replay of both indices."""
-
-    @pytest.fixture
-    def signal_log(self, tmp_path, monkeypatch):
-        from icici_breeze_backend.app.services.index_signal import shadow_log
-
-        path = str(tmp_path / "signal.sqlite3")
-        monkeypatch.setattr(shadow_log, "_db_path", lambda: path)
-        return path
-
-    def test_a_run_replays_both_indices_and_keeps_the_result(self, env, signal_log, monkeypatch):
-        from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-
-        _cache_trending(env["cache"])
-        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
-        # Months after the range: the verdict must score the replayed range, not the 60 days
-        # before today, or every older backtest would read as empty.
-        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 9, 17, 18, 0))
-
-        jobs.start_signal_backtest("u1", "custom", D(2026, 3, 9), D(2026, 3, 9))
-        state = _wait_for_job()
-        assert state["status"] == "completed", state
-
-        run = bt.last_run()
-        assert (run["from"], run["to"]) == ("2026-03-09", "2026-03-09")
-        assert any("mode" in n for n in run["notes"]), "mock mode must say nothing was fetched"
-        assert run["indices"]["nifty"]["summary"]["readings"] > 0
-        assert run["indices"]["nifty"]["readiness"]["sessions"] == 1
-        assert run["indices"]["sensex"]["summary"]["verdict"] == "no_data"
-
-    def test_an_unknown_period_is_refused(self, env):
-        with pytest.raises(ValueError, match="period"):
-            jobs.start_signal_backtest("u1", "last_year")
-
-    def test_retention_never_deletes_a_replay_of_an_older_range(self, signal_log, monkeypatch):
-        from icici_breeze_backend.app.services.index_signal import shadow_log
-
-        old = datetime.datetime(2026, 1, 5, 10, 0, tzinfo=IST_).timestamp()
-        shadow_log.record("nifty:expansion:backtest", {"state": "neutral"}, spot=24_000.0, now=old)
-        shadow_log.record("nifty:expansion", {"state": "neutral"}, spot=24_000.0, now=old)
-        today = datetime.datetime(2026, 9, 17, 10, 0, tzinfo=IST_).timestamp()
-        monkeypatch.setattr(shadow_log, "_last_purge_date", None)
-        shadow_log.record("nifty", {"state": "neutral"}, spot=24_000.0, now=today)
-
-        assert shadow_log.load_rows("nifty:expansion:backtest", 0.0), "the replay must survive"
-        assert shadow_log.load_rows("nifty:expansion", 0.0) == [], "live rows still age out"

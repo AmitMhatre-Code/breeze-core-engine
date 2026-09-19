@@ -70,10 +70,12 @@ def file_name(user_id: str, bot_type: str, day: date) -> str:
 
 
 def _parse_name(name: str) -> Optional[tuple[str, str, str]]:
-    """(user_token, bot_type, iso_date) from a filename, or None if it is not ours."""
-    if not name.endswith(".jsonl"):
+    """(user_token, bot_type, iso_date or run id) from a filename, or None if it is not ours.
+    A backtest run's results are a `.zip`; every other trail is `.jsonl`."""
+    ext = ".zip" if name.endswith(".zip") else ".jsonl" if name.endswith(".jsonl") else None
+    if ext is None:
         return None
-    parts = name[: -len(".jsonl")].split("__")
+    parts = name[: -len(ext)].split("__")
     if len(parts) != 3:
         return None
     return parts[0], parts[1], parts[2]
@@ -358,10 +360,47 @@ def write_backtest_audit(
     return name
 
 
+def write_backtest_zip(
+    user_id: str, bot_type: str, run_id: str, members: dict[str, Any]
+) -> str:
+    """Write one backtest run's results as a zip (docs/signals-streamline-plan.md section 8).
+
+    `members` maps a path inside the zip to either text or a list of dict rows (written as CSV,
+    columns in first-seen order). Returns the file name, which the Activity row downloads."""
+    import csv
+
+    name = backtest_file_name(user_id, bot_type, run_id)[: -len(".jsonl")] + ".zip"
+    path = os.path.join(backtest_dir(), name)
+    partial = path + ".partial"
+    with _write_lock:
+        with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for member, content in members.items():
+                if isinstance(content, str):
+                    zf.writestr(member, content)
+                    continue
+                columns: dict[str, None] = {}
+                for row in content:
+                    for key in row:
+                        columns.setdefault(key, None)
+                buf = io.StringIO()
+                writer = csv.DictWriter(buf, fieldnames=list(columns), extrasaction="ignore", restval="")
+                writer.writeheader()
+                for row in content:
+                    writer.writerow({
+                        k: (json.dumps(v, default=str) if isinstance(v, (dict, list)) else
+                            "" if v is None else v)
+                        for k, v in row.items()
+                    })
+                zf.writestr(member, buf.getvalue())
+        os.replace(partial, path)
+    _prune_backtests()
+    return name
+
+
 def _prune_backtests(keep: int = BACKTEST_KEEP) -> int:
     try:
         root = backtest_dir()
-        names = [n for n in os.listdir(root) if n.endswith(".jsonl")]
+        names = [n for n in os.listdir(root) if n.endswith((".jsonl", ".zip"))]
     except OSError:
         return 0
     if len(names) <= keep:
@@ -387,7 +426,8 @@ def resolve_backtest_file_for_user(name: str, user_id: str) -> Optional[str]:
     token, bot_type, run_id = parsed
     if token != _safe_token(user_id, 16):
         return None
-    rebuilt = f"{_safe_token(token, 16)}__{_safe_token(bot_type)}__{_safe_token(run_id, 40)}.jsonl"
+    ext = ".zip" if base.endswith(".zip") else ".jsonl"
+    rebuilt = f"{_safe_token(token, 16)}__{_safe_token(bot_type)}__{_safe_token(run_id, 40)}{ext}"
     if rebuilt != base:
         return None
     path = os.path.join(backtest_dir(), rebuilt)
@@ -395,5 +435,10 @@ def resolve_backtest_file_for_user(name: str, user_id: str) -> Optional[str]:
 
 
 def find_for_backtest_run(user_id: str, bot_type: str, run_id: str) -> Optional[str]:
+    """The run's download: its results zip, or the trail of a run made before zips existed."""
     name = backtest_file_name(user_id, bot_type, run_id)
-    return name if os.path.isfile(os.path.join(backtest_dir(), name)) else None
+    zipped = name[: -len(".jsonl")] + ".zip"
+    for candidate in (zipped, name):
+        if os.path.isfile(os.path.join(backtest_dir(), candidate)):
+            return candidate
+    return None

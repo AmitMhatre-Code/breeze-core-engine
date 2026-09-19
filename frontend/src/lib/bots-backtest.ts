@@ -1,6 +1,7 @@
 import { apiClient } from "@/lib/api-client";
 import { getBackendBaseUrl } from "@/lib/config";
 import {
+  BOT_CAS_BINGO,
   BOT_EXPIRY_INDEX_WRITER,
   BOT_IRON_FLY_SCALPER,
   BOT_MOMENTUM_LONG_SCALPER,
@@ -9,23 +10,49 @@ import {
 
 /** Bot backtests: started from the clock on each card, recorded in Activity (design-decisions #35, #36). */
 
-export type BacktestBot = "momentum" | "fly" | "expiry";
+export type BacktestBot = "momentum" | "fly" | "expiry" | "cas";
 
 /** Which bots have a replay, and what the API calls each one.
  *
- *  The Holdings Writer and CAS Bingo have none, so their cards carry no backtest icon at all:
- *  an entry point that leads to "this bot cannot be backtested" is worse than no entry point. */
+ *  The Holdings Writer has none, so its card carries no backtest icon at all: an entry point
+ *  that leads to "this bot cannot be backtested" is worse than no entry point. */
 export const BACKTEST_SLUG: Partial<Record<BotType, BacktestBot>> = {
   [BOT_MOMENTUM_LONG_SCALPER]: "momentum",
   [BOT_IRON_FLY_SCALPER]: "fly",
   [BOT_EXPIRY_INDEX_WRITER]: "expiry",
+  [BOT_CAS_BINGO]: "cas",
 };
 
 export const BACKTEST_BOT_TYPE: Record<BacktestBot, BotType> = {
   momentum: BOT_MOMENTUM_LONG_SCALPER,
   fly: BOT_IRON_FLY_SCALPER,
   expiry: BOT_EXPIRY_INDEX_WRITER,
+  cas: BOT_CAS_BINGO,
 };
+
+/** One signal setting's line in a bot backtest's comparison (docs/signals-streamline-plan.md 8):
+ *  every setting the bot could trade on, replayed with its other settings as saved. */
+export type ComparisonRow = {
+  id: string;
+  label: string;
+  signal: { mechanism: string; duration: number; direction?: string } | null;
+  is_saved: boolean;
+  trades: number;
+  win_rate_pct: number | null;
+  gross_pnl: number | null;
+  friction: number | null;
+  net_pnl: number | null;
+  max_drawdown: number | null;
+  worst_day: number | null;
+  best_day: number | null;
+  days_replayed: number | null;
+  days_awaiting_data: number | null;
+};
+
+export function comparisonRows(summary: BacktestSummary | null | undefined): ComparisonRow[] {
+  const rows = (summary as { comparison?: unknown } | null | undefined)?.comparison;
+  return Array.isArray(rows) ? (rows as ComparisonRow[]) : [];
+}
 
 /** The card dialog's only question (#36). */
 export type BacktestPeriod = "last_day" | "last_week" | "last_month" | "custom";

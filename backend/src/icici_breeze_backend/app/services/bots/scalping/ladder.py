@@ -127,19 +127,14 @@ def exit_decision(
     bid: float,
     now_epoch: float,
     config: TrailingLadderConfig,
-    *,
-    hold_seconds: Optional[float] = None,
 ) -> Optional[tuple[str, str]]:
-    """(reason_code, reason_text) when this ladder says close, else None.
+    """(reason_code, reason_text) when this ladder's stop says close, else None.
 
-    The stop is checked before the time stop: a trade that has both blown its stop and gone
-    nowhere is a stop-out, and reporting it as a timeout would understate what happened.
-
-    `hold_seconds` is set for a trade opened on a signal variant (#38): the variant's call is
-    a statement about the next N minutes, so the trade is closed when those minutes are up, in
-    place of the momentum signal's "went nowhere in 90 seconds" test. The stop and the ladder
-    still apply throughout.
-    """
+    Only the stop lives here. How long a trade is held is the signal's business: it is closed
+    when the call that opened it ends (`signal.call_ended`), checked by the caller after this --
+    a trade that has both blown its stop and outlived its call is a stop-out. The 90-second
+    "went nowhere" rule was retired with the signal grid (decision 16)."""
+    del now_epoch  # kept so callers need not change shape; the stop is price-only
     price = float(bid)
     if price <= state.stop_price:
         if state.level >= LEVEL_BREAK_EVEN:
@@ -152,24 +147,4 @@ def exit_decision(
             ReasonCode.STOP_LOSS,
             f"Stopped out at {price:.2f}, stop was {state.stop_price:.2f}.",
         )
-
-    held = float(now_epoch) - state.opened_at_epoch
-    if hold_seconds is not None:
-        if held >= hold_seconds:
-            return (
-                ReasonCode.SIGNAL_WINDOW_ENDED,
-                f"The signal's {hold_seconds / 60:.0f}-minute window is over "
-                f"(best gain {state.peak_gain:+.2f} points).",
-            )
-        return None
-    if held >= config.time_invalidation_seconds:
-        # Measured against the PEAK gain, not the current one: "did not achieve +N points"
-        # means it never got there, so a trade that ran up and came back has not timed out --
-        # it is the trailing stop's business, and the ladder will have moved by then anyway.
-        if state.peak_gain < config.time_invalidation_min_move_pts:
-            return (
-                ReasonCode.TIME_INVALIDATION,
-                f"Went nowhere: best gain {state.peak_gain:+.2f} points in "
-                f"{held:.0f}s, needed {config.time_invalidation_min_move_pts:+.2f}.",
-            )
     return None

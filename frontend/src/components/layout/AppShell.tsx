@@ -49,6 +49,7 @@ const navItems = [
     icon: BasketOrderIcon,
   },
   { href: "/strategy-builder", label: "Strategy Builder", icon: StrategyIcon },
+  { href: "/signals", label: "Signals", icon: SignalsIcon },
   { href: "/bots", label: "Bots", icon: BotsIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -456,8 +457,9 @@ export function AppShell({
   );
 }
 
-/** Direction-signal chip after an index price (backend design-decisions #30). Hidden entirely
- * when the signal is switched off; `unavailable` shows as a muted dash, never as neutral. */
+/** Direction-signal chip after an index price: the 15-minute reading of the mechanism chosen on
+ * the Signals page (backend design-decisions #39). `unavailable` shows as a muted dash, never as
+ * neutral. */
 function IndexSignalChip({ label, signal }: { label: string; signal: IndexSignalSummary | null }) {
   const chip = indexSignalChip(label, signal);
   if (!chip.visible) return null;
@@ -751,6 +753,26 @@ function StrategyIcon() {
       <circle cx="12" cy="18" r="2" />
       <path d="M8 8l4 8" />
       <path d="M16 8l-4 8" />
+    </svg>
+  );
+}
+
+function SignalsIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 17l5-6 4 4 6-8" />
+      <path d="M15 7h3v3" />
+      <path d="M3 21h18" />
     </svg>
   );
 }

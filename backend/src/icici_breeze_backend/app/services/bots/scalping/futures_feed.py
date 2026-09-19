@@ -1,4 +1,8 @@
-"""NIFTY futures tick feed for the scalping signal (docs/bots-scalping-plan.md section 3.2).
+"""Index futures tick feeds: NIFTY on NFO and BSESEN (SENSEX) on BFO.
+
+They supply the one-minute bars every signal reads (docs/signals-streamline-plan.md section 3), and
+the NIFTY feed's candle builder still serves the scalpers' re-entry range and warm-up checks
+(docs/bots-scalping-plan.md section 3.2).
 
 Why futures rather than the index
 ---------------------------------
@@ -95,7 +99,10 @@ def monthly_expiries(option_expiries: list[str]) -> list[datetime.date]:
 
 
 def near_month_contract(
-    option_expiries: list[str], *, today: Optional[datetime.date] = None
+    option_expiries: list[str],
+    *,
+    today: Optional[datetime.date] = None,
+    stock_code: str = INDEX_STOCK_CODE,
 ) -> Optional[FuturesContract]:
     """The contract the signal reads: near-month, rolling on expiry day.
 
@@ -109,7 +116,7 @@ def near_month_contract(
     for expiry in monthly_expiries(option_expiries):
         if expiry >= today:
             return FuturesContract(
-                stock_code=INDEX_STOCK_CODE,
+                stock_code=stock_code,
                 expiry_display=expiry.strftime("%d-%b-%Y"),
                 expiry_date=expiry,
             )
@@ -126,21 +133,24 @@ def _expiry_candidates(contract: FuturesContract) -> list[str]:
     return seen
 
 
-class NiftyFuturesFeed:
+class FuturesFeed:
     """Owns the subscription, the raw-tick listener and the candle builder for one contract.
 
-    One instance per process. Thread-safety matters here and not in `candles`: the SDK's tick
-    callback runs on the socket thread while the bot's decision loop reads indicators from
-    its own, so every touch of the builder is under `_lock`.
+    One instance per index per process. Thread-safety matters here and not in `candles`: the
+    SDK's tick callback runs on the socket thread while the bot's decision loop reads indicators
+    from its own, so every touch of the builder is under `_lock`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, stock_code: str = INDEX_STOCK_CODE, exchange: str = INDEX_EXCHANGE) -> None:
+        self.stock_code = stock_code
+        self.exchange = exchange
+        self._last_tick_at: Optional[float] = None
         self._lock = threading.RLock()
         self._builder = CandleBuilder()
         self._contract: Optional[FuturesContract] = None
         self._token_symbol: Optional[str] = None
-        # A second consumer of the same quote ticks: the index signal's futures-pressure
-        # challenger (`index_signal.flow`). Called outside the lock with (payload, receive ts).
+        # A second consumer of the same quote ticks: the signal publisher's bar builder
+        # (`index_signal.publisher`). Called outside the lock with (payload, receive ts).
         self._quote_observer: Any = None
         self._expiry_format: Optional[str] = None
         self._listener_registered = False
@@ -164,7 +174,7 @@ class NiftyFuturesFeed:
         for candidate in _expiry_candidates(contract):
             try:
                 result = sdk.get_stock_token_value(
-                    exchange_code=INDEX_EXCHANGE,
+                    exchange_code=self.exchange,
                     stock_code=contract.stock_code,
                     product_type="futures",
                     expiry_date=candidate,
@@ -214,9 +224,9 @@ class NiftyFuturesFeed:
         from icici_breeze_backend.app.services import ws_tick_pipeline
 
         today = now_ist().date()
-        contract = near_month_contract(option_expiries, today=today)
+        contract = near_month_contract(option_expiries, today=today, stock_code=self.stock_code)
         if contract is None:
-            self._last_error = "No monthly NIFTY expiry available from the scrip master."
+            self._last_error = f"No monthly {self.stock_code} expiry available from the scrip master."
             _logger.warning("futures feed: %s", self._last_error)
             return False
 
@@ -254,7 +264,7 @@ class NiftyFuturesFeed:
         try:
             err = _subscribe_feeds_error(
                 sdk.subscribe_feeds(
-                    exchange_code=INDEX_EXCHANGE,
+                    exchange_code=self.exchange,
                     stock_code=contract.stock_code,
                     product_type="futures",
                     expiry_date=self._expiry_format,
@@ -283,8 +293,7 @@ class NiftyFuturesFeed:
                 self._listener_registered = True
         return True
 
-    @staticmethod
-    def _format_symbol(token: str) -> str:
+    def _format_symbol(self, token: str) -> str:
         from icici_breeze_backend.app.services.reference_data.ws_token_index import (
             EXCHANGE_TO_WS_PREFIX,
         )
@@ -293,7 +302,7 @@ class NiftyFuturesFeed:
         # The SDK may hand back a bare token or an already-prefixed `4.1!nnnn`.
         if "!" in raw:
             return raw
-        return f"{EXCHANGE_TO_WS_PREFIX[INDEX_EXCHANGE]}!{raw}"
+        return f"{EXCHANGE_TO_WS_PREFIX[self.exchange]}!{raw}"
 
     # ------------------------------------------------------------ ticks
 
@@ -314,6 +323,7 @@ class NiftyFuturesFeed:
             now = time.time()
             with self._lock:
                 self._ticks_seen += 1
+                self._last_tick_at = now
                 self._builder.ingest(
                     now,
                     payload.get("last"),
@@ -348,6 +358,11 @@ class NiftyFuturesFeed:
         return self._contract
 
     @property
+    def last_tick_at(self) -> Optional[float]:
+        with self._lock:
+            return self._last_tick_at
+
+    @property
     def subscribed_today(self) -> bool:
         """True when this trading day's subscribe has already succeeded.
 
@@ -378,19 +393,29 @@ class NiftyFuturesFeed:
             return status
 
 
-_feed: Optional[NiftyFuturesFeed] = None
+# Kept for callers and tests written when NIFTY was the only feed.
+NiftyFuturesFeed = FuturesFeed
+
+# index -> (ICICI futures stock code, exchange segment)
+FEED_CONTRACTS: dict[str, tuple[str, str]] = {
+    "nifty": (INDEX_STOCK_CODE, INDEX_EXCHANGE),
+    "sensex": ("BSESEN", cfg.BFO),
+}
+
+_feeds: dict[str, FuturesFeed] = {}
 _feed_lock = threading.Lock()
 
 
-def get_feed() -> NiftyFuturesFeed:
-    global _feed
+def get_feed(index: str = "nifty") -> FuturesFeed:
     with _feed_lock:
-        if _feed is None:
-            _feed = NiftyFuturesFeed()
-        return _feed
+        feed = _feeds.get(index)
+        if feed is None:
+            stock_code, exchange = FEED_CONTRACTS[index]
+            feed = FuturesFeed(stock_code, exchange)
+            _feeds[index] = feed
+        return feed
 
 
 def reset_feed_for_tests() -> None:
-    global _feed
     with _feed_lock:
-        _feed = None
+        _feeds.clear()

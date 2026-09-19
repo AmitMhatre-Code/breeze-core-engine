@@ -57,6 +57,15 @@ const nextConfig = {
         destination: `${backendUpstream}/api/settings/:path*`,
       },
       {
+        // The Signals page's API; the `/signals` page itself is served by the App Router.
+        source: "/api/signals",
+        destination: `${backendUpstream}/api/signals`,
+      },
+      {
+        source: "/api/signals/:path*",
+        destination: `${backendUpstream}/api/signals/:path*`,
+      },
+      {
         source: "/api/outlook/:path*",
         destination: `${backendUpstream}/api/outlook/:path*`,
       },

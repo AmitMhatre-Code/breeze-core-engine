@@ -56,7 +56,7 @@ def test_scalper_bots_are_created_lazily_with_policy_defaults(db_path):
     # Ships in paper mode: arming something that fires unattended orders is a deliberate act.
     assert bot.config["mode"] == "paper"
     assert bot.config["risk"]["cumulative_stop_inr"] == 10000.0
-    assert bot.config["signal"]["ema_period"] == 9
+    assert bot.config["signal"] == {"mechanism": "expansion", "duration": 15, "direction": "fade"}
 
     fly = repo.get_or_create_bot(USER, BOT_IRON_FLY_SCALPER)
     assert fly.config["structure"]["wing_width_points"] == 150.0

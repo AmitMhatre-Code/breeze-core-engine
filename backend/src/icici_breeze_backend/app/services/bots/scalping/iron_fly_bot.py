@@ -475,25 +475,24 @@ def reentry_blocked(
     return None
 
 
-def expansion_neutral_hold(variant_payload: Optional[dict[str, Any]]) -> Optional[tuple[str, str]]:
-    """The `expansion_neutral` entry filter (#38): open a fly only while the variant is quiet.
+def signal_quiet_hold(payload: Optional[dict[str, Any]], name: str = "the signal") -> Optional[tuple[str, str]]:
+    """The `signal_quiet` entry filter: open a fly only while the chosen signal is quiet.
 
     Direction does not matter -- a fly is hurt by a move either way -- so a live call of either
-    side holds. `unavailable` holds too: not knowing whether a move is under way is not
-    evidence that none is (#30)."""
-    payload = variant_payload or {}
-    state = str(payload.get("state") or "unavailable")
-    name = payload.get("variant_name") or payload.get("variant_id") or "the expansion signal"
+    side holds. `unavailable` holds too: not knowing whether a move is under way is not evidence
+    that none is (#30)."""
+    reading = payload or {}
+    state = str(reading.get("state") or "unavailable")
     if state == "neutral":
         return None
     if state in ("bullish", "bearish"):
         return (
             ReasonCode.ENTRY_FILTER_CLOSED,
-            f"Expansion filter: {name} has a live {state} call; waiting for it to lapse.",
+            f"Signal filter: {name} has a live {state} call; waiting for it to end.",
         )
     return (
         ReasonCode.ENTRY_FILTER_CLOSED,
-        f"Expansion filter: {name} is unavailable ({payload.get('reason') or 'unknown'}); holding off.",
+        f"Signal filter: {name} is unavailable ({reading.get('reason') or 'unknown'}); holding off.",
     )
 
 

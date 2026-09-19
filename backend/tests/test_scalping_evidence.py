@@ -62,7 +62,7 @@ def test_defaults_hash_the_same_whether_spelled_out_or_omitted():
     sparse = {"index": "NIFTY"}
     spelled = {
         "index": "NIFTY",
-        "signal": {"candle_seconds": 60, "ema_period": 9, "volume_ma_period": 20},
+        "signal": {"mechanism": "expansion", "duration": 15, "direction": "fade"},
     }
     assert ev.material_config_hash(BOT, sparse) == ev.material_config_hash(BOT, spelled)
 
@@ -86,7 +86,7 @@ def test_api_budget_reserve_is_not_material():
 @pytest.mark.parametrize(
     "change",
     [
-        {"signal": {"ema_period": 21}},
+        {"signal": {"mechanism": "momentum", "duration": 5, "direction": "follow"}},
         {"exits": {"stop_loss_pts": 9.0}},
         {"premium_outlay_inr": 50000.0},
         {"execution": {"entry_retries": 0}},
@@ -142,7 +142,7 @@ def test_changing_a_material_setting_relocks(db_path):
     produced it, and nothing has to remember to reset a counter."""
     _finished_paper_day({})
     assert ev.gather(USER, BOT, {}).unlocked
-    assert not ev.gather(USER, BOT, {"signal": {"ema_period": 21}}).unlocked
+    assert not ev.gather(USER, BOT, {"signal": {"mechanism": "momentum", "duration": 5, "direction": "follow"}}).unlocked
 
 
 def test_an_interrupted_day_is_not_evidence(db_path):
@@ -169,13 +169,13 @@ def test_settings_changed_mid_session_void_that_day(db_path):
     run_id = repo.open_session_run(USER, BOT)
     repo.stamp_session_config(run_id, ev.material_config_hash(BOT, {}), "paper")
     repo.stamp_session_config(
-        run_id, ev.material_config_hash(BOT, {"signal": {"ema_period": 21}}), "paper"
+        run_id, ev.material_config_hash(BOT, {"signal": {"mechanism": "momentum", "duration": 5, "direction": "follow"}}), "paper"
     )
     repo.finish_run(
         run_id, status="completed", reason_code="session_complete", reason_text="done"
     )
     assert not ev.gather(USER, BOT, {}).unlocked
-    assert not ev.gather(USER, BOT, {"signal": {"ema_period": 21}}).unlocked
+    assert not ev.gather(USER, BOT, {"signal": {"mechanism": "momentum", "duration": 5, "direction": "follow"}}).unlocked
 
 
 def test_a_voided_day_stays_voided_even_if_the_settings_come_back(db_path):

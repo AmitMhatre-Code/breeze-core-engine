@@ -36,6 +36,8 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/trade-options-chain` | Options chain trading UI. |
 | `/strategy-builder` | Multi-step builder: underlyings, chain, margin, execution APIs. |
 | `/performance` | Performance metrics from `/performance/data`. |
+| `/signals` | The NIFTY/SENSEX direction signals: one section per mechanism (volume expansion, momentum) showing what it watches, its live 1/5/15-minute readings per index, what its last backtest says in plain words, whether it is available to bots (a signal backtest covering 30 days), and which one the navbar shows. One Backtest button replays every signal over a period; the activity log lists each run with a zip of every reading and call. See [Architecture — Signals](./architecture.md#signals-the-grid). |
+| `/bots` | Bot cards (holdings writer, expiry writer, momentum scalper, iron fly, CAS Bingo): settings, modes, runs, and a backtest per bot that replays every signal setting it could use, with one zip of results per run. |
 | `/admin` | Administrative/test surfaces (guarded by backend). |
 | `/settings` | Hub linking to detailed settings pages. |
 | `/settings/credentials` | ICICI API credentials management. |
@@ -91,6 +93,11 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 ### Settings API
 
 - **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
+
+### Signals and bots
+
+- **`/api/signals*`**: the Signals page — readings, last-backtest summaries and gate status (`GET /api/signals`), the navbar choice (`PUT /api/signals/navbar`), signal backtests (`POST /api/signals/backtest`, `GET …/job`, `POST …/cancel`, `GET …/runs`, `GET …/runs/{id}/zip`).
+- **`/bots/*`**: bot configs, runs, cycles, proposals and backtests (`/bots/backtest/start`, `/job`, `/run`); a bot backtest's results zip downloads from its Activity row via `/api/settings/bot-audit-logs/backtest/{name}/download`.
 
 ### Outlook (market narrative)
 

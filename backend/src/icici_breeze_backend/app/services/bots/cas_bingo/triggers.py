@@ -1,16 +1,14 @@
 """CAS Bingo's entry triggers (docs/bots-cas-bingo-plan.md section 3). Pure: no I/O, no clock.
 
-Every read of the signal's *history* comes from the shadow log's rows (`index_signal_log`,
-oldest first), which the publisher writes on every state change and once a minute. Reading the
-durable log rather than watching the reader in-process is what lets a restart at 15:18 still
-know about the flip at 15:12.
+Every read of the signal's *history* comes from today's readings of the bot's chosen series,
+recomputed from today's bars (`runtime._today_rows`, oldest first, one per session minute). No
+reading is stored, and recomputing is what lets a restart at 15:14 still know about the flip at
+15:02.
 
-**What a flip is** is the shadow log's own definition, deliberately: a transition into
-`bullish` or `bearish` from a *live* reading (neutral or the other side). A transition out of
-`unavailable` is the signal waking up -- warm-up, coverage back, the auction books refilling
-after 15:20 -- not the order books changing their mind, and the readiness verdict that gates
-Autonomous never scored those. Trading on a definition the evidence did not measure would make
-the gate meaningless.
+**What a flip is**: a transition into `bullish` or `bearish` from a *live* reading (neutral or
+the other side). A transition out of `unavailable` is the signal waking up -- warm-up, a feed
+coming back -- not the market changing its mind, and a signal backtest's calls never count it
+either.
 """
 from __future__ import annotations
 
@@ -106,20 +104,6 @@ def last_flip(rows: Sequence[dict[str, Any]]) -> tuple[Optional[Flip], str]:
     )
 
 
-def _peak_since(rows: Sequence[dict[str, Any]], flip: Flip, live_signal: Optional[float]) -> float:
-    """Largest |signal| seen on the flipped side since the flip, the live reading included."""
-    peak = abs(flip.signal) if flip.signal is not None else 0.0
-    for row in rows:
-        if float(row.get("ts") or 0) < flip.ts or row.get("state") != flip.state:
-            continue
-        value = _f(row.get("signal"))
-        if value is not None:
-            peak = max(peak, abs(value))
-    if live_signal is not None:
-        peak = max(peak, abs(float(live_signal)))
-    return peak
-
-
 def _live_matches(flip: Flip, live_state: str) -> Optional[str]:
     if live_state not in DIRECTIONAL:
         return f"The signal is {live_state} now."
@@ -133,13 +117,11 @@ def evaluate_debit(
     rows: Sequence[dict[str, Any]],
     *,
     live_state: str,
-    live_signal: Optional[float],
     now_ts: float,
     windows: Sequence[tuple[str, str]],
-    strong_threshold: float,
     sustain_seconds: float,
 ) -> Verdict:
-    """Section 3.1: a strong flip, then the same side held for the sustain period."""
+    """Section 3.1: a flip, then the same side held for the sustain period."""
     flip, why = last_flip(rows)
     if flip is None:
         return Verdict(None, why)
@@ -148,18 +130,11 @@ def evaluate_debit(
         return Verdict(None, mismatch)
     if not in_windows(flip.ts, windows):
         return Verdict(None, f"The {flip.state} flip at {hhmm(flip.ts)} was outside the entry windows.")
-    peak = _peak_since(rows, flip, live_signal)
-    if peak < strong_threshold:
-        return Verdict(
-            None,
-            f"{flip.state.capitalize()} since {hhmm(flip.ts)}, but the signal has peaked at "
-            f"{peak:.2f}, short of the {strong_threshold:.2f} strong threshold.",
-        )
     held = now_ts - flip.ts
     if held < sustain_seconds:
         return Verdict(
             None,
-            f"Strong {flip.state} flip at {hhmm(flip.ts)}; held {held / 60:.1f} of "
+            f"{flip.state.capitalize()} flip at {hhmm(flip.ts)}; held {held / 60:.1f} of "
             f"{sustain_seconds / 60:.1f} minutes.",
         )
     right = "call" if flip.state == "bullish" else "put"
@@ -168,7 +143,7 @@ def evaluate_debit(
             right=right,
             flip=flip,
             text=(
-                f"Strong {flip.state} flip at {hhmm(flip.ts)} (peak {peak:.2f}), held "
+                f"{flip.state.capitalize()} flip at {hhmm(flip.ts)}, held "
                 f"{held / 60:.1f} min: {right} debit spread."
             ),
         ),
@@ -187,9 +162,9 @@ def evaluate_credit(
 ) -> Verdict:
     """Section 3.2: the index has moved from the open, then the signal flips against it.
 
-    The move is read at the flip itself, from the spot the shadow log recorded with it -- the
-    question is whether the reversal came *after* the move, not whether the move is still
-    there by the time this pass runs.
+    The move is read at the flip itself, from the level recorded with it, against `day_open` on
+    the same scale (the futures' own open) -- the question is whether the reversal came *after*
+    the move, not whether the move is still there by the time this pass runs.
     """
     del now_ts  # the flip carries its own time; kept for a symmetric call shape
     if not day_open or day_open <= 0:
@@ -234,8 +209,7 @@ def evaluate_auction_credit(
 ) -> Verdict:
     """Section 3.2b: inside the auction, the credit side is the side the index has moved to.
 
-    No flip is read: from 15:20 the depth feed shows auction books the readiness evidence never
-    scored. Whether the chosen side is actually worth selling -- still priced well above what
+    No flip is read: signals stop at 15:15, when the closing auction begins. Whether the chosen side is actually worth selling -- still priced well above what
     it would settle at -- is `plan.build_plan(auction=True)`'s question, because it needs the
     chain.
     """

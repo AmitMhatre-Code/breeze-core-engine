@@ -7,92 +7,57 @@ function summary(overrides: Partial<IndexSignalSummary> = {}): IndexSignalSummar
   return {
     state: "bullish",
     reason: null,
-    signal: 0.34,
-    coverage: 0.92,
-    thresholds: { enter: 0.3, exit: 0.2 },
+    signal: 0.92,
+    mechanism: "expansion",
+    duration_minutes: 15,
     computed_at: 1_800_000_000,
-    weights_source: "nse_api",
-    weights_as_of: "2026-09-11",
+    thin_data: false,
+    uses_oi: true,
+    call_started_at: 1_800_000_000,
+    // 10:15 IST on 2027-01-15.
+    held_until: Date.UTC(2027, 0, 15, 4, 45) / 1000,
     ...overrides,
   };
 }
 
 describe("indexSignalChip", () => {
-  it("shows a bullish arrow and word with the numbers in the tooltip", () => {
+  it("shows a bullish arrow and word, naming the mechanism and when the call ends", () => {
     const chip = indexSignalChip("NIFTY", summary());
     expect(chip.visible).toBe(true);
     if (!chip.visible) return;
     expect(chip.arrow).toBe("▲");
     expect(chip.word).toBe("BULL");
     expect(chip.toneClass).toContain("up");
-    expect(chip.title).toContain("+0.34");
-    expect(chip.title).toContain("enter ±0.30");
-    expect(chip.title).toContain("coverage 92%");
-    expect(chip.title).toContain("weights: NSE, 2026-09-11");
+    expect(chip.title).toContain("Volume expansion 15m");
+    expect(chip.title).toContain("call stands until 10:15");
   });
 
-  it("shows bearish and neutral readings", () => {
-    const bear = indexSignalChip("SENSEX", summary({ state: "bearish", signal: -0.41 }));
-    const neut = indexSignalChip("SENSEX", summary({ state: "neutral", signal: 0.05 }));
+  it("shows bearish and quiet readings", () => {
+    const bear = indexSignalChip("SENSEX", summary({ state: "bearish" }));
+    const quiet = indexSignalChip("SENSEX", summary({ state: "neutral", held_until: null }));
     expect(bear.visible && bear.word).toBe("BEAR");
-    expect(neut.visible && neut.word).toBe("NEUT");
+    expect(quiet.visible && quiet.word).toBe("NEUT");
+    expect(quiet.visible && quiet.title).toContain("Quiet");
   });
 
   it("renders unavailable as a muted dash with the reason, never as neutral", () => {
-    const chip = indexSignalChip("NIFTY", summary({ state: "unavailable", reason: "low_coverage", signal: null }));
+    const chip = indexSignalChip("NIFTY", summary({ state: "unavailable", reason: "warming_up", signal: null }));
     expect(chip.visible).toBe(true);
     if (!chip.visible) return;
     expect(chip.arrow).toBe("—");
     expect(chip.word).toBe("");
-    expect(chip.title).toContain("unavailable");
-    expect(chip.title).toContain("live order book");
+    expect(chip.title).toContain("no reading");
+    expect(chip.title).toContain("warming up");
   });
 
-  it("hides the chip when the signal is switched off or absent", () => {
-    expect(indexSignalChip("NIFTY", summary({ state: "unavailable", reason: "disabled" })).visible).toBe(false);
+  it("says when SENSEX runs on thin data", () => {
+    const chip = indexSignalChip("SENSEX", summary({ mechanism: "momentum", thin_data: true }));
+    expect(chip.visible && chip.title).toContain("Momentum 15m");
+    expect(chip.visible && chip.title).toContain("thin data");
+  });
+
+  it("hides the chip when there is no signal in the payload", () => {
     expect(indexSignalChip("NIFTY", null).visible).toBe(false);
     expect(indexSignalChip("NIFTY", undefined).visible).toBe(false);
-  });
-
-  it("labels seeded weights plainly", () => {
-    const chip = indexSignalChip("NIFTY", summary({ weights_source: "seed", weights_as_of: "2026-09-10" }));
-    expect(chip.visible && chip.title).toContain("built-in seed, 2026-09-10");
-  });
-});
-
-describe("indexSignalChip with the volume-expansion mechanism", () => {
-  const expansion = (o: Partial<IndexSignalSummary> = {}) =>
-    summary({
-      mechanism: "expansion",
-      signal: 0.91,
-      coverage: 1,
-      thresholds: { price_percentile: 0.8, volume_percentile: 0.8 },
-      weights_source: null,
-      weights_as_of: null,
-      ...o,
-    });
-
-  it("does not crash on percentile thresholds and does not call it an order-book imbalance", () => {
-    const chip = indexSignalChip("NIFTY", expansion());
-    expect(chip.visible).toBe(true);
-    if (!chip.visible) return;
-    expect(chip.word).toBe("BULL");
-    expect(chip.title).toContain("volume-confirmed expansion +0.91");
-    expect(chip.title).toContain("80th percentile");
-    expect(chip.title).not.toContain("order-book");
-    expect(chip.title).not.toContain("coverage");
-  });
-
-  it("explains an expansion warm-up in terms of bars, not order books", () => {
-    const chip = indexSignalChip("NIFTY", expansion({ state: "unavailable", reason: "warming_up", signal: null }));
-    if (!chip.visible) throw new Error("expected visible");
-    expect(chip.title).toContain("one-minute bars");
-    expect(chip.title).not.toContain("order books");
-  });
-
-  it("names a rollover exclusion rather than calling it no reading", () => {
-    const chip = indexSignalChip("NIFTY", expansion({ state: "unavailable", reason: "excluded_session", signal: null }));
-    if (!chip.visible) throw new Error("expected visible");
-    expect(chip.title).toContain("rollover");
   });
 });

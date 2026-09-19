@@ -112,27 +112,14 @@ def test_a_stop_hit_after_ratcheting_reports_as_a_trailing_stop():
     assert code == ReasonCode.TRAILING_STOP
 
 
-def test_time_invalidation_uses_the_peak_gain_not_the_current_one():
-    """'Did not achieve +N points' means it never got there.
-
-    A trade that ran to +4 and came back has moved; it belongs to the stop, not the clock.
-    """
+def test_the_ladder_no_longer_times_a_trade_out():
+    """The 90-second "went nowhere" rule was retired with the signal grid (decision 16): how
+    long a trade is held is its call's business (`signal.call_ended`), not the ladder's."""
     flat, _ = _walk([100.5, 101.0])
-    code, _ = exit_decision(flat, 101.0, T0 + 90, CFG)
-    assert code == ReasonCode.TIME_INVALIDATION
-
-    moved, _ = _walk([104.0, 101.0])  # peak gain 4 >= 3, so the clock does not apply
-    assert exit_decision(moved, 101.0, T0 + 90, CFG) is None
+    assert exit_decision(flat, 101.0, T0 + 3600, CFG) is None
 
 
-def test_time_invalidation_does_not_fire_early():
-    s, _ = _walk([100.5])
-    assert exit_decision(s, 100.5, T0 + 89, CFG) is None
-    assert exit_decision(s, 100.5, T0 + 90, CFG) is not None
-
-
-def test_stop_is_reported_in_preference_to_the_time_stop():
-    """A trade that blew its stop AND went nowhere is a stop-out, not a timeout."""
+def test_a_blown_stop_is_a_stop_out_however_long_the_trade_has_run():
     s = _open()
     code, _ = exit_decision(s, 90.0, T0 + 300, CFG)
     assert code == ReasonCode.STOP_LOSS

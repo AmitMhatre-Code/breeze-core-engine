@@ -1,4 +1,8 @@
-"""Signal backtest for Bot 3 (docs/bots-scalping-plan.md sections 8 and 8.7).
+"""Bot 3's backtest (docs/bots-scalping-plan.md sections 8 and 8.7; signals-streamline-plan.md 8).
+
+The bot trades a cell of the signal grid (`SignalChoice`), so the replay acts on that series'
+replayed readings (`backtest_common.series_readings`) -- the very calls the signal backtest
+scores -- one trade per call, held until the call ends (`signal.call_ended`, as live).
 
 **Two ways to price the option, never mixed in one run.**
 
@@ -32,10 +36,10 @@ from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, Reas
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
 from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
+from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     MINUTE,
     DayLedger,
-    SessionVwap,
     by_day,
     split_session,
     checkpoint,
@@ -44,7 +48,6 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     spot_at,
     spot_map,
     tally_idle,
-    to_candle,
     unavailable_reading,
 )
 from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
@@ -65,11 +68,11 @@ from icici_breeze_backend.app.services.bots.scalping.paper import (
     simulate_sell,
 )
 from icici_breeze_backend.app.services.bots.scalping.signal import (
-    evaluate_momentum,
-    evaluate_variant,
-    signal_run_unbroken,
-    variant_call_unbroken,
+    call_ended,
+    call_unbroken,
+    evaluate_reading,
 )
+from icici_breeze_backend.app.services.index_signal.series import apply_direction
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
 
 __all__ = [
@@ -134,6 +137,8 @@ class BacktestResult:
     # Real prices only: ICICI returned nothing for the contract, or nothing traded at entry.
     skipped_no_data: int = 0
     skipped_no_fill: int = 0
+    # Every minute's gate verdict and the reading it saw, for the backtest zip's decisions.csv.
+    decisions: list[dict[str, Any]] = field(default_factory=list)
     days: int = 0
     # Stopped at an uncached contract; the contract is now a need for `fetch-options`.
     days_awaiting_data: int = 0
@@ -212,32 +217,28 @@ def run_backtest(
     charges: ChargesModel,
     spread: SpreadStats,
     vix_by_day: dict[datetime.date, float],
+    readings: dict[datetime.datetime, dict[str, Any]],
     default_iv: float = 0.13,
     holidays: Optional[set[datetime.date]] = None,
     weekday_map: regime.WeekdayMap = DEFAULT_EXPIRY_WEEKDAY_MAP,
     pricer: Any = None,
     spot_bars: Sequence[HistCandle] = (),
-    variant: Any = None,
-    readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
+    record_decisions: bool = False,
 ) -> BacktestResult:
-    """Replay the live signal, gates and ladder over historical futures bars.
+    """Replay the bot's signal series, gates and ladder over historical futures bars.
 
-    On a signal variant (#38) the caller passes the variant and its `readings`
-    (`backtest_common.variant_readings`, built over the whole range plus warm-up days): each
-    minute's entry is that minute's replayed call, one trade per call, held for the variant's
-    hold minutes in place of the time-invalidation test.
+    `readings` is the bot's series as published, keyed by bar start
+    (`backtest_common.series_readings`, built over the range plus warm-up days); the bot's
+    direction is applied here, as it is live. Each minute's entry is that minute's call, one
+    trade per call, held until the call ends or the ladder's stop takes it.
 
-    One position at a time, matching the bot. Sessions are per calendar day and state does
-    not carry across days -- a candle history is not a position.
+    One position at a time, matching the bot. Sessions are per calendar day and positions do
+    not carry across days.
 
     `spot_bars` are the cash index's 1-minute bars: the live bot picks its ATM strike off the
     index, and a monthly future's basis would put it a strike or two away. Real pricing needs
     them; model pricing falls back to the futures close and says so.
     """
-    if variant is None and getattr(config, "entry_signal", "momentum") != "momentum":
-        # Replaying the momentum signal for a bot set to a variant would report a bot that
-        # does not exist -- the caller must resolve the variant and its readings.
-        raise ValueError(f"config trades signal variant {config.entry_signal!r}; pass variant and readings")
     pricer = pricer or ModelPricer()
     spots = spot_map(spot_bars)
     result = BacktestResult(
@@ -260,30 +261,46 @@ def run_backtest(
         expiry = next_expiry(day, weekday_map, holidays)
         _run_day(
             day_bars, day, expiry, sigma, config, charges, spread, pricer, spots, result,
-            variant=variant, readings=readings,
+            readings=readings, record_decisions=record_decisions,
         )
     return result
 
 
-def _fresh_signal_hold(
-    candles: list, config: MomentumLongScalperConfig, ledger: DayLedger
-) -> Optional[tuple[str, str]]:
-    """The runtime's fresh-signal rule (`runtime._fresh_signal_hold`), on the replayed candles."""
+def _fresh_call_hold(reading: dict[str, Any], ledger: DayLedger) -> Optional[tuple[str, str]]:
+    """The runtime's one-trade-per-call rule, on the replayed reading."""
     start, side = ledger.totals.last_entry_candle_start, ledger.totals.last_entry_side
     if start is None or side is None:
         return None
-    if signal_run_unbroken(candles, config.signal, entry_candle_start=int(start), side=str(side)):
-        return (ReasonCode.SIGNAL_NOT_FRESH, "Still the signal run that opened the last trade.")
+    if call_unbroken(reading, entry_candle_start=int(start), side=str(side)):
+        return (ReasonCode.SIGNAL_NOT_FRESH, "Still the call that opened the last trade.")
     return None
 
 
-def _fresh_call_hold(reading: dict[str, Any], ledger: DayLedger) -> Optional[tuple[str, str]]:
-    """The runtime's one-trade-per-call rule on a variant, on the replayed reading."""
-    start, side = ledger.totals.last_entry_candle_start, ledger.totals.last_entry_side
-    if start is None or side is None:
-        return None
-    if variant_call_unbroken(reading, entry_candle_start=int(start), side=str(side)):
-        return (ReasonCode.SIGNAL_NOT_FRESH, "Still the call that opened the last trade.")
+def _epoch(moment: datetime.datetime) -> float:
+    return moment.replace(tzinfo=IST).timestamp()
+
+
+def call_end_time(
+    readings: dict[datetime.datetime, dict[str, Any]],
+    later_bars: Sequence[HistCandle],
+    *,
+    series_id: str,
+    direction: str,
+    side: str,
+    started_at: float,
+    known_until: Optional[float],
+) -> Optional[datetime.datetime]:
+    """When the runtime would first see that the call behind a trade has ended: the close of
+    the first later bar whose reading is no longer that call -- judged by `signal.call_ended`,
+    the function the live exit uses. None when it outlasts the session."""
+    until = known_until
+    for bar in later_bars:
+        reading = apply_direction(readings.get(bar.ts) or unavailable_reading(series_id), direction)
+        seen_at = bar.ts + MINUTE
+        ended, until = call_ended(reading, started_at=started_at, side=side, known_until=until,
+                                  now=_epoch(seen_at))
+        if ended:
+            return seen_at
     return None
 
 
@@ -299,43 +316,48 @@ def _run_day(
     spots: dict,
     result: BacktestResult,
     *,
-    variant: Any = None,
-    readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
+    readings: dict[datetime.datetime, dict[str, Any]],
+    record_decisions: bool = False,
 ) -> None:
-    pre_open, day_bars = split_session(day_bars)
-    # On a variant, warm-up is the variant's own business: it reads `unavailable` until its
-    # baseline is built, and that already means no trade.
-    required = 0 if variant is not None else max(config.signal.ema_period, config.signal.volume_ma_period)
-    hold_seconds = variant.hold_minutes * 60.0 if variant is not None else None
+    _pre_open, day_bars = split_session(day_bars)
+    choice = config.signal
+    series_id = choice.series_id(config.index)
     lot_size = regime.lot_size_for(INDEX, day)
     saved = checkpoint(result, _DAY_COUNTERS)
+    saved_decisions = len(result.decisions)
     ledger = DayLedger()
-    vwap = SessionVwap(pre_open)
-    candles: list = []
     i, n = 0, len(day_bars)
 
     while i < n:
         bar = day_bars[i]
-        candles.append(to_candle(bar, vwap.add(bar)))
         i += 1
         now = bar.ts + MINUTE  # the bar has closed; this is when the runtime sees it
-        if variant is not None:
-            reading = (readings or {}).get(bar.ts) or unavailable_reading(variant.id)
-            signal = evaluate_variant(reading, variant.id)
-            hold = _fresh_call_hold(reading, ledger)
-        else:
-            signal = evaluate_momentum(candles, candles[-1].vwap, config.signal)
-            hold = _fresh_signal_hold(candles, config, ledger)
+        reading = apply_direction(readings.get(bar.ts) or unavailable_reading(series_id), choice.direction)
+        signal = evaluate_reading(reading, series_id)
+        hold = _fresh_call_hold(reading, ledger)
         decision = gate(
             config,
             ledger,
             now,
             is_expiry_day=day == expiry,
-            warm=len(candles) >= required,
+            warm=True,
             has_open_position=False,
             signal=signal,
             entry_hold=hold,
         )
+        if record_decisions:
+            result.decisions.append({
+                "date": day.isoformat(),
+                "time": now.strftime("%H:%M"),
+                "futures_close": bar.close,
+                "action": decision.action,
+                "reason_code": decision.reason_code,
+                "reason": decision.reason_text,
+                "signal_state": reading.get("state"),
+                "signal_reason": reading.get("reason"),
+                "strength": reading.get("signal"),
+                "call_started": reading.get("call_started_at"),
+            })
         if decision.action != "enter":
             if decision.reason_code == ReasonCode.SIGNAL_NO_TRADE:
                 result.skipped_no_signal += 1
@@ -355,6 +377,7 @@ def _run_day(
             # Everything after this entry depends on how it plays out, so the whole day waits
             # for the data rather than being replayed on a guess.
             rollback(result, saved)
+            del result.decisions[saved_decisions:]
             result.days_awaiting_data += 1
             return
         if status == NO_DATA:
@@ -374,14 +397,16 @@ def _run_day(
             continue
         quantity = lots * lot_size
         fill = simulate_buy(bid, ask, quantity, charges)
-        ledger.opened(
-            candle_start=int(signal.values.get("candle_start", candles[-1].start)),
-            side=str(signal.side),
+        started = float(signal.values["call_started_at"])
+        ledger.opened(candle_start=int(started), side=str(signal.side))
+        call_end_at = call_end_time(
+            readings, day_bars[i:], series_id=series_id, direction=choice.direction,
+            side=str(signal.side), started_at=started, known_until=signal.values.get("held_until"),
         )
 
         exit_at, exit_bid, exit_ask, reason = _hold(
             points, entry_idx, entry_at, fill.price, quantity, config, spread, ledger, day == expiry,
-            hold_seconds=hold_seconds,
+            call_end_at=call_end_at,
         )
         out = simulate_sell(exit_bid, exit_ask, quantity, charges)
         gross, friction, net = round_trip_pnl(fill, out)
@@ -406,10 +431,9 @@ def _run_day(
                 resolution=resolution,
             )
         )
-        # Candles that closed while the position was held are still history: the fresh-signal
-        # rule reads them, exactly as the live runtime keeps building candles mid-trade.
+        # One position at a time: bars that closed while it was held are skipped, as the live
+        # runtime makes no entry decision while a position is open.
         while i < n and day_bars[i].ts + MINUTE <= exit_at:
-            candles.append(to_candle(day_bars[i], vwap.add(day_bars[i])))
             i += 1
 
 
@@ -477,18 +501,19 @@ def _hold(
     ledger: DayLedger,
     is_expiry_day: bool,
     *,
-    hold_seconds: Optional[float] = None,
+    call_end_at: Optional[datetime.datetime] = None,
 ) -> tuple[datetime.datetime, float, float, str]:
-    """Walk the price path through the ladder and the exit gates. (at, bid, ask, reason)."""
+    """Walk the price path through the ladder, the call's end and the exit gates.
+    (at, bid, ask, reason)."""
     state = ladder_mod.open_ladder(entry_price, entry_at.timestamp(), config.exits)
     at, bid, ask = entry_at, *_touch(points[entry_idx][1], spread)
     for ts, price in points[entry_idx + 1 :]:
         at = ts
         bid, ask = _touch(price, spread)
         state, _ = ladder_mod.advance(state, bid, config.exits)
-        verdict = ladder_mod.exit_decision(
-            state, bid, ts.timestamp(), config.exits, hold_seconds=hold_seconds
-        )
+        verdict = ladder_mod.exit_decision(state, bid, ts.timestamp(), config.exits)
+        if verdict is None and call_end_at is not None and ts >= call_end_at:
+            verdict = (ReasonCode.SIGNAL_WINDOW_ENDED, "The call that opened the trade ended.")
         decision = gate(
             config,
             ledger,

@@ -11,6 +11,7 @@ import {
 } from "@/lib/use-bots";
 
 import type { Tab } from "@/components/bots/ScalperSettings";
+import { SignalChoicePicker } from "@/components/bots/SignalChoicePicker";
 
 // Schedule first, the same id the other bots use for their timing tab. Every strategy block
 // has its own tab because the manual sheet prices all five structures off all three.
@@ -32,7 +33,7 @@ const STRATEGIES: { value: CasBingoStrategy; label: string; hint: string }[] = [
   {
     value: "debit_spread",
     label: "Debit spread",
-    hint: "A strong signal flip, held for the sustain period: call spread when bullish, put spread when bearish.",
+    hint: "A flip of the chosen signal, held for the sustain period: call spread when bullish, put spread when bearish (the other way when fading).",
   },
   {
     value: "long_strangle",
@@ -168,9 +169,9 @@ export function CasBingoSettings({
             <Time label="End" value={config.cas_window.end} disabled={disabled} onChange={(v) => onConfig({ cas_window: { ...config.cas_window, end: v } })} />
           </div>
           <p className="mt-1.5 text-hint text-faint">
-            Both windows are entry windows. Between about 15:15 and 15:20 the signal has no
-            reading (constituent books are empty), so spreads wait; after that it reads auction
-            books, which its readiness evidence has not scored.
+            Both windows are entry windows. Signals stop at 15:15, when the closing auction
+            begins, so inside the CAS window only the credit spread&rsquo;s auction rule (which reads
+            no signal) and the strangle&rsquo;s clock can enter.
           </p>
         </div>
         <p className="text-hint text-faint">{CAS_BINGO_REGIME_NOTE}</p>
@@ -205,6 +206,18 @@ export function CasBingoSettings({
             <strong>Warning:</strong> {CAS_BINGO_CREDIT_WARNING}
           </Warning>
         )}
+        {config.strategy !== "long_strangle" ? (
+          <div className="rounded-lg border border-border p-3">
+            <p className="mb-2 text-micro font-semibold uppercase tracking-[0.06em] text-faint">Signal the spreads read</p>
+            <SignalChoicePicker
+              value={config.signal}
+              disabled={disabled}
+              withDirection={config.strategy === "debit_spread"}
+              directionHint="Fading buys the spread against the flip. The credit spread already sells against the move, so it has no direction to choose."
+              onChange={(signal) => onConfig({ signal })}
+            />
+          </div>
+        ) : null}
         <p className="text-hint text-faint">Every structure buys its long leg first and sells only once it has filled.</p>
       </div>
     );
@@ -236,8 +249,7 @@ export function CasBingoSettings({
     return (
       <div className="space-y-4">
         <Num label="Net premium to pay" suffix="₹" step={500} min={1} max={10_000_000} value={d.premium_budget_inr} disabled={disabled} onChange={(v) => patch({ premium_budget_inr: v })} />
-        <Num label="Strong signal" step={0.05} min={0.05} max={1} value={d.strong_threshold} disabled={disabled} onChange={(v) => patch({ strong_threshold: v })} hint="|signal| the flip must reach. The navbar's own entry is 0.30." />
-        <Num label="Sustained for" suffix="min" step={0.5} min={0} max={60} value={d.sustain_minutes} disabled={disabled} onChange={(v) => patch({ sustain_minutes: v })} />
+        <Num label="Sustained for" suffix="min" step={0.5} min={0} max={60} value={d.sustain_minutes} disabled={disabled} onChange={(v) => patch({ sustain_minutes: v })} hint="How long the flip must hold before the spread is bought. The signal is chosen on the Strategy tab." />
         <Num label="Inner (bought) leg from spot" suffix="%" step={0.05} min={0} max={20} value={d.inner_pct} disabled={disabled} onChange={(v) => patch({ inner_pct: v })} hint="0 means at the money. Measured from spot when it deploys." />
         <Num label="Outer (sold) leg from spot" suffix="%" step={0.05} min={0.05} max={25} value={d.outer_pct} disabled={disabled} onChange={(v) => patch({ outer_pct: v })} />
         <Num label="Profit target" suffix="% of debit" min={1} max={1000} value={d.target_pct} disabled={disabled} onChange={(v) => patch({ target_pct: v })} />

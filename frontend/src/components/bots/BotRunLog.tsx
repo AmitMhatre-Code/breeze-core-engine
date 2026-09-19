@@ -151,7 +151,11 @@ function AuditLink({ href, backtest }: { href: string; backtest: boolean }) {
       }
       className="mt-0.5 block w-fit text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
     >
-      {backtest ? "Download backtest audit trail" : "Download full-day audit trail"}
+      {backtest
+        ? href.endsWith(".zip")
+          ? "Download backtest results (.zip)"
+          : "Download backtest audit trail"
+        : "Download full-day audit trail"}
     </a>
   );
 }

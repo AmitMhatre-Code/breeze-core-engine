@@ -27,14 +27,14 @@ def test_bot3_defaults_match_agreed_policy():
     # 25,000, not the source conversation's 10,000: at 10,000 a single ATM lot is
     # unaffordable beyond ~3 days to expiry on a 75 lot (plan section 8.5).
     assert c.premium_outlay_inr == 25000.0
-    assert c.signal.volume_multiplier == 1.5
+    # The grid cell it was running in Simulation when the grid replaced the variants.
+    assert (c.signal.mechanism, c.signal.duration, c.signal.direction) == ("expansion", 15, "fade")
     assert c.risk.consecutive_loss_limit == 3
     assert c.risk.api_budget_reserve_calls == 25
 
 
-def test_bot3_morning_window_starts_after_warmup():
-    """09:35, not 09:20: the volume MA needs 20 bars from market open, so an earlier
-    window could only ever log `not_warm`."""
+def test_bot3_morning_window_starts_at_0935():
+    """The default morning window; the signal itself reads `unavailable` until it is warm."""
     assert MomentumLongScalperConfig().sessions[0].start == "09:35"
 
 

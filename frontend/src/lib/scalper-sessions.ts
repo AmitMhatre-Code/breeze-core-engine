@@ -8,24 +8,18 @@
  *  Zero-padded HH:MM compares correctly as a string, which is why nothing here parses a
  *  time. Keep it that way: `"09:35" < "13:30"` is the whole trick.
  */
-import type { SessionWindow } from "@/lib/use-bots";
+import type { SessionWindow, SignalChoice } from "@/lib/use-bots";
 
 /** NSE's session. A window outside it can only ever log `outside_session_window`. */
 export const MARKET_OPEN = "09:15";
 export const MARKET_CLOSE = "15:30";
 
-/** The earliest a scalper can usefully start, at the default signal settings: the volume MA
- *  needs 20 one-minute bars built from live ticks and there is no historical backfill. A
- *  slower signal pushes the real figure later -- see `warmupReadyAt`. */
+/** The earliest a scalper can usefully start by default. The signals' size rankings carry over
+ *  from the previous sessions, so most read from about 09:30; a slower momentum signal starts
+ *  later -- see `warmupReadyAt`. */
 export const EARLIEST_SESSION_START = "09:35";
 
 export const MAX_SESSION_WINDOWS = 4;
-
-export type SignalPeriods = {
-  ema_period: number;
-  volume_ma_period: number;
-  candle_seconds: number;
-};
 
 function addMinutes(hhmm: string, minutes: number): string {
   const [h, m] = hhmm.split(":").map(Number);
@@ -36,37 +30,38 @@ function addMinutes(hhmm: string, minutes: number): string {
   return `${hh}:${mm}`;
 }
 
-/** When the indicators can first be computable, given the signal settings.
+/** When a signal can first read today (docs/signals-streamline-plan.md decision 15).
  *
- *  Warm-up is `max(ema, volumeMA)` bars of `candle_seconds` each, counted from the first
- *  tick rather than from a wall-clock time -- so this assumes the app was running before
- *  the open, which is the normal case and the one worth warning about. A restart mid-session
- *  re-pays it, and no static warning can predict that.
+ *  Levels reset every morning; only size rankings carry over from the previous sessions. So
+ *  volume expansion reads once NIFTY's 15-minute open-interest window has filled (09:30), and
+ *  momentum once nine of today's candles exist for its trend line: 09:24 at 1 minute, 10:00 at
+ *  5, 11:30 at 15. A restart mid-session rebuilds the day from its stored bars, so it does not
+ *  re-pay this.
  */
-export function warmupReadyAt(signal: SignalPeriods): string {
-  const bars = Math.max(signal.ema_period, signal.volume_ma_period);
-  return addMinutes(MARKET_OPEN, Math.ceil((bars * signal.candle_seconds) / 60));
+export function warmupReadyAt(signal: Pick<SignalChoice, "mechanism" | "duration">): string {
+  if (signal.mechanism === "momentum") return addMinutes(MARKET_OPEN, 9 * signal.duration);
+  return addMinutes(MARKET_OPEN, 15);
 }
 
-/** A non-blocking note when the signal settings push warm-up past the first window.
+/** A non-blocking note when the chosen signal first reads after the first window opens.
  *
- *  Deliberately not an error: blocking here would let an edit on the Signal tab invalidate
- *  a window saved on the Schedule tab, and an extreme-but-legal signal (200 bars of 5
- *  minutes) would make every window unsaveable.
+ *  Deliberately not an error: blocking here would let an edit on the Signal tab invalidate a
+ *  window saved on the Schedule tab.
  */
 export function warmupWarning(
   sessions: SessionWindow[],
-  signal: SignalPeriods | null,
+  signal: Pick<SignalChoice, "mechanism" | "duration"> | null,
 ): string | null {
   if (!signal || sessions.length === 0) return null;
   const ready = warmupReadyAt(signal);
-  if (ready <= EARLIEST_SESSION_START) return null;
   const earliest = sessions.map((w) => w.start).sort()[0];
   if (earliest >= ready) return null;
-  const bars = Math.max(signal.ema_period, signal.volume_ma_period);
+  const why =
+    signal.mechanism === "momentum"
+      ? `its trend line needs nine of today's ${signal.duration}-minute candles`
+      : "its open-interest window needs 15 minutes of today's trading";
   return (
-    `These signal settings need ${bars} bars of ${signal.candle_seconds}s, so the ` +
-    `indicators are not ready until about ${ready}. Trading before then will only log ` +
+    `This signal first reads at about ${ready} — ${why}. Trading before then will only log ` +
     `"warming up".`
   );
 }

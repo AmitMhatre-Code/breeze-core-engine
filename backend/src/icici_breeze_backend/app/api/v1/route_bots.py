@@ -76,24 +76,16 @@ def _validate_bot_type(bot_type: str) -> str:
     return bot_type
 
 
-def _require_signal_variants_exist(config: Any) -> None:
-    """A scalper may only be set to a signal variant that exists (#38). The model checks the
-    id's shape; only here, with I/O, can a deleted or mistyped one be refused."""
-    from icici_breeze_backend.app.services.index_signal import variants
+def _require_signal_available(bot_type: str, config: Any) -> None:
+    """An armed bot may only trade a signal a 30-day backtest has covered (decision 7).
 
-    wanted: list[str] = []
-    entry_signal = getattr(config, "entry_signal", None)
-    if entry_signal and entry_signal != "momentum":
-        wanted.append(entry_signal)
-    entry_filter = getattr(config, "entry_filter", None)
-    if entry_filter is not None and entry_filter.kind == "expansion_neutral":
-        wanted.append(entry_filter.variant)
-    for variant_id in wanted:
-        if variants.get_variant(variant_id) is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid bot configuration: no signal variant {variant_id!r}.",
-            )
+    Checked when a bot is armed, and when an armed bot's settings are saved. Switching a bot
+    off, and editing one that is off, are never refused -- a gate must not trap a bot on."""
+    from icici_breeze_backend.app.services.bots.signal_gate import refusal
+
+    reason = refusal(bot_type, config)
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
 
 
 def _guard_scalper_live_transition(
@@ -349,11 +341,16 @@ async def update_bot(
             parsed = model(**merged)
         except Exception as e:  # noqa: BLE001 -- surfaced to the user as a 400
             raise HTTPException(status_code=400, detail=f"Invalid bot configuration: {e}") from e
-        _require_signal_variants_exist(parsed)
         if bot_type in SCALPER_BOT_TYPES:
             _guard_scalper_live_transition(ctx.user_id, bot_type, current, merged)
 
     before = repo.get_or_create_bot(ctx.user_id, bot_type)
+    armed = payload.enabled if payload.enabled is not None else before.enabled
+    if armed and (payload.config is not None or (payload.enabled and not before.enabled)):
+        from icici_breeze_backend.app.repositories.bots import _CONFIG_MODEL
+
+        effective = _CONFIG_MODEL[bot_type](**{**before.config, **(payload.config or {})})
+        _require_signal_available(bot_type, effective)
     updated = repo.update_bot(
         ctx.user_id,
         bot_type,

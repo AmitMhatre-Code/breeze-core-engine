@@ -1,372 +1,375 @@
-"""The index signal's single source of truth: the engines, publication, and the loop driving them.
+"""Live signals: twelve series built from futures ticks, published as the current reading only.
 
-Runs in the API process, where WS ticks arrive (`depth_feed` listens on the SDK thread). Every
-consumer -- the navbar, any other screen, the bots -- reads the published payload through
-`index_signal.reader`, never an engine: the payload lives in Redis so the answer is the same in
-every process, and it carries its own expiry so a stalled publisher reads as "unavailable"
-rather than as a frozen verdict.
+docs/signals-streamline-plan.md section 3. Per index, one futures feed (NIFTY on NFO, BSESEN on
+BFO) supplies ticks; one `LiveBarBuilder` turns them into one-minute bars; six `SeriesEngine`s
+(two mechanisms x three durations) read those bars. Every publish interval each engine's snapshot
+goes to Redis under `signal:series:<id>` with a `valid_until`, and that is the only thing the
+navbar, the Signals page and the bots read (through `reader`).
 
-Cadence: the loop follows the user's P&L recompute interval (Settings -> Advanced), read fresh
-every iteration exactly as `portfolio_pnl_engine.run_pnl_loop` does. The engines update on every
-depth tick; the interval only decides how often that state is sampled, published and judged.
+No reading is ever stored (decision 4). The live session's audit trail is a backtest of the day
+once ICICI serves its bars. What IS kept is today's bars -- inputs, not signals -- in Redis until
+midnight, so a restart at 13:00 rebuilds every engine's day exactly rather than starting cold.
 
-Tuning comes from Settings -> Index Signal (`index_signal.settings`), also read every iteration,
-so every change -- including switching the signal off, which unsubscribes the depth feed --
-applies within one loop. The loop itself always runs; "off" is a state it publishes, not an
-absence of the loop.
+Each trading day the engines are rebuilt from the history cache's previous sessions plus today's
+bars (`warmup`), so live starts from the very bars a replay of today would start from.
+
+The loop always runs; outside market hours every series publishes `unavailable` with its reason.
 """
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
-import math
 import threading
 import time
-from collections import deque
-from typing import Any
+from dataclasses import asdict
+from typing import Any, Optional
 
-import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.db.redis_client import cache_get_json, cache_set_json
-from icici_breeze_backend.app.services.index_signal import depth_feed, expansion, expansion_feed
-from icici_breeze_backend.app.services.index_signal import flow, shadow_log, variants, weights
-from icici_breeze_backend.app.services.index_signal import settings as signal_settings
-from icici_breeze_backend.app.services.index_signal.engine import IndexSignalEngine
-from icici_breeze_backend.app.services.index_signal.settings import IndexSignalSettings
-from icici_breeze_backend.app.services.reference_data.keys import index_signal_key, index_spot_key
-
-if False:  # pragma: no cover - typing only
-    from icici_breeze_backend.app.services.processor import processor as Processor
+from icici_breeze_backend.app.services.index_signal import bars as bars_mod
+from icici_breeze_backend.app.services.index_signal import warmup
+from icici_breeze_backend.app.services.index_signal.bars import Bar, LiveBarBuilder
+from icici_breeze_backend.app.services.index_signal.mechanisms import (
+    INDICES,
+    SeriesKey,
+    all_keys,
+)
+from icici_breeze_backend.app.services.index_signal.series import SeriesEngine
+from icici_breeze_backend.app.services.reference_data.keys import signal_bars_key, signal_series_key
 
 _logger = logging.getLogger(__name__)
 
-LABELS: tuple[str, ...] = weights.LABELS
-EXCHANGE_FOR_LABEL: dict[str, str] = {"nifty": "NSE", "sensex": "BSE"}
-
-REASON_DISABLED = "disabled"
-
-# Which mechanism each index actually PUBLISHES (#34). Everything else runs in shadow.
-#
-# NIFTY moved to `expansion` because #33 showed W-OBI carries no information across two
-# sessions and the pre-registered flow challenger none either, on a 357-call sample.
-#
-# SENSEX stays on W-OBI for now -- not because W-OBI is better there, but because the
-# expansion mechanism has no live bar source for it yet: SENSEX futures trade a median of 20
-# contracts a minute with no trade at all in 47% of bars (#34), so its instrument is the
-# option chain, and there is no always-on SENSEX option feed. Blanking the chip was the worse
-# of the two options. Flip this the day that feed exists.
-PUBLISHED_MECHANISM: dict[str, str] = {"nifty": "expansion", "sensex": "wobi"}
-
-MECHANISM_SUFFIX = ":expansion"
-# SENSEX cannot read open interest at all -- ICICI serves none for BSE (#34).
-EXPANSION_REQUIRES_OI: dict[str, bool] = {"nifty": True, "sensex": False}
-
 # A published payload stays valid for this many publish intervals (with a floor), so one slow
-# tick does not blank the signal but a stopped loop does within seconds.
+# pass does not blank a reading but a stopped loop does within seconds.
 _VALIDITY_MULTIPLE = 3.0
 _MIN_VALIDITY_SECONDS = 10.0
-_WEIGHTS_CHECK_SECONDS = 60.0
-_UNRESOLVED_RETRY_SECONDS = 60.0
-_DEPTH_RETRY_SECONDS = 60.0
-# Live index ticks refresh the cached spot far more often than this (see `_index_spot`).
-_SPOT_MAX_AGE_SECONDS = 15.0
+FEED_RETRY_SECONDS = 30.0
+# A warm-up fetch that found nothing to do, or failed, is retried at most this often.
+WARMUP_RETRY_SECONDS = 600.0
+WARMUP_MAX_ATTEMPTS = 3
 
 _lock = threading.RLock()
-_engines: dict[str, IndexSignalEngine] = {}
-# The order-flow challengers (`flow`), shadow-logged as `<index>:flow` and published nowhere else.
-_challengers: dict[str, flow.FlowEngine] = {}
-# The price/volume/OI mechanism (`expansion`), shadow-logged as `<index>:expansion` and, where
-# PUBLISHED_MECHANISM says so, published as the index's signal.
-_expansion: dict[str, expansion.ExpansionEngine] = {}
-_expansion_bars: dict[str, expansion_feed.BarAccumulator] = {}
-# Signal variants (#38): one engine per distinct parameter set, fed the same NIFTY bars. Variants
-# that differ only in direction share an engine, and one with the incumbent's windows shares the
-# incumbent's. Engines are created on the loop thread (seeding reads the cache), never on the
-# socket thread, which only feeds the ones that exist.
-_variant_engines: dict[expansion.ExpansionParams, expansion.ExpansionEngine] = {}
-# Today's live NIFTY bars, so a variant created mid-session is seeded with them too.
-_RECENT_BARS_MAX = 400
-_recent_bars: "deque[expansion.Bar]" = deque(maxlen=_RECENT_BARS_MAX)
-_weights_meta: dict[str, dict[str, Any]] = {}
-_applied_generation: int | None = None
-_applied_top_n: int | None = None
-_unresolved_pending = False
-_last_apply_monotonic: float | None = None
-_last_weights_check_monotonic: float | None = None
-_last_depth_attempt_monotonic: float | None = None
+_builders: dict[str, LiveBarBuilder] = {}
+_engines: dict[SeriesKey, SeriesEngine] = {}
+_today_bars: dict[str, list[Bar]] = {}
+_bars_day: dict[str, datetime.date] = {}
+_dirty: set[str] = set()
+_built_for: dict[str, datetime.date] = {}
+_warmup: dict[str, dict[str, Any]] = {}
+_last_feed_attempt: dict[str, float] = {}
+# series id -> (inputs it was computed from, today's replayed readings), see `today_series`.
+_today_memo: dict[str, tuple[Any, list[tuple[Bar, dict[str, Any]]]]] = {}
 
 
-def current_settings() -> IndexSignalSettings:
-    return signal_settings.load_index_signal_settings()
-
-
-def index_signal_enabled() -> bool:
-    return current_settings().enabled
+# --------------------------------------------------------------------------------------
+# Settings read each pass
+# --------------------------------------------------------------------------------------
 
 
 def _publish_interval_seconds() -> float:
-    """The user's P&L recompute interval, read fresh (see module docstring)."""
+    """The P&L recompute interval (Settings -> Advanced), the clock everything live runs on."""
     try:
         from icici_breeze_backend.app.services.pnl_engine_settings import load_pnl_engine_settings
 
-        return float(load_pnl_engine_settings()["pnl_recompute_interval_seconds"])
+        return max(1.0, min(30.0, float(load_pnl_engine_settings()["pnl_recompute_interval_seconds"])))
     except Exception:  # noqa: BLE001
-        _logger.debug("index signal: P&L interval lookup failed; using the default", exc_info=True)
-        try:
-            return max(1.0, min(30.0, float(getattr(cfg, "PNL_ENGINE_INTERVAL_SECONDS", 2.0))))
-        except (TypeError, ValueError):
-            return 2.0
-
-
-def _engine(label: str) -> IndexSignalEngine:
-    with _lock:
-        eng = _engines.get(label)
-        if eng is None:
-            eng = IndexSignalEngine(
-                label, EXCHANGE_FOR_LABEL[label], current_settings().signal_params()
-            )
-            _engines[label] = eng
-        return eng
-
-
-def _on_book(exchange: str, short_name: str, bid_qty: float, ask_qty: float, ts: float) -> None:
-    """`depth_feed`'s book listener: NSE books drive NIFTY, BSE books drive SENSEX."""
-    for label, ex in EXCHANGE_FOR_LABEL.items():
-        if ex == exchange:
-            _engine(label).on_book(short_name, bid_qty, ask_qty, ts)
-
-
-def _challenger(label: str) -> flow.FlowEngine:
-    with _lock:
-        eng = _challengers.get(label)
-        if eng is None:
-            eng = flow.FlowEngine(label, flow.CHALLENGER_KIND[label])
-            _challengers[label] = eng
-        return eng
-
-
-def _on_top(
-    exchange: str, short_name: str, bid_px: float, bid_qty: float, ask_px: float, ask_qty: float, ts: float
-) -> None:
-    """`depth_feed`'s top-of-book listener, for the constituent-flow challenger(s)."""
-    top = flow.Top(bid_px, bid_qty, ask_px, ask_qty)
-    for label, ex in EXCHANGE_FOR_LABEL.items():
-        if ex == exchange and flow.CHALLENGER_KIND[label] == flow.KIND_CONSTITUENTS:
-            _challenger(label).on_top(short_name, top, ts)
-
-
-def expansion_label(label: str) -> str:
-    return f"{label}{MECHANISM_SUFFIX}"
-
-
-def _in_rollover_window(ts: float) -> bool:
-    """Whether the near-month futures contract is rolling, so OI is moving mechanically (#34).
-
-    Best-effort by design: a calendar lookup that fails must not stop the signal publishing,
-    and not excluding a rollover day costs some noisy readings, never a wrong trade."""
-    try:
-        from datetime import datetime
-
-        from icici_breeze_backend.app.core.timezone import IST
-        from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
-
-        today = datetime.fromtimestamp(ts, IST).date()
-        return expansion.in_rollover_window(
-            today, regime.near_month_futures_expiry(today, "NIFTY", set())
-        )
-    except Exception:  # noqa: BLE001
-        _logger.debug("index signal: rollover window check failed", exc_info=True)
-        return False
-
-
-def _expansion_engine(label: str) -> expansion.ExpansionEngine:
-    with _lock:
-        eng = _expansion.get(label)
-        if eng is None:
-            eng = expansion.ExpansionEngine(
-                label, expansion.ExpansionParams(require_oi=EXPANSION_REQUIRES_OI[label])
-            )
-            _expansion[label] = eng
-            _expansion_bars[label] = expansion_feed.BarAccumulator()
-        return eng
-
-
-def _on_futures_quote(payload: Any, ts: float) -> None:
-    """The scalper futures feed's quote observer.
-
-    One observer slot serves both mechanisms: NIFTY futures ticks drive the flow challenger
-    tick by tick, and are accumulated into one-minute bars for the expansion mechanism. Runs on
-    the SDK socket thread for every tick, so it never raises and never does I/O."""
-    if not isinstance(payload, dict):
-        return
-    top, last, ttq = flow.parse_futures_quote(payload)
-    _challenger("nifty").on_futures_quote(top, last, ttq, ts)
-
-    eng = _expansion_engine("nifty")
-    with _lock:
-        bar = _expansion_bars["nifty"].ingest(ts, payload)
-        extra = [e for e in _variant_engines.values() if e is not eng] if bar is not None else []
-        if bar is not None:
-            _recent_bars.append(bar)
-    if bar is not None:
-        eng.on_bar(bar)
-        for other in extra:
-            other.on_bar(bar)
-
-
-def _variant_engine(params: expansion.ExpansionParams) -> expansion.ExpansionEngine | None:
-    """The engine a variant reads, or None if `sync_variant_engines` has not built it yet."""
-    incumbent = _expansion_engine("nifty")
-    if params == incumbent.params:
-        return incumbent
-    with _lock:
-        return _variant_engines.get(params)
-
-
-def sync_variant_engines(*, cache_path: str | None = None) -> int:
-    """Build an engine for every variant that lacks one, and drop engines no variant uses.
-
-    Runs on the loop thread. A new engine is warmed from the backtest cache and then from the
-    bars seen live today, so a variant created mid-session is ready as soon as the incumbent
-    would be, not an hour later. Returns how many engines were built."""
-    incumbent = _expansion_engine("nifty")
-    wanted = {v.params() for v in variants.list_variants()} - {incumbent.params}
-    with _lock:
-        for params in [p for p in _variant_engines if p not in wanted]:
-            del _variant_engines[params]
-        missing = [p for p in wanted if p not in _variant_engines]
-    for params in missing:
-        eng = expansion.ExpansionEngine("nifty", params)
-        _seed_engine(eng, cache_path=cache_path)
-        with _lock:
-            _variant_engines.setdefault(params, eng)
-            recent = list(_recent_bars)
-        # Bars that completed while it was seeding; duplicates are ignored by the engine.
-        eng.seed(recent)
-    return len(missing)
-
-
-def _attach_listeners() -> None:
-    """Idempotent. The futures feed is a replaceable singleton, so this runs every loop."""
-    depth_feed.set_book_listener(_on_book)
-    depth_feed.set_top_listener(_on_top)
-    try:
-        from icici_breeze_backend.app.services.bots.scalping import futures_feed
-
-        futures_feed.get_feed().set_quote_observer(_on_futures_quote)
-    except Exception:  # noqa: BLE001 -- a challenger must never cost the live signal anything
-        _logger.debug("index signal: futures observer not attached", exc_info=True)
-
-
-def apply_runtime_settings(s: IndexSignalSettings) -> None:
-    """Push the tuning that needs no re-subscribe into the running parts. A new tau restarts the
-    smoother (see `IndexSignalEngine.set_params`); everything else applies from the next publish."""
-    params = s.signal_params()
-    for label in LABELS:
-        _engine(label).set_params(params)
-    depth_feed.set_depth_levels(s.depth_levels)
-    shadow_log.set_retention_days(s.shadow_retention_days)
-
-
-def apply_weights_if_needed(*, force: bool = False, top_n: int | None = None) -> bool:
-    """Push the current weights into the engines when they changed, the tracked count changed,
-    or names were still unresolved a minute ago. Returns True when any engine's set of tracked
-    names changed -- i.e. the depth subscriptions need to follow."""
-    global _applied_generation, _applied_top_n, _unresolved_pending, _last_apply_monotonic
-    top_n = current_settings().top_n if top_n is None else top_n
-    generation = weights.weights_generation()
-    now_m = time.monotonic()
-    with _lock:
-        due = (
-            force
-            or _applied_generation != generation
-            or _applied_top_n != top_n
-            or (
-                _unresolved_pending
-                and (_last_apply_monotonic is None or now_m - _last_apply_monotonic >= _UNRESOLVED_RETRY_SECONDS)
-            )
-        )
-        if not due:
-            return False
-        _last_apply_monotonic = now_m
-
-    changed = False
-    unresolved = False
-    for label in LABELS:
-        constituents, meta = weights.tracked_constituents(label, top_n)
-        if _engine(label).set_constituents(constituents):
-            changed = True
-        if flow.CHALLENGER_KIND[label] == flow.KIND_CONSTITUENTS:
-            _challenger(label).set_constituents(constituents)
-        # A short basket means the registry could not resolve names it should have, most often
-        # because it is still cold after a boot -- worth another try shortly.
-        unresolved = unresolved or len(constituents) < top_n
-        meta["tracked"] = len(constituents)
-        with _lock:
-            _weights_meta[label] = meta
-    with _lock:
-        _applied_generation = generation
-        _applied_top_n = top_n
-        _unresolved_pending = unresolved
-    return changed
-
-
-def depth_targets() -> list[tuple[str, str]]:
-    return [
-        (EXCHANGE_FOR_LABEL[label], short_name)
-        for label in LABELS
-        for short_name in sorted(_engine(label).tracked_short_names())
-    ]
-
-
-def ensure_depth_feed(proc: "Processor", user_id: str, *, force: bool = False) -> bool:
-    """Subscribe the depth rooms the current baskets need. True when the signal is switched off
-    (nothing owed); False when there is nothing to subscribe yet or any subscribe failed."""
-    if not index_signal_enabled():
-        return True
-    apply_weights_if_needed()
-    _attach_listeners()
-    targets = depth_targets()
-    if not targets:
-        return False
-    return depth_feed.sync_depth_subscriptions(proc, user_id, targets, force=force)
-
-
-def _index_spot(label: str, now: float | None = None) -> float | None:
-    """The index level for the shadow log, or None when the cached one is not a live tick. Out of
-    hours the navbar caches a REST close with no expiry, and it stays until the first live tick --
-    so at the open a slow index feed would otherwise log yesterday's close as the current level."""
-    payload = cache_get_json(index_spot_key(label))
-    if not isinstance(payload, dict):
-        return None
-    try:
-        ltp = float(payload.get("ltp"))
-        updated_at = float(payload.get("updated_at"))
-    except (TypeError, ValueError):
-        return None
-    ts = time.time() if now is None else now
-    if ltp <= 0 or ts - updated_at > _SPOT_MAX_AGE_SECONDS:
-        return None
-    return ltp
+        return 2.0
 
 
 def _validity_seconds(interval: float) -> float:
-    return max(_MIN_VALIDITY_SECONDS, _VALIDITY_MULTIPLE * interval)
+    return max(_MIN_VALIDITY_SECONDS, interval * _VALIDITY_MULTIPLE)
 
 
-def _write_payload(label: str, payload: dict[str, Any], valid_for: float) -> None:
+def _keys(index: str) -> list[SeriesKey]:
+    return [k for k in all_keys() if k.index == index]
+
+
+def _builder(index: str) -> LiveBarBuilder:
+    b = _builders.get(index)
+    if b is None:
+        b = _builders[index] = LiveBarBuilder()
+    return b
+
+
+def _engine(key: SeriesKey) -> SeriesEngine:
+    eng = _engines.get(key)
+    if eng is None:
+        eng = _engines[key] = SeriesEngine(key)
+    return eng
+
+
+# --------------------------------------------------------------------------------------
+# Bars in
+# --------------------------------------------------------------------------------------
+
+
+def _accept(index: str, bar: Bar) -> None:
+    """One completed bar: today's list, then every engine of the index. Caller holds `_lock`."""
+    day = bars_mod.trading_date(bar.ts)
+    if _bars_day.get(index) != day:
+        _today_bars[index] = []
+        _bars_day[index] = day
+    todays = _today_bars[index]
+    if todays and bar.ts <= todays[-1].ts:
+        return
+    todays.append(bar)
+    _dirty.add(index)
+    for key in _keys(index):
+        _engine(key).on_bar(bar)
+
+
+def _observer(index: str):
+    def on_quote(payload: Any, ts: float) -> None:
+        """Runs on the socket thread for every tick: never raises, never does I/O."""
+        try:
+            with _lock:
+                for bar in _builder(index).ingest(ts, payload):
+                    _accept(index, bar)
+        except Exception:  # noqa: BLE001
+            _logger.debug("signals: tick handling failed for %s", index, exc_info=True)
+
+    return on_quote
+
+
+def flush(now: float) -> None:
+    """Close bars the clock has left, including flat bars for a quiet contract's minutes."""
+    with _lock:
+        for index in INDICES:
+            for bar in _builder(index).flush(now):
+                _accept(index, bar)
+
+
+# --------------------------------------------------------------------------------------
+# Today's bars, kept until midnight for restarts
+# --------------------------------------------------------------------------------------
+
+
+def _seconds_to_midnight(now: float) -> int:
+    t = datetime.datetime.fromtimestamp(now, IST)
+    midnight = datetime.datetime.combine(t.date() + datetime.timedelta(days=1), datetime.time(), IST)
+    return max(60, int(midnight.timestamp() - now) + 60)
+
+
+def _persist_dirty(now: float) -> None:
+    with _lock:
+        pending = {i: list(_today_bars.get(i) or []) for i in _dirty}
+        days = {i: _bars_day.get(i) for i in _dirty}
+        _dirty.clear()
+    for index, todays in pending.items():
+        day = days.get(index)
+        if day is None:
+            continue
+        try:
+            cache_set_json(
+                signal_bars_key(index, day.isoformat()),
+                [asdict(b) for b in todays],
+                ex=_seconds_to_midnight(now),
+            )
+        except Exception:  # noqa: BLE001 -- losing the copy only costs a colder restart
+            _logger.debug("signals: could not persist today's %s bars", index, exc_info=True)
+
+
+def load_today_bars(index: str, day: datetime.date) -> list[Bar]:
+    raw = cache_get_json(signal_bars_key(index, day.isoformat()))
+    out: list[Bar] = []
+    for row in raw if isinstance(raw, list) else []:
+        try:
+            out.append(Bar(**row))
+        except TypeError:
+            continue
+    return out
+
+
+# --------------------------------------------------------------------------------------
+# Daily rebuild and warm-up
+# --------------------------------------------------------------------------------------
+
+
+def rebuild(index: str, today: datetime.date, *, cache_path: Optional[str] = None) -> int:
+    """Fresh engines for `index`, seeded from the cached sessions before today and today's bars.
+
+    Seeding happens off the lock; bars that arrive meanwhile are replayed onto the new engines
+    before they are installed, so nothing live is lost. Returns how many bars were seeded."""
+    history = warmup.cached_bars(index, today, cache_path=cache_path)
+    with _lock:
+        in_memory = list(_today_bars.get(index) or []) if _bars_day.get(index) == today else []
+    stored = load_today_bars(index, today)
+    todays = sorted({b.ts: b for b in stored + in_memory}.values(), key=lambda b: b.ts)
+    fresh = {key: SeriesEngine(key) for key in _keys(index)}
+    for eng in fresh.values():
+        eng.seed(history)
+        eng.seed(todays)
+    with _lock:
+        latest = todays[-1].ts if todays else float("-inf")
+        arrived = [b for b in (_today_bars.get(index) or []) if b.ts > latest]
+        for eng in fresh.values():
+            eng.seed(arrived)
+        _engines.update(fresh)
+        _today_bars[index] = todays + arrived
+        _bars_day[index] = today
+        _built_for[index] = today
+    return len(history) + len(todays)
+
+
+def today_series(
+    key: SeriesKey, *, now: Optional[float] = None, cache_path: Optional[str] = None
+) -> list[tuple[Bar, dict[str, Any]]]:
+    """Today's readings of one series so far, one per session minute, recomputed from the bars.
+
+    Nothing is stored about a reading, so a consumer that needs the day's history -- CAS Bingo
+    looking back for the flip before its window -- replays it: the cached sessions before today
+    to warm, then today's bars, through a fresh engine. It is the same computation the live
+    engine did, so it gives the same answer, restart or not."""
+    from icici_breeze_backend.app.services.index_signal.series import replay_series, rollover_days
+
+    ts = time.time() if now is None else now
+    today = bars_mod.trading_date(ts)
+    with _lock:
+        in_memory = list(_today_bars.get(key.index) or []) if _bars_day.get(key.index) == today else []
+    todays = sorted({b.ts: b for b in load_today_bars(key.index, today) + in_memory}.values(),
+                    key=lambda b: b.ts)
+    memo_key = (key.id, today, len(todays), todays[-1].ts if todays else None, cache_path)
+    with _lock:
+        held = _today_memo.get(key.id)
+    if held is not None and held[0] == memo_key:
+        return [(b, s) for b, s in held[1] if b.close_ts <= ts]
+    history = warmup.cached_bars(key.index, today, cache_path=cache_path)
+    excluded = rollover_days(today, today) if key.uses_oi else set()
+    rows = [
+        (bar, snap)
+        for bar, snap in replay_series(history + todays, key, excluded_days=excluded)
+        if bars_mod.trading_date(bar.ts) == today
+    ]
+    with _lock:
+        _today_memo[key.id] = (memo_key, rows)
+    return [(b, s) for b, s in rows if b.close_ts <= ts]
+
+
+def today_open(index: str, *, now: Optional[float] = None) -> Optional[float]:
+    """The futures' first session bar's open today, for moves measured on the futures' own scale."""
+    ts = time.time() if now is None else now
+    today = bars_mod.trading_date(ts)
+    with _lock:
+        todays = list(_today_bars.get(index) or []) if _bars_day.get(index) == today else []
+    if not todays:
+        todays = load_today_bars(index, today)
+    for bar in todays:
+        if bars_mod.in_session(bar):
+            return bar.open if bar.open is not None else bar.close
+    return None
+
+
+def _feed_owner() -> Optional[str]:
     try:
-        cache_set_json(index_signal_key(label), payload, ex=int(math.ceil(valid_for)) + 5)
+        from icici_breeze_backend.app.repositories.broker_session import list_users_with_session
+
+        users = list_users_with_session()
+        return users[0] if users else None
     except Exception:  # noqa: BLE001
-        _logger.warning("index signal: publish to Redis failed for %s", label, exc_info=True)
+        return None
+
+
+def _maybe_warm(index: str, today: datetime.date, now_m: float) -> None:
+    """Rebuild once per trading day; fetch the warm-up sessions if the cache lacks them."""
+    if _built_for.get(index) != today:
+        try:
+            n = rebuild(index, today)
+            _logger.info("signals: %s engines rebuilt for %s from %d bar(s)", index, today, n)
+        except Exception:  # noqa: BLE001 -- a cold engine only delays readings
+            _logger.warning("signals: rebuilding %s failed", index, exc_info=True)
+            _built_for[index] = today
+    state = _warmup.setdefault(index, {})
+    if state.get("day") != today:
+        state.clear()
+        state.update(day=today, attempts=0, last_attempt=None, running=False, calls=0)
+    if state["running"] or state["attempts"] >= WARMUP_MAX_ATTEMPTS:
+        return
+    if state["last_attempt"] is not None and now_m - state["last_attempt"] < WARMUP_RETRY_SECONDS:
+        return
+    try:
+        missing = warmup.missing_sessions(index, today)
+    except Exception:  # noqa: BLE001
+        _logger.debug("signals: warm-up check failed for %s", index, exc_info=True)
+        return
+    state["missing"] = [d.isoformat() for d in missing]
+    if not missing:
+        return
+    user_id = _feed_owner()
+    if not user_id:
+        return
+    state["running"] = True
+    state["attempts"] += 1
+    state["last_attempt"] = now_m
+
+    def run() -> None:
+        try:
+            state["calls"] += warmup.fetch_missing(index, missing, user_id)
+            rebuild(index, today)
+        except Exception:  # noqa: BLE001
+            _logger.warning("signals: warm-up fetch for %s failed", index, exc_info=True)
+        finally:
+            state["running"] = False
+
+    threading.Thread(target=run, name=f"signal-warmup-{index}", daemon=True).start()
+
+
+# --------------------------------------------------------------------------------------
+# Feeds
+# --------------------------------------------------------------------------------------
+
+
+def service_feeds(now: float) -> None:
+    """Keep both futures feeds subscribed during the session and our observer attached."""
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+    from icici_breeze_backend.app.services.market_calendar import is_market_open
+
+    for index in INDICES:
+        feed = futures_feed.get_feed(index)
+        feed.set_quote_observer(_observer(index))
+    if not is_market_open():
+        return
+    user_id = _feed_owner()
+    if not user_id:
+        return
+    for index in INDICES:
+        feed = futures_feed.get_feed(index)
+        if feed.subscribed_today:
+            continue
+        if now - _last_feed_attempt.get(index, 0.0) < FEED_RETRY_SECONDS:
+            continue
+        _last_feed_attempt[index] = now
+        try:
+            from icici_breeze_backend.app.services.bots.scalping.momentum_bot import option_expiries
+            from icici_breeze_backend.app.services.processor import processor
+
+            proc = processor()
+            expiries = option_expiries(proc, feed.stock_code, feed.exchange)
+            feed.ensure_subscribed(proc, user_id, expiries)
+        except Exception:  # noqa: BLE001 -- a dead feed must not stop publication
+            _logger.warning("signals: %s futures subscribe failed", index, exc_info=True)
+
+
+# --------------------------------------------------------------------------------------
+# Publish
+# --------------------------------------------------------------------------------------
+
+
+def _in_rollover_window(ts: float) -> bool:
+    """NIFTY near-month futures rolling: OI moves mechanically, so OI readings stand down (#34)."""
+    try:
+        from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+        from icici_breeze_backend.app.services.index_signal.expansion import in_rollover_window
+
+        today = bars_mod.trading_date(ts)
+        return in_rollover_window(today, regime.near_month_futures_expiry(today, "NIFTY", set()))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def publish_once(
-    *,
-    now: float | None = None,
-    interval: float | None = None,
-    session_open: bool | None = None,
+    *, now: Optional[float] = None, interval: Optional[float] = None, session_open: Optional[bool] = None
 ) -> dict[str, dict[str, Any]]:
-    """Snapshot every engine, publish to Redis, and feed the shadow log."""
     ts = time.time() if now is None else now
     interval = _publish_interval_seconds() if interval is None else interval
     if session_open is None:
@@ -374,305 +377,83 @@ def publish_once(
 
         session_open = is_market_open()
     valid_for = _validity_seconds(interval)
-    out: dict[str, dict[str, Any]] = {}
     excluded = _in_rollover_window(ts)
-    for label in LABELS:
-        wobi = _engine(label).snapshot(ts, session_open=session_open)
-        spot = _index_spot(label, ts)
-
-        # Every mechanism is scored against the same index level at the same moment, so the
-        # shadow report compares like with like whichever one is published.
-        mechanisms: dict[str, dict[str, Any]] = {"wobi": wobi}
-        try:
-            mechanisms["expansion"] = _expansion_engine(label).snapshot(
-                ts, session_open=session_open, excluded=excluded
-            )
-        except Exception:  # noqa: BLE001 -- a shadow mechanism never costs the live signal
-            _logger.debug("index signal: expansion snapshot failed for %s", label, exc_info=True)
-
-        payload = mechanisms.get(PUBLISHED_MECHANISM.get(label, "wobi")) or wobi
-        payload["mechanism"] = PUBLISHED_MECHANISM.get(label, "wobi")
-        with _lock:
-            payload["weights"] = dict(_weights_meta.get(label) or {})
+    out: dict[str, dict[str, Any]] = {}
+    with _lock:
+        engines = [(key, _engine(key)) for key in all_keys()]
+    for key, eng in engines:
+        payload = eng.snapshot(ts, session_open=session_open, excluded=excluded)
         payload["published_at"] = ts
         payload["valid_until"] = ts + valid_for
         payload["publish_interval_seconds"] = interval
-        _write_payload(label, payload, valid_for)
-
         try:
-            shadow_log.record(label, wobi, spot=spot, now=ts)
-        except Exception:  # noqa: BLE001 -- evidence is best-effort; never block publication
-            _logger.debug("index signal: shadow log write failed for %s", label, exc_info=True)
-        try:
-            challenger = _challenger(label).snapshot(ts, session_open=session_open)
-            shadow_log.record(flow.challenger_label(label), challenger, spot=spot, now=ts)
-        except Exception:  # noqa: BLE001 -- a challenger must never cost the live signal anything
-            _logger.debug("index signal: challenger log write failed for %s", label, exc_info=True)
-        if "expansion" in mechanisms:
-            try:
-                shadow_log.record(
-                    expansion_label(label), mechanisms["expansion"], spot=spot, now=ts
-                )
-            except Exception:  # noqa: BLE001
-                _logger.debug("index signal: expansion log failed for %s", label, exc_info=True)
-        out[label] = payload
-    try:
-        _publish_variants(
-            ts, session_open=session_open, excluded=excluded, valid_for=valid_for, interval=interval
-        )
-    except Exception:  # noqa: BLE001 -- a variant must never cost the published signal anything
-        _logger.debug("index signal: variant publication failed", exc_info=True)
+            cache_set_json(signal_series_key(key.id), payload, ex=int(valid_for) + 60)
+        except Exception:  # noqa: BLE001
+            _logger.debug("signals: publish failed for %s", key.id, exc_info=True)
+        out[key.id] = payload
     return out
-
-
-def variant_signal_key(variant_id: str) -> str:
-    return index_signal_key(f"variant:{variant_id}")
-
-
-def _publish_variants(
-    ts: float, *, session_open: bool, excluded: bool, valid_for: float, interval: float
-) -> dict[str, dict[str, Any]]:
-    """Publish and shadow-log every signal variant (#38). Bots read these, via `reader`."""
-    out: dict[str, dict[str, Any]] = {}
-    spot = _index_spot("nifty", ts)
-    for v in variants.list_variants():
-        eng = _variant_engine(v.params())
-        if eng is None:
-            snap: dict[str, Any] = {"label": "nifty", "state": "unavailable", "reason": "warming_up",
-                                    "signal": None}
-        else:
-            # The rollover exclusion is about OI moving mechanically; a variant that reads no OI
-            # has nothing it would protect.
-            snap = eng.snapshot(ts, session_open=session_open, excluded=excluded and v.requires_oi)
-        payload = variants.apply_direction(snap, v)
-        payload["published_at"] = ts
-        payload["valid_until"] = ts + valid_for
-        payload["publish_interval_seconds"] = interval
-        _write_payload(f"variant:{v.id}", payload, valid_for)
-        if not v.incumbent:  # the incumbent's readings are already logged as the mechanism's
-            try:
-                shadow_log.record(v.log_label, payload, spot=spot, now=ts)
-            except Exception:  # noqa: BLE001
-                _logger.debug("index signal: variant log failed for %s", v.id, exc_info=True)
-        out[v.id] = payload
-    return out
-
-
-def publish_disabled(*, now: float | None = None, interval: float | None = None) -> dict[str, dict[str, Any]]:
-    """What readers see while the signal is switched off: an explicit, still-expiring
-    `unavailable / disabled`, so the navbar can hide the chip rather than show "no reading"."""
-    ts = time.time() if now is None else now
-    interval = _publish_interval_seconds() if interval is None else interval
-    valid_for = _validity_seconds(interval)
-    out: dict[str, dict[str, Any]] = {}
-    for label in LABELS:
-        payload: dict[str, Any] = {
-            "label": label,
-            "exchange": EXCHANGE_FOR_LABEL[label],
-            "state": "unavailable",
-            "reason": REASON_DISABLED,
-            "signal": None,
-            "raw_wobi": None,
-            "coverage": None,
-            "constituents": [],
-            "weights": {},
-            "computed_at": ts,
-            "published_at": ts,
-            "valid_until": ts + valid_for,
-            "publish_interval_seconds": interval,
-        }
-        _write_payload(label, payload, valid_for)
-        out[label] = payload
-    return out
-
-
-def _switch_off() -> None:
-    """Drop the depth rooms. Clearing the retry clock means switching back on resubscribes on
-    the very next loop rather than after the retry throttle."""
-    global _last_depth_attempt_monotonic
-    with _lock:
-        _last_depth_attempt_monotonic = None
-    if not depth_feed.has_subscriptions():
-        return
-    try:
-        depth_feed.unsubscribe_all()
-        _logger.info("index signal switched off; depth feed unsubscribed")
-    except Exception:  # noqa: BLE001
-        _logger.warning("index signal: unsubscribing the depth feed failed", exc_info=True)
-
-
-def _maybe_sync_depth_feed(targets_changed: bool, now_m: float) -> None:
-    """Keep the subscriptions following the baskets, and retry a pass that did not complete.
-    The login prefetch normally subscribes first; this is what heals a boot with a cold registry,
-    a subscribe ICICI refused, or the signal being switched back on."""
-    global _last_depth_attempt_monotonic
-    from icici_breeze_backend.app.services.breeze_websocket_manager import current_ws_user_id
-    from icici_breeze_backend.app.services.market_calendar import is_trading_day
-
-    user_id = current_ws_user_id()
-    if user_id is None or not is_trading_day():
-        return
-    targets = depth_targets()
-    if not targets:
-        return
-    if not targets_changed:
-        if depth_feed.is_synced(targets):
-            return
-        with _lock:
-            last = _last_depth_attempt_monotonic
-        if last is not None and now_m - last < _DEPTH_RETRY_SECONDS:
-            return
-    with _lock:
-        _last_depth_attempt_monotonic = now_m
-    from icici_breeze_backend.app.services.processor import processor
-
-    ensure_depth_feed(processor(), user_id)
 
 
 def _loop_tick(interval: float) -> None:
-    global _last_weights_check_monotonic
-    s = current_settings()
-    if not s.enabled:
-        _switch_off()
-        publish_disabled(interval=interval)
-        return
-
-    apply_runtime_settings(s)
-    _attach_listeners()
+    now = time.time()
+    today = bars_mod.trading_date(now)
     now_m = time.monotonic()
-    with _lock:
-        check_weights = (
-            _last_weights_check_monotonic is None
-            or now_m - _last_weights_check_monotonic >= _WEIGHTS_CHECK_SECONDS
-        )
-        if check_weights:
-            _last_weights_check_monotonic = now_m
-    if check_weights:
-        try:
-            weights.refresh_due_weights_in_background()
-        except Exception:  # noqa: BLE001
-            _logger.warning("index signal: weights refresh check failed", exc_info=True)
+    for index in INDICES:
+        _maybe_warm(index, today, now_m)
     try:
-        changed = apply_weights_if_needed(top_n=s.top_n)
-        _maybe_sync_depth_feed(changed, now_m)
-    except Exception:  # noqa: BLE001 -- a subscription problem must not stop publication
-        _logger.warning("index signal: basket/subscription upkeep failed", exc_info=True)
-    try:
-        sync_variant_engines()
-    except Exception:  # noqa: BLE001 -- variants are shadow evidence; never block publication
-        _logger.warning("index signal: variant engine upkeep failed", exc_info=True)
-    publish_once(interval=interval)
-
-
-def seed_expansion_from_cache(
-    *, now: float | None = None, cache_path: str | None = None, lookback_days: int = 10
-) -> int:
-    """Warm NIFTY's expansion baseline from bars already in the backtest cache. Returns how many.
-
-    Without this the navbar chip reads `warming_up` for the first ~75 minutes of every session
-    after a restart, because a percentile needs a distribution to rank against (#34). Spends no
-    ICICI calls: it reads only what backtests have already fetched, so on an instance that has
-    never run one it seeds nothing and the chip warms up live as before. Best-effort by design.
-    """
-    n = _seed_engine(
-        _expansion_engine("nifty"), now=now, cache_path=cache_path, lookback_days=lookback_days
-    )
-    if n:
-        _logger.info("index signal: seeded NIFTY expansion with %d cached bar(s)", n)
-    return n
-
-
-def _seed_engine(
-    eng: expansion.ExpansionEngine,
-    *,
-    now: float | None = None,
-    cache_path: str | None = None,
-    lookback_days: int = 10,
-) -> int:
-    import datetime as _dt
-
-    from icici_breeze_backend.app.core.timezone import IST
-    from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
-    from icici_breeze_backend.app.services.index_signal.expansion_backtest import (
-        SESSION_END,
-        SESSION_START,
-    )
-
-    ts_now = time.time() if now is None else now
-    today = _dt.datetime.fromtimestamp(ts_now, IST).date()
-    try:
-        store.ensure_tables(cache_path)
-        candles = store.load_candles(
-            stock_code="NIFTY",
-            from_date=today - _dt.timedelta(days=lookback_days),
-            to_date=today,
-            path=cache_path,
-        )
+        service_feeds(now)
     except Exception:  # noqa: BLE001
-        _logger.debug("index signal: no cache to seed expansion from", exc_info=True)
-        return 0
-    p = eng.params
-    session = [
-        c for c in candles
-        if SESSION_START <= c.ts.time() <= SESSION_END and c.ts.replace(tzinfo=IST).timestamp() < ts_now
-    ]
-    tail = session[-(p.baseline_bars + p.span_minutes + 1):]
-    eng.seed(
-        [
-            expansion.Bar(
-                ts=c.ts.replace(tzinfo=IST).timestamp(), close=c.close, volume=c.volume, oi=c.oi
-            )
-            for c in tail
-        ]
-    )
-    return len(tail)
+        _logger.debug("signals: feed servicing failed", exc_info=True)
+    flush(now)
+    _persist_dirty(now)
+    publish_once(now=now, interval=interval)
 
 
 async def run_index_signal_loop() -> None:
-    """Cancelled only via the FastAPI lifespan's `task.cancel()`; one bad tick never kills it
-    (the `run_pnl_loop` idiom)."""
-    _logger.info("Index signal loop started")
-    _attach_listeners()
-    try:
-        await asyncio.to_thread(seed_expansion_from_cache)
-    except Exception:  # noqa: BLE001 -- a cold baseline only delays the first call
-        _logger.warning("index signal: expansion seed failed", exc_info=True)
+    """Cancelled only via the FastAPI lifespan; one bad pass never kills it."""
+    _logger.info("Signal loop started (%d series).", len(all_keys()))
     while True:
+        interval = _publish_interval_seconds()
         try:
-            interval = await asyncio.to_thread(_publish_interval_seconds)
-            await asyncio.sleep(interval)
             await asyncio.to_thread(_loop_tick, interval)
-        except asyncio.CancelledError:
-            raise
         except Exception:  # noqa: BLE001
-            _logger.exception("Index signal tick failed")
+            _logger.exception("signals: loop pass failed")
+        await asyncio.sleep(interval)
 
 
 def status() -> dict[str, Any]:
+    """What the Signals page shows about the live side: feeds, today's bars, warm-up."""
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+    out: dict[str, Any] = {}
     with _lock:
-        meta = {label: dict(m) for label, m in _weights_meta.items()}
-    return {
-        "settings": current_settings().to_dict(),
-        "weights": meta,
-        "weights_refresh": weights.refresh_status(),
-        "depth_feed": depth_feed.status(),
-    }
+        for index in INDICES:
+            feed = futures_feed.get_feed(index)
+            todays = _today_bars.get(index) or []
+            out[index] = {
+                "contract": feed.contract.expiry_display if feed.contract else None,
+                "subscribed_today": feed.subscribed_today,
+                "last_tick_at": feed.last_tick_at,
+                "bars_today": len(todays),
+                "last_bar_ts": todays[-1].ts if todays else None,
+                "built_for": _built_for[index].isoformat() if index in _built_for else None,
+                "warmup": {
+                    k: (v.isoformat() if isinstance(v, datetime.date) else v)
+                    for k, v in (_warmup.get(index) or {}).items()
+                    if k != "last_attempt"
+                },
+            }
+    return out
 
 
 def reset_state_for_tests() -> None:
-    global _applied_generation, _applied_top_n, _unresolved_pending, _last_apply_monotonic
-    global _last_weights_check_monotonic, _last_depth_attempt_monotonic
     with _lock:
+        _builders.clear()
         _engines.clear()
-        _challengers.clear()
-        _expansion.clear()
-        _expansion_bars.clear()
-        _variant_engines.clear()
-        _recent_bars.clear()
-        _weights_meta.clear()
-        _applied_generation = None
-        _applied_top_n = None
-        _unresolved_pending = False
-        _last_apply_monotonic = None
-        _last_weights_check_monotonic = None
-        _last_depth_attempt_monotonic = None
+        _today_bars.clear()
+        _bars_day.clear()
+        _dirty.clear()
+        _built_for.clear()
+        _warmup.clear()
+        _last_feed_attempt.clear()
+        _today_memo.clear()

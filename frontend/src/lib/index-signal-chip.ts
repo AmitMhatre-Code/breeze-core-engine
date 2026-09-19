@@ -1,10 +1,10 @@
 import type { IndexSignalSummary } from "@/lib/use-index-quotes";
 
-/** What the navbar shows for one index's direction signal (backend design-decisions #30).
+/** What the navbar shows for one index's direction signal: the 15-minute reading of the mechanism
+ * chosen on the Signals page (docs/signals-streamline-plan.md decision 11).
  *
- * "Unavailable" is rendered as a muted dash, never as neutral: neutral is a reading (balanced
- * books), unavailable means there is no reading at all. A signal switched off in Settings is
- * hidden outright rather than shown as unavailable. */
+ * "Unavailable" is rendered as a muted dash, never as neutral: neutral is a reading (the market
+ * was looked at and nothing fired), unavailable means there is no reading at all. */
 export type IndexSignalChip =
   | { visible: false }
   | {
@@ -16,81 +16,66 @@ export type IndexSignalChip =
       title: string;
     };
 
+const MECHANISM_NAME: Record<string, string> = {
+  expansion: "Volume expansion",
+  momentum: "Momentum",
+};
+
 const REASON_TEXT: Record<string, string> = {
-  warming_up: "warming up — the smoothing needs a few seconds of live order books",
-  no_bars: "no futures bars have arrived yet",
-  no_open_interest: "the futures feed is not carrying open interest",
-  excluded_session: "futures rollover — open interest moves for mechanical reasons on these days",
-  low_coverage: "too little of the index's weight has a live order book",
   market_closed: "market closed",
-  stale: "the signal feed has stalled",
-  not_published: "not published yet",
-  no_constituents: "no constituents resolved yet",
+  outside_session: "signals run 09:15–15:15",
+  warming_up: "warming up — not enough of today's candles yet",
+  no_bars: "no futures data has arrived yet today",
+  stale: "the futures feed has paused",
+  excluded_session: "futures rollover — open interest moves for mechanical reasons on these days",
+  no_open_interest: "the futures feed is not carrying open interest",
+  volume_unavailable: "a candle's traded volume is unknown",
+  vwap_unavailable: "no average traded price yet",
+  not_published: "the signal is not running",
 };
 
 const DIRECTIONAL = {
   bullish: { arrow: "▲", word: "BULL", toneClass: "bg-up-tint text-up-on-tint", name: "Bullish" },
   bearish: { arrow: "▼", word: "BEAR", toneClass: "bg-down-tint text-down-on-tint", name: "Bearish" },
-  neutral: { arrow: "●", word: "NEUT", toneClass: "bg-panel2 text-muted", name: "Neutral" },
+  neutral: { arrow: "●", word: "NEUT", toneClass: "bg-panel2 text-muted", name: "Quiet" },
 } as const;
 
-function signed(value: number): string {
-  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
-}
-
-const WEIGHTS_SOURCE_SHORT: Record<string, string> = {
-  nse_api: "NSE",
-  bse_api: "BSE",
-  niftyindices_factsheet: "niftyindices factsheet",
-  seed: "built-in seed",
-};
-
-function weightsNote(s: IndexSignalSummary): string | null {
-  if (!s.weights_source) return null;
-  const source = WEIGHTS_SOURCE_SHORT[s.weights_source] ?? s.weights_source.replace(/_/g, " ");
-  return `weights: ${source}${s.weights_as_of ? `, ${s.weights_as_of}` : ""}`;
+function source(s: IndexSignalSummary): string {
+  const name = MECHANISM_NAME[s.mechanism ?? ""] ?? "Signal";
+  const minutes = s.duration_minutes ? ` ${s.duration_minutes}m` : "";
+  return `${name}${minutes}`;
 }
 
 export function indexSignalChip(
   label: string,
   summary: IndexSignalSummary | null | undefined,
 ): IndexSignalChip {
-  if (!summary || summary.reason === "disabled") return { visible: false };
-
-  const expansion = summary.mechanism === "expansion";
+  if (!summary) return { visible: false };
 
   if (summary.state === "unavailable") {
-    const why =
-      expansion && summary.reason === "warming_up"
-        ? "warming up — needs enough one-minute bars to judge what is unusual today"
-        : (REASON_TEXT[summary.reason ?? ""] ?? "no reading");
+    const why = REASON_TEXT[summary.reason ?? ""] ?? "no reading";
     return {
       visible: true,
       state: "unavailable",
       arrow: "—",
       word: "",
       toneClass: "border border-border-soft text-faint",
-      title: `${label} direction signal unavailable: ${why}`,
+      title: `${label} · ${source(summary)}: no reading — ${why}`,
     };
   }
 
   const d = DIRECTIONAL[summary.state];
-  const parts = [`${label} direction signal: ${d.name}`];
-  const t = summary.thresholds;
-  if (summary.signal != null) {
-    if (expansion) {
-      const bar = t && "price_percentile" in t ? ` (fires above the ${Math.round(t.price_percentile * 100)}th percentile)` : "";
-      parts.push(`volume-confirmed expansion ${signed(summary.signal)}${bar}`);
-    } else {
-      const thresholds =
-        t && "enter" in t ? ` (enter ±${t.enter.toFixed(2)}, exit ±${t.exit.toFixed(2)})` : "";
-      parts.push(`order-book imbalance ${signed(summary.signal)}${thresholds}`);
-    }
+  const parts = [`${label} · ${source(summary)}: ${d.name}`];
+  if (summary.state !== "neutral" && summary.held_until) {
+    const until = new Date(summary.held_until * 1000).toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Kolkata",
+    });
+    parts.push(`call stands until ${until}`);
   }
-  // Expansion's coverage is not a share of index weight, so it is not shown as one.
-  if (summary.coverage != null && !expansion) parts.push(`coverage ${Math.round(summary.coverage * 100)}%`);
-  const note = weightsNote(summary);
-  if (note) parts.push(note);
+  if (summary.thin_data) parts.push("thin data: SENSEX futures trade lightly");
   return {
     visible: true,
     state: summary.state,

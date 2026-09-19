@@ -27,20 +27,6 @@ def _isolate_log_sink(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_signal_variants(tmp_path, monkeypatch):
-    """Signal variants (#38) live in users.sqlite3 and are cached in-process; bot configs,
-    backtests and the publisher all look them up. Without this a test would read -- and seed --
-    the developer's real backend/data/ database, and one test's created variant would answer
-    the next test's lookup."""
-    from icici_breeze_backend.app.services.index_signal import variants
-
-    monkeypatch.setattr(variants, "_db_path", lambda: str(tmp_path / "signal_variants.sqlite3"))
-    variants.reset_state_for_tests()
-    yield
-    variants.reset_state_for_tests()
-
-
-@pytest.fixture(autouse=True)
 def _clear_order_book_cache():
     """The SG order-book cache is process-global, so without this a test that reads the
     book would silently satisfy the next test's read and any assertion counting broker
@@ -74,18 +60,28 @@ def _clear_symbol_registry_cache():
 
 
 @pytest.fixture(autouse=True)
-def _index_signal_disabled_by_default(tmp_path, monkeypatch):
-    """The index signal subscribes a WS depth feed from the login prefetch and the price-feed
-    watchdog. Left on, unrelated tests of those paths would drive a real subscribe against
-    whatever socket state they mocked. Its own tests switch it back on. Its settings row is
-    pointed at a temp DB so no test reads or writes the developer's users.sqlite3."""
-    from icici_breeze_backend.app.services.index_signal import publisher
+def _signal_state_isolated(tmp_path, monkeypatch):
+    """The signal grid keeps one settings row, a table of backtest runs and in-process engines.
+    Point both tables at temp DBs so no test reads or writes the developer's users.sqlite3, and
+    start every test with no live engines or bars left over from another."""
+    from icici_breeze_backend.app.services.index_signal import backtest as signal_backtest
+    from icici_breeze_backend.app.services.index_signal import gate, publisher
     from icici_breeze_backend.app.services.index_signal import settings as signal_settings
 
+    signal_settings.reset_cache_for_tests()
+    publisher.reset_state_for_tests()
+    gate.invalidate()
     monkeypatch.setattr(
-        signal_settings, "_db_path", lambda: str(tmp_path / "index_signal_settings.sqlite3")
+        signal_settings, "_db_path", lambda: str(tmp_path / "signal_settings.sqlite3")
     )
-    monkeypatch.setattr(publisher, "index_signal_enabled", lambda: False)
+    monkeypatch.setattr(signal_backtest, "_db_path", lambda: str(tmp_path / "signal_runs.sqlite3"))
+    # The 30-day gate is open unless a test closes it: bot tests are about the bot, and the
+    # gate's own tests (test_signal_backtest.py) read `mechanism_availability` directly.
+    monkeypatch.setattr(gate, "refusal", lambda mechanism, db_path=None: None)
+    yield
+    signal_settings.reset_cache_for_tests()
+    publisher.reset_state_for_tests()
+    gate.invalidate()
 
 
 @pytest.fixture(autouse=True)

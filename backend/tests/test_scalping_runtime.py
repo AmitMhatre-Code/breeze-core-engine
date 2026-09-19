@@ -53,7 +53,7 @@ def stubbed(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "_api_calls_remaining", lambda uid: 90)
     monkeypatch.setattr(runtime, "_is_expiry_day", lambda cfg: False)
     monkeypatch.setattr(
-        runtime, "_feed_health", lambda cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
+        runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
@@ -72,7 +72,7 @@ def stubbed(monkeypatch, tmp_path):
 
 
 def test_a_pass_opens_a_session_run_and_heartbeats_it(db_path, stubbed):
-    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
     assert decision.action == "enter"  # gates clear; the bot layer would take it from here
 
     runs = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)
@@ -86,7 +86,7 @@ def test_a_pass_opens_a_session_run_and_heartbeats_it(db_path, stubbed):
 
 
 def test_repeated_passes_reuse_one_session_run(db_path, stubbed):
-    cfg = MomentumLongScalperConfig(entry_signal="momentum")
+    cfg = MomentumLongScalperConfig()
     for _ in range(5):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
@@ -106,7 +106,7 @@ def test_no_signal_is_a_recorded_verdict_not_a_silent_return(db_path, stubbed, m
             side=None, reason="volume 0.9x the 20-bar mean", values={"volume_x": 0.9}
         ),
     )
-    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
     assert decision.action == "idle"
     assert decision.reason_code == ReasonCode.SIGNAL_NO_TRADE
@@ -131,76 +131,52 @@ def _closed_entry_on(candle_start):
     )
 
 
-def _fake_candles(monkeypatch, candles):
-    from types import SimpleNamespace
+def _live_reading(monkeypatch, payload):
+    """What the bot's published series reads now (`momentum_bot.read_signal`)."""
+    from icici_breeze_backend.app.services.bots.scalping import momentum_bot
 
-    from icici_breeze_backend.app.services.bots.scalping import futures_feed
-
-    builder = SimpleNamespace(candles=candles, session_vwap=None)
-    monkeypatch.setattr(futures_feed, "get_feed", lambda: SimpleNamespace(builder=builder))
+    monkeypatch.setattr(momentum_bot, "read_signal", lambda config: payload)
 
 
-def _fast_config():
-    from icici_breeze_backend.app.domain.bots import MomentumSignalConfig
-
-    return MomentumLongScalperConfig(
-        entry_signal="momentum",
-        signal=MomentumSignalConfig(ema_period=3, volume_ma_period=3, volume_multiplier=1.5)
-    )
-
-
-def _bar(close, volume, start, vwap=99.0):
-    from icici_breeze_backend.app.services.bots.scalping.candles import Candle
-
-    return Candle(
-        start=start, open=close, high=close, low=close, close=close,
-        volume=volume, turnover=None, ticks=1, vwap=vwap,
-    )
-
-
-_RUN = [_bar(100.0, 1000, i * 60) for i in range(3)] + [_bar(110.0, 5000, 180)]
-
-
-def test_a_re_entry_on_the_same_signal_run_is_held(db_path, stubbed, monkeypatch):
-    """Stopped out, and the signal is still the run that opened the trade: no re-buy."""
+def test_a_re_entry_on_the_same_call_is_held(db_path, stubbed, monkeypatch):
+    """Stopped out, and the call that opened the trade is still standing: no re-buy."""
     _closed_entry_on(180)
-    _fake_candles(monkeypatch, _RUN + [_bar(115.0, 9000, 240, 100.0)])
+    _live_reading(monkeypatch, {"state": "bullish", "call_started_at": 180.0})
 
-    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, _fast_config())
+    decision = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
     assert decision.action == "idle"
     assert decision.reason_code == ReasonCode.SIGNAL_NOT_FRESH
-    assert "bullish signal run" in decision.reason_text
+    assert "bullish call" in decision.reason_text
 
 
-def test_a_signal_that_lapsed_and_fired_again_may_enter(db_path, stubbed, monkeypatch):
+def test_a_new_call_may_enter(db_path, stubbed, monkeypatch):
     _closed_entry_on(180)
-    _fake_candles(
-        monkeypatch, _RUN + [_bar(112.0, 1000, 240, 100.0), _bar(125.0, 20000, 300, 100.0)]
-    )
+    _live_reading(monkeypatch, {"state": "bullish", "call_started_at": 300.0})
     decision = runtime._entry_hold(
-        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None,
+        BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(), None,
         repo.scalper_day_totals(USER, BOT_MOMENTUM_LONG_SCALPER), has_open_position=False,
     )
     assert decision is None
 
 
 def test_the_first_entry_of_the_day_is_never_held(db_path, stubbed, monkeypatch):
-    _fake_candles(monkeypatch, _RUN)
+    _live_reading(monkeypatch, {"state": "bullish", "call_started_at": 180.0})
     assert runtime._entry_hold(
-        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None, ScalperDayTotals(), has_open_position=False
+        BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(), None, ScalperDayTotals(),
+        has_open_position=False,
     ) is None
 
 
 def test_a_failed_fresh_signal_check_holds_rather_than_waves_through(db_path, monkeypatch):
-    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+    from icici_breeze_backend.app.services.bots.scalping import momentum_bot
 
-    def _boom():
-        raise RuntimeError("feed gone")
+    def _boom(config):
+        raise RuntimeError("redis gone")
 
-    monkeypatch.setattr(futures_feed, "get_feed", _boom)
+    monkeypatch.setattr(momentum_bot, "read_signal", _boom)
     hold = runtime._entry_hold(
-        BOT_MOMENTUM_LONG_SCALPER, _fast_config(), None,
+        BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(), None,
         ScalperDayTotals(last_entry_candle_start=180, last_entry_side="bullish"),
         has_open_position=False,
     )
@@ -216,13 +192,13 @@ def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
     monkeypatch.setattr(
         runtime,
         "_feed_health",
-        lambda cfg: FeedHealth(
+        lambda bot_type, cfg: FeedHealth(
             warm=True, stale=False, stale_seconds=0.0,
             detail={"token_symbol": "4.1!68407", "candles": 47, "candles_required": 20,
                     "ticks_seen": 18691, "counter_resets": 3, "stale_ticks": 12},
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
     feed = (repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail or {})["feed"]
     assert feed["counter_resets"] == 3
@@ -231,7 +207,7 @@ def test_feed_counters_reach_the_run_row(db_path, stubbed, monkeypatch):
 
 def test_step_3_places_nothing_and_opens_no_cycles(db_path, stubbed):
     """The whole point of this step: observable, and inert."""
-    cfg = MomentumLongScalperConfig(entry_signal="momentum")
+    cfg = MomentumLongScalperConfig()
     for _ in range(3):
         assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg).action == "enter"
     assert repo.list_cycles(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER) == []
@@ -241,7 +217,7 @@ def test_step_3_places_nothing_and_opens_no_cycles(db_path, stubbed):
 def test_a_session_run_is_written_even_on_a_quiet_day(db_path, stubbed, monkeypatch):
     """An unexplained no-trade day is exactly what the run log exists to prevent."""
     monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 8, 12, 0))
-    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
     assert d.reason_code == ReasonCode.OUTSIDE_SESSION_WINDOW
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
 
@@ -252,7 +228,7 @@ def test_an_open_cycle_is_seen_as_a_held_position(db_path, stubbed):
         USER, BOT_MOMENTUM_LONG_SCALPER, run_id,
         structure="long_ce", legs=[], lots=1, entry_value=1000.0,
     )
-    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    d = runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
     assert d.action == "idle" and d.reason_code == "holding"
 
 
@@ -577,11 +553,11 @@ def test_the_running_row_carries_the_current_verdict(db_path, stubbed, monkeypat
     """The Reason column answers "why is nothing happening" while it is happening."""
     monkeypatch.setattr(
         runtime, "_feed_health",
-        lambda cfg: FeedHealth(
+        lambda bot_type, cfg: FeedHealth(
             warm=False, stale=False, stale_seconds=1.0, detail=_feed_detail()
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
     run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
     assert run.status == "running"
@@ -595,13 +571,13 @@ def test_the_running_row_carries_the_current_verdict(db_path, stubbed, monkeypat
 def test_the_detail_distinguishes_a_live_feed_from_an_unsubscribed_one(db_path, stubbed, monkeypatch):
     monkeypatch.setattr(
         runtime, "_feed_health",
-        lambda cfg: FeedHealth(
+        lambda bot_type, cfg: FeedHealth(
             warm=False, stale=False, stale_seconds=2.0,
             detail=_feed_detail(ticks_seen=812, candles=6, token_symbol="4.1!35001",
                                 contract="24-Sep-2026"),
         ),
     )
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
     feed = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["feed"]
     assert feed["subscribed"] is True and feed["ticks_seen"] == 812
     assert feed["candles"] == 6 and feed["candles_required"] == 20
@@ -619,7 +595,7 @@ def test_an_unchanged_verdict_is_republished_on_a_cadence_not_every_pass(db_path
     clock = [1000.0]
     monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
 
-    cfg = MomentumLongScalperConfig(entry_signal="momentum")
+    cfg = MomentumLongScalperConfig()
     for _ in range(5):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(writes) == 1
@@ -633,7 +609,7 @@ def test_a_changed_verdict_publishes_immediately(db_path, stubbed, monkeypatch):
     """A transition is the interesting moment; it must not wait out the cadence."""
     clock = [1000.0]
     monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
-    cfg = MomentumLongScalperConfig(entry_signal="momentum")
+    cfg = MomentumLongScalperConfig()
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].reason_code == "gates_clear"
 
@@ -651,7 +627,7 @@ def test_publishing_never_overwrites_a_finished_session(db_path, stubbed):
         reason_text="The day's last trading window has closed.",
     )
     runtime.reset_state_for_tests()
-    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
     run = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0]
     assert run.status == "completed" and run.reason_code == "session_complete"
@@ -663,7 +639,7 @@ def test_an_audit_write_failure_does_not_stop_the_bot(db_path, stubbed, monkeypa
         repo, "update_run_reason",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")),
     )
-    assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig(entry_signal="momentum"))
+    assert runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
 
 
 def _fly_at_noon(monkeypatch):

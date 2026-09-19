@@ -336,9 +336,13 @@ def start_bot_backtest(
     2. **Size from today's margin** for the fly and Bot 2, as the live bots do.
     3. **Replay on real ICICI prices only.** The Black-Scholes path is not offered here.
     4. **Record it where live runs are recorded**: an Activity row (`trigger="backtest"`, never
-       counted by a live guard -- see `repositories/bots.LIVE_RUNS_ONLY`) and a run-scoped audit
-       trail, sharing one id with the stored run so the row opens its trades.
+       counted by a live guard -- see `repositories/bots.LIVE_RUNS_ONLY`) and a run-scoped zip
+       of results, sharing one id with the stored run so the row opens its trades.
+
+    A bot that reads a signal is replayed once per signal setting it could use
+    (`backtest_combos`), so the row compares them; the saved setting's trades are the row's own.
     """
+    from icici_breeze_backend.app.services.bots import backtest_combos
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.audit import bot_audit
 
@@ -359,6 +363,7 @@ def start_bot_backtest(
     hol = service.holidays()
     start, end = service.resolve_period(period, from_date, to_date, now, hol)
     bot_type = service.BOT_TYPES[bot]
+    combos = backtest_combos.combos_for(bot, config)
     with _lock:
         if _thread is not None and _thread.is_alive():
             raise Busy("A backtest is already running. Wait for it, or stop it.")
@@ -429,8 +434,14 @@ def start_bot_backtest(
                     fetcher.max_calls = remaining
                     try:
                         service.fetch_underlying(fetcher, bot, start, end, indices)
+                        if bot != "expiry":
+                            # Every signal setting reads the index futures, the warm-up included.
+                            fetcher.fetch_futures(
+                                "NIFTY", start - datetime.timedelta(days=service._SIGNAL_WARMUP_DAYS), end  # noqa: SLF001
+                            )
                         outcome = service.backfill(
-                            fetcher, bot, start=start, end=end, config=config, log=fetcher.log
+                            fetcher, bot, start=start, end=end, config=config, log=fetcher.log,
+                            configs=[c.config for c in combos],
                         )
                         notes.append(outcome["message"])
                     except Stopped as exc:
@@ -453,41 +464,57 @@ def start_bot_backtest(
                 lots, scopes = sizing.get("lots"), sizing.get("scopes")
                 note(sizing["describe"])
 
-            # 3. replay on real prices
-            note(f"Replaying {service.BOT_LABELS[bot]}, {start} to {end}, on real ICICI prices…")
+            # 3. replay on real prices, once per signal setting
             book = OptionBook()
-            try:
-                result = service.replay(
-                    bot, start=start, end=end, config=config, pricer=RealPricer(book),
-                    lots=lots, scopes=scopes, holidays_=hol,
-                )
-            except service.NoCachedData as exc:
-                raise service.NoCachedData(
-                    f"{exc} " + (" ".join(notes) if notes else "")
-                ) from exc
+            readings_cache: dict[str, Any] = {}
+            results: list[tuple[Any, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]] = []
+            for n, combo in enumerate(combos, start=1):
+                if _cancel.is_set():
+                    raise RuntimeError("Stopped at your request.")
+                note(f"Replaying {service.BOT_LABELS[bot]} ({n}/{len(combos)}: {combo.label}), "
+                     f"{start} to {end}, on real ICICI prices…")
+                try:
+                    result = service.replay(
+                        bot, start=start, end=end, config=combo.config, pricer=RealPricer(book),
+                        lots=lots, scopes=scopes, holidays_=hol, readings_cache=readings_cache,
+                        record_decisions=True,
+                    )
+                except service.NoCachedData as exc:
+                    raise service.NoCachedData(
+                        f"{exc} " + (" ".join(notes) if notes else "")
+                    ) from exc
+                results.append((combo, result.summary(), service.trade_rows(result),
+                                list(getattr(result, "decisions", []) or [])))
             if book.needs:
                 store.add_needs(book.needs)
-            summary = result.summary()
+            rows = [backtest_combos.comparison_row(c, s_, t) for c, s_, t, _d in results]
+            saved_combo, summary, trades, _decisions = next(
+                (r for r in results if r[0].is_saved), results[0]
+            )
+            summary = dict(summary)
+            summary["signal_setting"] = saved_combo.label
+            summary["comparison"] = rows
             summary["option_windows_missing"] = len(book.needs)
             summary["calls_spent"] = calls
             summary["notes"] = notes
-            trades = service.trade_rows(result)
-            run.update(status="completed", summary=summary, trades=trades)
+            run.update(status="completed", summary=summary, trades=trades,
+                       combos=[{**row, "trades_list": t} for row, (_c, _s, t, _d) in zip(rows, results)])
             store.save_run(run)
 
             # 4. record
             for trade in trades:
                 trail.append({"event": "trade", **trade})
             trail.append({"event": "backtest_finished", "at": now_ist().isoformat(timespec="seconds"), "summary": summary})
-            bot_audit.write_backtest_audit(user_id, bot_type, run_id, trail)
+            bot_audit.write_backtest_zip(
+                user_id, bot_type, run_id,
+                backtest_combos.zip_members(
+                    {**run, "summary": {k: v for k, v in summary.items() if k != "comparison"}},
+                    results, rows, trail,
+                ),
+            )
 
             waiting = int(summary.get("days_awaiting_data") or 0)
-            net = float(summary.get("net_pnl") or 0.0)
-            cycles = int(summary.get("cycles") or 0)
-            reason_text = (
-                f"{period_text}: {cycles} trade(s), net ₹{net:,.0f} after costs."
-                + (f" {waiting} day(s) had no price data and were skipped." if waiting else "")
-            )
+            reason_text = backtest_combos.headline(period_text, rows)
             repo.finish_run(
                 run_id,
                 status="completed",
@@ -535,109 +562,3 @@ def start_bot_backtest(
         run.update(status="failed", error="Another backtest was already running.")
         store.save_run(run)
         raise
-
-
-def start_signal_backtest(
-    user_id: str,
-    period: str,
-    from_date: Optional[datetime.date] = None,
-    to_date: Optional[datetime.date] = None,
-) -> dict[str, Any]:
-    """The signals page's clock: one choice of period, like a bot card's (#34, #36).
-
-    Fetches whatever 1-minute futures bars NIFTY and SENSEX are missing for the range, under the
-    same rules as a bot backtest -- live broker only, outside market hours, within today's call
-    budget, and a stopped fetch is a note, never a failure -- then replays both through the
-    expansion mechanism and scores each with the live readiness test.
-    """
-    from icici_breeze_backend.app.services.index_signal import expansion_backtest as bt
-
-    if period not in service.PERIODS:
-        raise ValueError(f"Unknown period {period!r}.")
-    ensure_store()
-    now = now_ist()
-    start, end = service.resolve_period(period, from_date, to_date, now, service.holidays())
-
-    def target() -> None:
-        notes: list[str] = []
-        calls = 0
-        remaining = store.calls_remaining(now.date())
-        block = market_hours_reason()
-        if not broker_live():
-            notes.append(
-                f"Nothing fetched: this instance is in '{cfg.ICICI_BROKER_MODE}' mode, so only "
-                "history already stored was replayed."
-            )
-        elif block:
-            notes.append(
-                "Nothing fetched: ICICI history isn't fetched between 09:00 and 15:45 IST on a "
-                "trading day. Only history already stored was replayed."
-            )
-        elif remaining <= 0:
-            notes.append(
-                f"Nothing fetched: today's budget of {store.DAILY_CALL_BUDGET} ICICI calls is spent. "
-                "Only history already stored was replayed."
-            )
-        else:
-            _log(f"Fetching missing history, {start} to {end}…")
-            with _broker_scope(user_id):
-                fetcher = _fetcher(user_id)
-                fetcher.max_calls = remaining
-                try:
-                    for label in bt.LABELS:
-                        fetcher.fetch_futures(bt.STOCK_CODES[label], start, end)
-                except Stopped as exc:
-                    notes.append(f"Fetch stopped early: {exc}")
-                finally:
-                    calls = fetcher.calls
-                    store.add_calls(now.date(), calls)
-        for text in notes:
-            _log(text)
-
-        # Live readings are excluded on rollover days (`publisher._in_rollover_window`), so the
-        # replay must be too, or it scores days the live signal never speaks on.
-        rollover = bt.rollover_expiries(start, end, service.holidays())
-        indices: dict[str, Any] = {}
-        for label in bt.LABELS:
-            if _cancel.is_set():
-                # A half-finished run must not replace the last complete one.
-                _finish("stopped", message="Stopped at your request.", calls=calls)
-                return
-            _log(f"Replaying {label.upper()}…")
-            indices[label] = {
-                "summary": bt.replay(
-                    label, from_date=start, to_date=end,
-                    rollover_expiries=rollover if label == "nifty" else None,
-                )
-            }
-        # Every signal variant (#38), each under its own replay label.
-        from icici_breeze_backend.app.services.index_signal import variants as signal_variants
-
-        variant_runs: dict[str, Any] = {}
-        for variant in signal_variants.list_variants(fresh=True):
-            if _cancel.is_set():
-                _finish("stopped", message="Stopped at your request.", calls=calls)
-                return
-            _log(f"Replaying variant {variant.name}…")
-            variant_runs[variant.id] = {
-                "summary": bt.replay_variant(
-                    variant, from_date=start, to_date=end, rollover_expiries=rollover
-                )
-            }
-        bt.save_last_run(
-            {
-                "period": period,
-                "from": start.isoformat(),
-                "to": end.isoformat(),
-                "finished_at": now_ist().isoformat(timespec="seconds"),
-                "calls": calls,
-                "notes": notes,
-                "indices": indices,
-                "variants": variant_runs,
-            }
-        )
-        _finish("completed", message="Done.", calls=calls)
-
-    return _start(
-        "signal", target, from_date=start.isoformat(), to_date=end.isoformat(), period=period
-    )

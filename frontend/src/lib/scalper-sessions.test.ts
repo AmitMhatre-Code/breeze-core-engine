@@ -9,7 +9,6 @@ import {
 import type { SessionWindow } from "@/lib/use-bots";
 
 const w = (start: string, end: string): SessionWindow => ({ start, end });
-const DEFAULT_SIGNAL = { ema_period: 9, volume_ma_period: 20, candle_seconds: 60 };
 
 describe("validateSessions", () => {
   it("accepts the shipped defaults", () => {
@@ -60,37 +59,30 @@ describe("validateSessions", () => {
 });
 
 describe("warmupReadyAt", () => {
-  it("is 09:35 at the default signal settings", () => {
-    // 20 bars of 60s from the 09:15 open -- which is exactly why the default window starts there.
-    expect(warmupReadyAt(DEFAULT_SIGNAL)).toBe("09:35");
+  it("is 09:30 for volume expansion at any duration: NIFTY's OI window is 15 minutes", () => {
+    expect(warmupReadyAt({ mechanism: "expansion", duration: 1 })).toBe("09:30");
+    expect(warmupReadyAt({ mechanism: "expansion", duration: 15 })).toBe("09:30");
   });
 
-  it("moves later when the bars get slower or the periods longer", () => {
-    expect(warmupReadyAt({ ...DEFAULT_SIGNAL, candle_seconds: 300 })).toBe("10:55");
-    expect(warmupReadyAt({ ...DEFAULT_SIGNAL, volume_ma_period: 60 })).toBe("10:15");
+  it("is nine of today's candles for momentum", () => {
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 1 })).toBe("09:24");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 5 })).toBe("10:00");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 15 })).toBe("11:30");
   });
 });
 
 describe("warmupWarning", () => {
-  it("stays quiet at the defaults", () => {
-    expect(warmupWarning([w("09:35", "11:30")], DEFAULT_SIGNAL)).toBeNull();
+  it("stays quiet when the first window opens after the signal first reads", () => {
+    expect(warmupWarning([w("09:35", "11:30")], { mechanism: "expansion", duration: 15 })).toBeNull();
   });
 
-  it("warns when a slower signal pushes readiness past the first window", () => {
-    const warning = warmupWarning([w("09:35", "11:30")], {
-      ...DEFAULT_SIGNAL,
-      candle_seconds: 300,
-    });
-    expect(warning).toMatch(/10:55/);
+  it("warns when a slower signal first reads after the first window opens", () => {
+    const warning = warmupWarning([w("09:35", "11:30")], { mechanism: "momentum", duration: 15 });
+    expect(warning).toMatch(/11:30/);
+    expect(warning).toMatch(/15-minute candles/);
   });
 
-  it("stays quiet when the window already starts after warm-up", () => {
-    expect(
-      warmupWarning([w("11:00", "13:00")], { ...DEFAULT_SIGNAL, candle_seconds: 300 }),
-    ).toBeNull();
-  });
-
-  it("says nothing for a bot with no signal config, like the iron fly", () => {
+  it("says nothing for a bot with no signal, like the iron fly", () => {
     expect(warmupWarning([w("11:30", "13:30")], null)).toBeNull();
   });
 });

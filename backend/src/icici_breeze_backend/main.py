@@ -247,6 +247,10 @@ def _ensure_app_database() -> None:
             from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
 
             ensure_bots_tables(db_path)
+            from icici_breeze_backend.app.db.signals_migrate import ensure_signal_tables
+
+            # Creates the signal grid's tables and drops the retired signal's (decision 14).
+            ensure_signal_tables(db_path)
             # Single backend process per deployment, so any run still marked `running` at
             # startup is definitionally stale -- nothing else could be working on it.
             from icici_breeze_backend.app.repositories import bots as _bots_repo
@@ -565,10 +569,9 @@ def start_application():
 
         chain_sweep_task: asyncio.Task = asyncio.create_task(run_active_chain_sweep_loop())
 
-        # NIFTY/SENSEX direction signal (docs/design-decisions.md #30). Publishes on the P&L
-        # recompute clock; its depth feed is first subscribed by the login prefetch. Always
-        # started: the loop reads Settings -> Index Signal every tick and publishes `disabled`
-        # while switched off, so switching it back on needs no restart.
+        # NIFTY/SENSEX signal grid (docs/signals-streamline-plan.md). Publishes on the P&L
+        # recompute clock from the index futures feeds it keeps subscribed during the session;
+        # outside it every series publishes `unavailable` with its reason.
         from icici_breeze_backend.app.services.index_signal.publisher import run_index_signal_loop
 
         index_signal_task: asyncio.Task | None = asyncio.create_task(run_index_signal_loop())

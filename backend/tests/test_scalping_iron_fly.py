@@ -388,7 +388,7 @@ def _drive(monkeypatch, proc, now=datetime.datetime(2026, 9, 8, 12, 0)):
     monkeypatch.setattr(runtime, "_is_expiry_day", lambda cfg: False)
     monkeypatch.setattr(runtime, "_current_vix", lambda p, u, c: None)
     monkeypatch.setattr(
-        runtime, "_feed_health", lambda cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
+        runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
@@ -418,7 +418,7 @@ def _drive(monkeypatch, proc, now=datetime.datetime(2026, 9, 8, 12, 0)):
     class Feed:
         builder = Builder()
 
-    monkeypatch.setattr(runtime.futures_feed, "get_feed", lambda: Feed())
+    monkeypatch.setattr(runtime.futures_feed, "get_feed", lambda index="nifty": Feed())
 
 
 def test_the_driver_opens_a_paper_fly_inside_the_window(env, monkeypatch):

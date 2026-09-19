@@ -25,11 +25,13 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_CAS_BINGO,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_IRON_FLY_SCALPER,
     BOT_MOMENTUM_LONG_SCALPER,
 )
 from icici_breeze_backend.app.domain.bots import (
+    CasBingoConfig,
     ExpiryIndexWriterConfig,
     IronFlyScalperConfig,
     MomentumLongScalperConfig,
@@ -58,16 +60,19 @@ BOT_TYPES = {
     "momentum": BOT_MOMENTUM_LONG_SCALPER,
     "fly": BOT_IRON_FLY_SCALPER,
     "expiry": BOT_EXPIRY_INDEX_WRITER,
+    "cas": BOT_CAS_BINGO,
 }
 BOT_LABELS = {
     "momentum": "Bot 3 · Momentum scalper",
     "fly": "Bot 4 · Iron fly",
     "expiry": "Bot 2 · Expiry-day writer",
+    "cas": "Bot 5 · CAS Bingo",
 }
 CONFIG_MODELS = {
     "momentum": MomentumLongScalperConfig,
     "fly": IronFlyScalperConfig,
     "expiry": ExpiryIndexWriterConfig,
+    "cas": CasBingoConfig,
 }
 SLUG_FOR_BOT_TYPE = {bot_type: slug for slug, bot_type in BOT_TYPES.items()}
 MAX_BACKFILL_ROUNDS = 25
@@ -116,6 +121,8 @@ def expiry_scope(config: ExpiryIndexWriterConfig) -> list[Scope]:
 
 
 def indices_for(bot: str, config: Any, scopes: Optional[Sequence[Scope]] = None) -> list[str]:
+    if bot == "cas":
+        return list(config.enabled_indices())
     if bot != "expiry":
         return ["NIFTY"]
     return [s.index for s in (scopes if scopes is not None else expiry_scope(config))]
@@ -232,7 +239,11 @@ def replay(
     scopes: Optional[Sequence[Scope]] = None,
     holidays_: Optional[set[datetime.date]] = None,
     path: Optional[str] = None,
+    readings_cache: Optional[dict[str, Any]] = None,
+    record_decisions: bool = False,
 ) -> Any:
+    """Replay one bot over a range. `readings_cache` (series id -> readings) lets a run that
+    compares signal settings build each series' readings once, whichever combinations share it."""
     hol = holidays() if holidays_ is None else holidays_
     charges, spread = load_charges(), spread_stats()
     vix = store.load_vix(path=path)
@@ -264,6 +275,10 @@ def replay(
         merged.lots = lots_shown
         return merged
 
+    if bot == "cas":
+        return _replay_cas(config, start=start, end=end, pricer=pricer, hol=hol, path=path,
+                           charges=charges, spread=spread, readings_cache=readings_cache,
+                           record_decisions=record_decisions)
     futures = store.load_candles(from_date=start, to_date=end, path=path)
     if not futures:
         raise NoCachedData(f"No NIFTY futures bars are cached for {start} to {end}. Fetch data first.")
@@ -271,10 +286,11 @@ def replay(
     if bot == "fly":
         entry_filter = getattr(config, "entry_filter", None)
         kind = getattr(entry_filter, "kind", "none")
-        filter_variant, filter_readings, vix_series = None, None, None
-        if kind == "expansion_neutral":
-            filter_variant = _variant_or_raise(entry_filter.variant)
-            filter_readings = _variant_readings(filter_variant, start, end, hol, path)
+        filter_readings, vix_series = None, None
+        if kind == "signal_quiet":
+            filter_readings = _series_readings(
+                _series_key(entry_filter.signal, "nifty"), start, end, hol, path, readings_cache
+            )
         elif kind == "vix_not_rising":
             from icici_breeze_backend.app.services.bots.scalping import vix_minutes
 
@@ -288,50 +304,95 @@ def replay(
             futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
             spot_bars=spot, pricer=pricer, lots=lots or DEFAULT_LOTS, holidays=hol,
             filter_readings=filter_readings, vix_series=vix_series,
+            record_decisions=record_decisions,
         )
-    variant, readings = None, None
-    if getattr(config, "entry_signal", "momentum") != "momentum":
-        variant = _variant_or_raise(config.entry_signal)
-        readings = _variant_readings(variant, start, end, hol, path)
+    readings = _series_readings(_series_key(config.signal, "nifty"), start, end, hol, path, readings_cache)
     return run_backtest(
         futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
-        spot_bars=spot, pricer=pricer, holidays=hol, variant=variant, readings=readings,
+        spot_bars=spot, pricer=pricer, holidays=hol, readings=readings,
+        record_decisions=record_decisions,
     )
 
 
-# Bars before the range that only warm a variant's percentile baseline (#38): 120 bars is
-# about a third of a session, so a few days is plenty, and whatever is cached is used.
-_VARIANT_WARMUP_DAYS = 7
+def _replay_cas(
+    config: Any, *, start: datetime.date, end: datetime.date, pricer: Any, hol: set[datetime.date],
+    path: Optional[str], charges: Any, spread: Any, readings_cache: Optional[dict[str, Any]],
+    record_decisions: bool,
+) -> Any:
+    """CAS Bingo over each enabled index's expiry days, merged into one result."""
+    from icici_breeze_backend.app.services.bots.cas_bingo.backtest import CasResult, run_cas_backtest
+    from icici_breeze_backend.app.services.bots.cas_bingo.market import SIGNAL_LABEL
 
-
-def _variant_or_raise(variant_id: str) -> Any:
-    from icici_breeze_backend.app.services.index_signal import variants
-
-    variant = variants.get_variant(variant_id)
-    if variant is None:
-        raise ValueError(
-            f"The signal variant {variant_id!r} no longer exists. Choose another in the bot's settings."
+    merged = CasResult(price_source=getattr(pricer, "source", ""))
+    reads_signal = config.strategy in ("debit_spread", "credit_spread")
+    for index in config.enabled_indices():
+        days = expiry_days(index, start, end, hol)
+        if not days:
+            continue
+        readings = (
+            _series_readings(_series_key(config.signal, SIGNAL_LABEL[index]), start, end, hol, path,
+                             readings_cache)
+            if reads_signal else {}
         )
-    return variant
+        one = run_cas_backtest(
+            config=config, index=index, days=days,
+            index_bars=store.load_candles(stock_code=index, from_date=start, to_date=end,
+                                          table="spot_candles", path=path),
+            futures_bars=store.load_candles(stock_code=index, from_date=start, to_date=end, path=path),
+            readings=readings, charges=charges, spread=spread, pricer=pricer,
+            record_decisions=record_decisions,
+        )
+        merged.cycles.extend(one.cycles)
+        merged.decisions.extend(one.decisions)
+        for counter in ("days", "days_awaiting_data", "days_without_index", "no_trigger",
+                        "skipped_no_data", "skipped_unaffordable"):
+            setattr(merged, counter, getattr(merged, counter) + getattr(one, counter))
+    return merged
 
 
-def _variant_readings(
-    variant: Any, start: datetime.date, end: datetime.date, hol: set[datetime.date], path: Optional[str]
+# Bars before the range that only warm a series' baselines, as the live warm-up does.
+_SIGNAL_WARMUP_DAYS = 10
+
+
+def _series_key(choice: Any, index: str) -> Any:
+    from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
+
+    return SeriesKey(choice.mechanism, int(choice.duration), index)
+
+
+def _series_readings(
+    key: Any,
+    start: datetime.date,
+    end: datetime.date,
+    hol: set[datetime.date],
+    path: Optional[str],
+    cache: Optional[dict[str, Any]] = None,
 ) -> dict[datetime.datetime, dict[str, Any]]:
-    from icici_breeze_backend.app.services.bots.scalping.backtest_common import variant_readings
-    from icici_breeze_backend.app.services.index_signal.expansion_backtest import rollover_expiries
+    from icici_breeze_backend.app.services.bots.scalping.backtest_common import series_readings
+    from icici_breeze_backend.app.services.index_signal.mechanisms import STOCK_CODES
+    from icici_breeze_backend.app.services.index_signal.series import rollover_days
 
-    warm_from = start - datetime.timedelta(days=_VARIANT_WARMUP_DAYS)
-    bars = store.load_candles(from_date=warm_from, to_date=end, path=path)
-    return variant_readings(bars, variant, rollover_expiries=rollover_expiries(warm_from, end, hol))
+    if cache is not None and key.id in cache:
+        return cache[key.id]
+    warm_from = start - datetime.timedelta(days=_SIGNAL_WARMUP_DAYS)
+    bars = store.load_candles(stock_code=STOCK_CODES[key.index], from_date=warm_from, to_date=end, path=path)
+    readings = series_readings(bars, key, rollover_days=rollover_days(warm_from, end, hol))
+    if cache is not None:
+        cache[key.id] = readings
+    return readings
 
 
 def fetch_underlying(
     fetcher: Any, bot: str, start: datetime.date, end: datetime.date, indices: Sequence[str]
 ) -> None:
-    """Futures (Bot 3/4's signal and re-entry gate), each index's cash bars, and VIX."""
-    if bot != "expiry":
-        fetcher.fetch_futures("NIFTY", start, end)
+    """Futures (the signals, and Bot 4's re-entry gate), each index's cash bars, and VIX.
+    Futures reach back over the signal warm-up, which every setting a backtest compares reads."""
+    warm_from = start - datetime.timedelta(days=_SIGNAL_WARMUP_DAYS)
+    if bot == "cas":
+        for index in indices:
+            fetcher.fetch_futures(index, warm_from, end)
+    elif bot != "expiry":
+        fetcher.fetch_futures("NIFTY", warm_from, end)
     for index in indices:
         fetcher.fetch_spot(index, start, end)
     if bot == "fly":
@@ -356,26 +417,35 @@ def backfill(
     scopes: Optional[Sequence[Scope]] = None,
     log: Callable[[str], None] = print,
     max_rounds: int = MAX_BACKFILL_ROUNDS,
+    configs: Optional[Sequence[Any]] = None,
 ) -> dict[str, Any]:
     """Replay on real prices, fetch what it lacked, repeat (plan section 8.7).
+
+    `configs` replays several settings each round -- the signal combinations a bot backtest
+    compares -- so one loop fetches the option windows every one of them needs.
 
     Raises `Stopped` from the fetcher on a cancel, the market opening, or a spent budget --
     everything fetched until then is already stored, so running it again resumes.
     """
     path = fetcher.path
+    variants = list(configs) if configs else [config]
+    cache: dict[str, Any] = {}
     for round_no in range(1, max_rounds + 1):
         book = OptionBook(path)
+        waiting = 0
         try:
-            result = replay(
-                bot, start=start, end=end, config=config, pricer=RealPricer(book),
-                lots=lots, scopes=scopes, holidays_=fetcher.holidays, path=path,
-            )
+            for one in variants:
+                result = replay(
+                    bot, start=start, end=end, config=one, pricer=RealPricer(book),
+                    lots=lots, scopes=scopes, holidays_=fetcher.holidays, path=path,
+                    readings_cache=cache,
+                )
+                waiting = max(waiting, int(result.summary().get("days_awaiting_data", 0) or 0))
         except NoCachedData as exc:
             return {"complete": False, "rounds": round_no, "message": str(exc)}
         store.add_needs(book.needs, path=path)
         pending = store.pending_needs(path=path)
         if not pending:
-            waiting = result.summary().get("days_awaiting_data", 0)
             tail = f" {waiting} day(s) still wait for data." if waiting else ""
             return {
                 "complete": not waiting,
@@ -606,8 +676,8 @@ def saved_summary(user_id: str) -> dict[str, Any]:
             "label": BOT_LABELS["momentum"],
             "lines": [
                 f"₹{momentum.premium_outlay_inr:,.0f} premium outlay, ATM option",
-                f"Ladder: stop {momentum.exits.stop_loss_pts:g} pts, runner at {momentum.exits.target_pts:g} pts, "
-                f"time stop {momentum.exits.time_invalidation_seconds}s",
+                f"Signal: {momentum.signal.label()}, held until the call ends",
+                f"Ladder: stop {momentum.exits.stop_loss_pts:g} pts, runner at {momentum.exits.target_pts:g} pts",
                 f"Windows {windows(momentum)}",
             ],
         },
