@@ -16,6 +16,20 @@ data, not of where it came from (#33):
 * **Correlation is per day, never pooled.** Pooling sessions manufactures correlation.
 * **A signal that rarely speaks cannot be judged.** Fewer than 30 separate calls a side is
   "too few calls", whatever the hit rate says.
+
+Two things the hit-rate test cannot see, so they are scored separately (`horizons`):
+
+* **Hit rate cannot tell "knows nothing" from "knows something, pointing the wrong way".** Both
+  come back as a poor hit rate, but only one of them is worth trading -- backwards. So every
+  horizon is scored in both directions: `follow` as published and `fade` against it.
+* **Hit rate is not money.** A signal right 46% of the time whose wins are twice its losses pays;
+  one right 54% of the time whose wins are half its losses does not. So each horizon also carries
+  the average move net of the breakeven, and how big that average is against the day-to-day
+  scatter (`t`) -- per day, never pooled, for the same reason the correlation is.
+
+And one the *duration* cannot see: a call's information does not have to peak at the length of
+the window that produced it. Scoring only at +d and +2d hides that, so every call is scored at
+every horizon in FORWARD_MINUTES and `best` names the one that paid most.
 """
 from __future__ import annotations
 
@@ -31,6 +45,12 @@ from icici_breeze_backend.app.services.index_signal.states import DIRECTIONAL
 
 FORWARD_MINUTES: tuple[int, ...] = (1, 5, 15, 30)
 MIN_SEPARATE_CALLS = 30
+#: Sessions a horizon needs before its average is reported as anything but noise.
+MIN_DAYS_FOR_HORIZON = 20
+#: How many times its own daily scatter a horizon's net average must be to count as standing out.
+#: Two is the usual "outside the noise" line, and with ~100 sessions it is a real bar, not a
+#: formality -- most of the grid does not clear it.
+T_STANDS_OUT = 2.0
 _Z95 = 1.959963984540054
 _TOLERANCE_SECONDS = 90.0
 _MIN_DAY_READINGS_FOR_CORRELATION = 10
@@ -58,6 +78,63 @@ def _pearson(xs: list[float], ys: list[float]) -> Optional[float]:
     if sxx <= 0 or syy <= 0:
         return None
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / math.sqrt(sxx * syy)
+
+
+def _day_mean_and_t(
+    pairs: list[tuple[datetime.date, float]], bar: float
+) -> tuple[Optional[float], Optional[float], int]:
+    """(average of the daily averages, how many times its own scatter that average is once the
+    bar is paid, sessions). Averaged per day first: a day with 40 overlapping calls is one day's
+    worth of evidence, not 40 independent ones (#33)."""
+    by_day: dict[datetime.date, list[float]] = {}
+    for day, value in pairs:
+        by_day.setdefault(day, []).append(value)
+    daily = [sum(v) / len(v) for v in by_day.values()]
+    n = len(daily)
+    if n < 3:
+        return (sum(daily) / n if n else None), None, n
+    mean = sum(daily) / n
+    var = sum((d - mean) ** 2 for d in daily) / (n - 1)
+    if var <= 0:
+        return mean, None, n
+    return mean, (mean - bar) / math.sqrt(var / n), n
+
+
+def _horizon_score(
+    pairs: list[tuple[datetime.date, float]], *, breakeven_bps: float, fade: bool
+) -> dict[str, Any]:
+    """One horizon, one direction: what a trade taken on every call would have averaged.
+
+    `net_bps` is the average move the traded way once the round trip is paid. `t` is that average
+    measured against its own day-to-day scatter, so a big average built out of two lucky sessions
+    does not read as a finding. `stands_out` is the pair of them: positive and outside the noise.
+    """
+    signed = [(day, (-value if fade else value)) for day, value in pairs]
+    mean, t, days = _day_mean_and_t(signed, breakeven_bps)
+    right = sum(1 for _, v in signed if v >= breakeven_bps)
+    wrong = sum(1 for _, v in signed if v <= -breakeven_bps)
+    net = None if mean is None else mean - breakeven_bps
+    stands_out = bool(
+        net is not None and net > 0 and t is not None and t >= T_STANDS_OUT
+        and days >= MIN_DAYS_FOR_HORIZON
+    )
+    return {
+        "calls": len(signed),
+        "days": days,
+        "right": right,
+        "wrong": wrong,
+        "hit_rate": _r(right / (right + wrong), 4) if (right + wrong) else None,
+        "mean_move_bps": _r(mean),
+        "net_bps": _r(net),
+        "t": _r(t),
+        "stands_out": stands_out,
+        "verdict": (
+            "not_enough_days" if days < MIN_DAYS_FOR_HORIZON
+            else "pays" if stands_out
+            else "unclear" if (net is not None and net > 0)
+            else "loses"
+        ),
+    }
 
 
 class Levels:
@@ -231,6 +308,9 @@ def score_series(
 
     # -- calls ----------------------------------------------------------------------------
     tallies = {s: _SideTally(horizon_s) for s in DIRECTIONAL}
+    # Every call's called-way move at every horizon, kept with its session so the averages can be
+    # taken per day. A call's information need not peak at its own duration -- see the docstring.
+    by_horizon: dict[int, list[tuple[datetime.date, float]]] = {h: [] for h in FORWARD_MINUTES}
     current: Optional[dict[str, Any]] = None
 
     def close_call(call: dict[str, Any], end_bar: Optional[Bar], end_snap: Optional[dict[str, Any]],
@@ -247,6 +327,13 @@ def score_series(
         lasted = (end_t - t0) / 60.0
         move_d = _called(levels.forward_bps(t0, l0, duration), side)
         move_2d = _called(levels.forward_bps(t0, l0, 2 * duration), side)
+        call_day = bars_mod.trading_date(t0 - 1)
+        horizon_moves: dict[int, Optional[float]] = {}
+        for h in FORWARD_MINUTES:
+            at_h = _called(levels.forward_bps(t0, l0, h), side)
+            horizon_moves[h] = at_h
+            if at_h is not None:
+                by_horizon[h].append((call_day, at_h))
         end_level = end_bar.close if end_bar is not None else last_bar.close
         move_end = _called((end_level / l0 - 1.0) * 1e4 if l0 > 0 else None, side)
         path = levels.between(t0, end_t)
@@ -273,6 +360,7 @@ def score_series(
             "how_it_ended": how,
             "lasted_minutes": round(lasted, 1),
             "withdrawn_early": how != "lapsed" and how != "session_end" and lasted < duration,
+            **{f"move_{h}m_bps": _r(v) for h, v in horizon_moves.items()},
             f"move_{duration}m_bps": _r(move_d),
             f"move_{2 * duration}m_bps": _r(move_2d),
             "move_at_end_bps": _r(move_end),
@@ -280,7 +368,7 @@ def score_series(
             "worst_move_bps": _r(mae),
             f"result_{duration}m": outcome,
             "breakeven_bps": _r(breakeven_bps, 3),
-            "rough_pnl_one_lot_rupees": _rough_rupees(move_d, l0, breakeven),
+            "rough_pnl_rupees": _rough_rupees(move_d, l0, breakeven),
         })
         out.calls.append(call)
 
@@ -367,6 +455,27 @@ def score_series(
             "edge": _r(hit - share, 4) if hit is not None and share is not None else None,
             "verdict": verdict,
         }
+    # -- every horizon, both ways round ----------------------------------------------------
+    horizons: dict[str, dict[str, Any]] = {}
+    for h in FORWARD_MINUTES:
+        horizons[str(h)] = {
+            "follow": _horizon_score(by_horizon[h], breakeven_bps=breakeven_bps, fade=False),
+            "fade": _horizon_score(by_horizon[h], breakeven_bps=breakeven_bps, fade=True),
+        }
+    best: Optional[dict[str, Any]] = None
+    for h, both in horizons.items():
+        for direction, score in both.items():
+            net = score.get("net_bps")
+            if net is None:
+                continue
+            # Something that stands out always beats something that merely averaged more, so a
+            # big number built on a handful of sessions cannot become the headline.
+            rank = (bool(score["stands_out"]), float(net))
+            if best is None or rank > best["_rank"]:
+                best = {"_rank": rank, "horizon_minutes": int(h), "direction": direction, **score}
+    if best is not None:
+        best.pop("_rank", None)
+
     verdicts = [sides[s]["verdict"] for s in DIRECTIONAL]
     if "worse" in verdicts:
         overall = "worse"
@@ -381,8 +490,8 @@ def score_series(
         vals = [c[key] for c in out.calls if isinstance(c.get(key), (int, float))]
         return round(sum(vals) / len(vals), 2) if vals else None
 
-    rupees = [c["rough_pnl_one_lot_rupees"] for c in out.calls
-              if isinstance(c.get("rough_pnl_one_lot_rupees"), (int, float))]
+    rupees = [c["rough_pnl_rupees"] for c in out.calls
+              if isinstance(c.get("rough_pnl_rupees"), (int, float))]
     replayed_days = sorted(per_day)
     readings = len(rows)
     directional = sum(states.get(s, 0) for s in DIRECTIONAL)
@@ -409,6 +518,9 @@ def score_series(
         "hit_rate": round(all_right / all_decided, 4) if all_decided else None,
         "sides": sides,
         "verdict": overall,
+        "horizons": horizons,
+        "best": best,
+        "tradeable": bool(best and best.get("stands_out")),
         f"mean_move_{duration}m_bps": mean(f"move_{duration}m_bps"),
         f"mean_move_{2 * duration}m_bps": mean(f"move_{2 * duration}m_bps"),
         "mean_move_at_end_bps": mean("move_at_end_bps"),
@@ -417,7 +529,7 @@ def score_series(
         "withdrawn_early": sum(1 for c in out.calls if c.get("withdrawn_early")),
         "breakeven_bps": _r(breakeven_bps, 3),
         "breakeven": breakeven or {},
-        "rough_pnl_one_lot_rupees": round(sum(rupees), 0) if rupees else None,
+        "rough_pnl_rupees": round(sum(rupees), 0) if rupees else None,
         "mean_daily_correlation": round(sum(correlations) / len(correlations), 4) if correlations else None,
         "days_with_correlation": len(correlations),
     }
@@ -425,14 +537,17 @@ def score_series(
 
 
 def _rough_rupees(move_bps: Optional[float], level: float, breakeven: Optional[dict[str, Any]]) -> Optional[float]:
-    """What one lot of the at-the-money option might have made on the call over its duration:
-    the called-way index points x lot x delta 0.5, less one round trip of charges. Rough by
-    construction -- no spread, no decay, a fixed delta -- and labelled so wherever it is shown;
-    the bot backtests price real options."""
+    """What the at-the-money option might have made on the call over its duration, at the size the
+    bar is priced on (`breakeven["lots"]`): called-way index points x quantity x delta 0.5, less
+    one round trip of charges and spread. Rough by construction -- no decay, a fixed delta -- and
+    labelled so wherever it is shown; the bot backtests price real options."""
     if move_bps is None or not breakeven:
         return None
-    lot, cost = breakeven.get("lot_size"), breakeven.get("cost_rupees")
-    if not lot or cost is None or not level > 0:
+    quantity, cost = breakeven.get("quantity"), breakeven.get("cost_rupees")
+    if not quantity:  # older summaries carried only the one-lot size
+        lot = breakeven.get("lot_size")
+        quantity = (lot * int(breakeven.get("lots") or 1)) if lot else None
+    if not quantity or cost is None or not level > 0:
         return None
     points = move_bps / 1e4 * level
-    return round(points * float(lot) * ATM_DELTA - float(cost), 2)
+    return round(points * float(quantity) * ATM_DELTA - float(cost), 2)

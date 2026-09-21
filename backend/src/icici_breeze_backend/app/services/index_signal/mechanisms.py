@@ -36,7 +36,7 @@ NAVBAR_DURATION = 15
 
 # v2 of expansion: readings are timed at the bar's close and the session ends with the 15:14
 # bar. v1 (#34/#38) timed calls from the bar's start and read the 15:15 bar.
-VERSIONS: dict[str, int] = {"expansion": 2, "momentum": 1}
+VERSIONS: dict[str, int] = {"expansion": 3, "momentum": 2}
 
 # ICICI futures stock codes, and the exchange segment each one trades on.
 STOCK_CODES: dict[str, str] = {"nifty": "NIFTY", "sensex": "BSESEN"}

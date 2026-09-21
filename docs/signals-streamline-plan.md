@@ -294,7 +294,7 @@ Each step lands green on the full backend suite and `npm test`.
 - **The volume of a flat minute.** The live bar builder writes a flat zero-volume bar for a quiet minute only within five minutes of the last print, matching ICICI's flat bars without hiding a feed outage.
 - **The warm-up is two cached sessions**, not ten days. Every window a series keeps fits inside one session, so the engine state at the open is the same as a replay's, for a fraction of the work.
 - **CAS Bingo's credit move uses the futures' open.** Comparing a futures level with the cash open would have added the basis to a 0.5% trigger.
-- **The Bot 3 exit when the signal cannot be read.** The trade holds until its call would have lapsed on its own, then closes. The replay uses the same function (`signal.call_ended`).
+- **The Bot 3 exit when the signal cannot be read.** The trade holds; an unreadable reading is never an exit. *Superseded in part by the 2026-09-21 round below* — it used to hold only until the call would have lapsed, then close.
 - **CAS Bingo backtest approximations**, stated in every run's notes:
   - credit spreads are sized by maximum loss per lot;
   - liquidation of other positions is not replayed.
@@ -302,3 +302,47 @@ Each step lands green on the full backend suite and `npm test`.
 - **Not done, for the user to decide:**
   - no `changelog.ts` entry or version bump;
   - the backtest CLI (`scripts/scalping_backtest.py`) still replays a single setting.
+
+
+## 12. The 2026-09-21 round (design-decisions #40)
+
+Prompted by reading the first long run (2026-04-01 → 09-18: 12 series, 117 sessions, 17,200 calls),
+which the page reported as *"No series showed an edge"* while five of the twelve were `worse` —
+which is a fade candidate, not a failure. Six changes; the reasoning and every measurement are in
+design-decisions #40.
+
+**Reporting only — no bot behaviour changes**
+1. **Both directions are scored.** Each series reports follow *and* fade. The page sentence and the
+   activity-log headline name the candidates in either direction.
+2. **Every horizon is scored**, not just the call's own duration: 1, 5, 15 and 30 minutes, with
+   `best` naming the winner. Decision 5 had welded the horizon to the window, and the 1-minute
+   series' information peaks at +15.
+3. **Money, not hit rate.** Each horizon carries the average move net of the bar and `t`, its size
+   against the day-to-day scatter, taken per session first. `stands_out` needs a positive net,
+   t ≥ 2 and ≥20 sessions.
+4. **The bar is size-aware and includes the spread.** `cost_lots` on the Signals page (default 1,
+   so nothing moves until it is set); the spread comes from `scalping/spreads.spread_stats()`.
+   `rough_pnl_one_lot_rupees` becomes `rough_pnl_rupees`, priced at that size.
+
+**Mechanism changes — both close their mechanism until a fresh ≥30-day backtest runs**
+5. **Expansion v3**: a window whose anchor bar never traded is `unavailable`
+   (`anchor_not_traded`), because its move is measured from a carried-forward price. Gates the
+   current reading only, never the baseline.
+6. **Momentum v2**: the EMA is carried across the night shifted by the overnight gap, ending a
+   blind spot that ran to 11:30 on the 15-minute series every day. VWAP still resets.
+
+**Bot behaviour**
+7. **A signal trade is no longer closed by its call running out.** The stop, the trailing stop, a
+   call the other way (`signal.call_reversed`) and the square-off close it. Deliberate cost,
+   accepted: a quiet trade can hold to the square-off and tie up margin far past its window.
+
+**Decided against**: a cross-check between the two mechanisms (fade expansion only when momentum
+does not confirm). It replicated, weakly, but breaks the rule that a series reads only its own
+bars. If it comes back it belongs on the bot side as a filter.
+
+**Still to do**
+- **Run one ≥30-day signal backtest in an evening.** Both mechanisms changed version, so every
+  signal-using bot stands down until then — expected, and the run log says so.
+- Re-run the bot backtests afterwards: they price real options, and every bps figure in #40 assumes
+  a 0.5 delta with no decay and no gamma.
+- No `changelog.ts` entry or version bump yet.

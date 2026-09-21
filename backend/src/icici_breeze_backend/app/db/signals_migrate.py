@@ -2,8 +2,9 @@
 
 docs/signals-streamline-plan.md. Two tables are created in users.sqlite3:
 
-* `signal_settings` -- one global row: which mechanism the navbar shows. The signal is app-wide
-  (single-tenant deployment), so its one setting is too.
+* `signal_settings` -- one global row: which mechanism the navbar shows, and how many lots the
+  breakeven bar is priced on. The signal is app-wide (single-tenant deployment), so its settings
+  are too.
 * `signal_backtest_runs` -- one row per signal backtest: its range, status, the mechanism versions
   it replayed, its headline summary and where its zip is. The 30-day availability gate reads it.
 
@@ -35,6 +36,12 @@ def ensure_signal_tables(db_path: str) -> None:
             )
             """
         )
+        # Added after the table shipped: the size the breakeven bar is priced on. 1 keeps the
+        # conservative one-lot bar every earlier run was scored against, so an existing
+        # deployment reads the same until someone changes it.
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(signal_settings)")}
+        if "cost_lots" not in columns:
+            conn.execute("ALTER TABLE signal_settings ADD COLUMN cost_lots INTEGER NOT NULL DEFAULT 1")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS signal_backtest_runs (

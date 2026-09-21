@@ -135,13 +135,34 @@ def test_momentum_fires_bullish_on_trend_vwap_and_top_volume():
     assert last.components["volume_rank"] == 1.0
 
 
-def test_momentum_levels_reset_at_the_open_so_a_gap_is_not_a_breakout():
+def test_a_gap_at_the_open_is_not_a_breakout():
+    """The property that matters, kept through #40's change to the trend line.
+
+    It used to hold because the EMA was rebuilt daily and so said nothing for nine candles --
+    which also blinded the 15-minute series until 11:30 every day. The line is now carried over
+    shifted by the overnight gap, so it is live from the first candle AND a gap still cannot fire
+    a call: a session that gaps and then does nothing sits exactly on its own line."""
+    for gap in (-2.0, 2.0):
+        ev = MomentumEvaluator(MomentumParams(candle_minutes=1))
+        _warm(ev, DAY - datetime.timedelta(days=1))
+        opened_at = 100.0 + gap
+        # Gap at the open on heavy volume, then flat: the heavy volume passes the volume test,
+        # so only the trend line stands between the gap and a call.
+        first = ev.on_bar(bar(DAY, 9, 15, opened_at, volume=900.0))
+        assert first is not None
+        assert first.side is None, f"a {gap}% gap fired a call on its own"
+        assert first.components["ema"] == pytest.approx(opened_at)
+
+
+def test_the_trend_line_is_live_from_the_first_candle_of_a_second_session():
+    """The blind spot #40 removed: at 15-minute candles the old rule said nothing until 11:30."""
     ev = MomentumEvaluator(MomentumParams(candle_minutes=1))
     _warm(ev, DAY - datetime.timedelta(days=1))
-    # Gap up 2% at the open on heavy volume: the EMA is rebuilt from today's candles, so there is
-    # no trend reading until nine candles exist today.
-    first = ev.on_bar(bar(DAY, 9, 15, 102.0, volume=900.0))
-    assert first is not None and first.side is None and first.reason == "warming_up"
+    first = ev.on_bar(bar(DAY, 9, 15, 100.0, volume=100.0))
+    assert first is not None
+    assert first.components["ema"] is not None
+    assert first.components["candles_today"] == 1
+    assert first.reason != "warming_up"
 
 
 def test_momentum_evaluates_five_minute_candles_only_when_they_close():

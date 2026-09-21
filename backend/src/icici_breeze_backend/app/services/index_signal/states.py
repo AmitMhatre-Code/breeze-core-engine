@@ -23,6 +23,7 @@ REASON_STALE = "stale"
 REASON_EXCLUDED_SESSION = "excluded_session"
 REASON_NO_OI = "no_open_interest"
 REASON_VOLUME_UNKNOWN = "volume_unavailable"
+REASON_ANCHOR_NOT_TRADED = "anchor_not_traded"
 REASON_VWAP_UNKNOWN = "vwap_unavailable"
 REASON_NOT_PUBLISHED = "not_published"
 
@@ -42,6 +43,7 @@ NO_READING_REASONS = frozenset(
         REASON_EXCLUDED_SESSION,
         REASON_NO_OI,
         REASON_VOLUME_UNKNOWN,
+        REASON_ANCHOR_NOT_TRADED,
         REASON_VWAP_UNKNOWN,
         REASON_NOT_PUBLISHED,
     }

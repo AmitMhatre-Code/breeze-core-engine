@@ -8,6 +8,7 @@ import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import type { BacktestPeriod } from "@/lib/bots-backtest";
 import {
   backtestSentence,
+  horizonDetail,
   DURATIONS,
   INDEX_LABEL,
   reasonText,
@@ -17,6 +18,7 @@ import {
   useCancelSignalBacktest,
   useSetNavbarMechanism,
   useSignalBacktestRuns,
+  useSetCostLots,
   useSignals,
   useStartSignalBacktest,
   verdictTone,
@@ -101,6 +103,7 @@ function BacktestPanel({ data, running }: { data: SignalsOverview; running: bool
         One run replays both signals at 1, 5 and 15 minutes on NIFTY and SENSEX and saves every reading, every
         call and what followed it in one zip. Missing history is fetched from ICICI outside market hours.
       </p>
+      <CostLotsField data={data} />
       {running && job ? (
         <div className="mt-3 space-y-2 rounded-lg border border-border bg-panel2 p-3 text-xs">
           <div className="flex items-center justify-between gap-2">
@@ -151,6 +154,69 @@ function BacktestPanel({ data, running }: { data: SignalsOverview; running: bool
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * How big a trade the cost bar is priced on.
+ *
+ * Most of a one-lot round trip is the flat per-order brokerage, which does not grow when you
+ * trade more — so the bar at ten lots is about a third of the bar at one, and scoring everything
+ * at one lot quietly fails signals that a real position would clear. This is a fact about the
+ * trader, not a tuning knob on the signal: it changes what the numbers are compared against,
+ * never what the signals say.
+ */
+function CostLotsField({ data }: { data: SignalsOverview }) {
+  const save = useSetCostLots();
+  const [draft, setDraft] = useState(String(data.cost_lots));
+  const [seen, setSeen] = useState(data.cost_lots);
+  // Follow the server when the stored size changes underneath us, but never mid-save. Adjusted
+  // during render rather than in an effect, so the field never flashes the old value first.
+  if (seen !== data.cost_lots && !save.isPending) {
+    setSeen(data.cost_lots);
+    setDraft(String(data.cost_lots));
+  }
+
+  const commit = () => {
+    const lots = Number(draft);
+    if (!Number.isInteger(lots) || lots < 1 || lots > data.max_cost_lots) {
+      setDraft(String(data.cost_lots));
+      return;
+    }
+    if (lots !== data.cost_lots) save.mutate(lots);
+  };
+
+  return (
+    <div className="mt-3 max-w-prose">
+      <label htmlFor="signals-cost-lots" className="app-text-label">
+        Trade size for costs
+      </label>
+      <div className="mt-1 flex items-center gap-2">
+        <input
+          id="signals-cost-lots"
+          type="number"
+          min={1}
+          max={data.max_cost_lots}
+          step={1}
+          inputMode="numeric"
+          className="app-input w-24"
+          value={draft}
+          disabled={save.isPending}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+        />
+        <span className="text-xs text-muted">lot{data.cost_lots === 1 ? "" : "s"}</span>
+      </div>
+      <p className="mt-1 text-hint text-faint">
+        A call has to move the index far enough to pay for one round trip. Most of that cost is the flat
+        per-order fee, which does not grow with size, so a bigger trade clears a smaller move. Takes effect on
+        the next backtest.
+        {save.error ? <span className="text-down"> Could not save that size.</span> : null}
+      </p>
+    </div>
   );
 }
 
@@ -253,7 +319,8 @@ function MechanismCard({
                 {indices.map((i) => {
                   const s = seriesFor(m, d, i);
                   if (!s) return <td key={i} />;
-                  const tone = verdictTone(s.last_backtest?.verdict);
+                  const tone = verdictTone(s.last_backtest?.best);
+                  const detail = horizonDetail(s.last_backtest ?? null);
                   return (
                     <td key={i} className="py-2 pr-3">
                       <ReadingChip reading={s.reading} />
@@ -264,6 +331,9 @@ function MechanismCard({
                       >
                         {backtestSentence(s.last_backtest, d)}
                       </p>
+                      {detail ? (
+                        <p className="mt-0.5 max-w-xs leading-snug text-hint text-faint">{detail}</p>
+                      ) : null}
                     </td>
                   );
                 })}
@@ -274,8 +344,11 @@ function MechanismCard({
       </div>
       {data.last_backtest ? (
         <p className="mt-2 text-hint text-faint">
-          Backtest figures are from the run covering {data.last_backtest.from} to {data.last_backtest.to}. &ldquo;Right&rdquo;
-          means the index moved the called way by enough to pay one option lot&rsquo;s trading costs.
+          Backtest figures are from the run covering {data.last_backtest.from} to {data.last_backtest.to}. Each
+          series is scored 1, 5, 15 and 30 minutes after a call, both with the signal and against it, and the
+          best of those is what is shown &mdash; a call need not say most about the length of window that made
+          it. &ldquo;After costs&rdquo; means after one round trip of charges and the bid-ask spread, at the size
+          set above.
         </p>
       ) : null}
     </section>
@@ -292,8 +365,15 @@ function runResult(run: SignalBacktestRun): string {
   if (run.status === "running") return "Running…";
   const series = Object.values(run.series);
   const calls = series.reduce((n, s) => n + (s.calls ?? 0), 0);
-  const edges = series.filter((s) => s.verdict === "edge").length;
-  return `${calls} calls across ${series.length} series; ${edges ? `${edges} showed an edge` : "none showed an edge"}.`;
+  // Counted in both directions: a series that is reliably wrong is one to trade backwards, and
+  // counting only "edge" printed "none showed an edge" over runs whose findings were all fades.
+  const follow = series.filter((s) => s.tradeable && s.best_direction === "follow").length;
+  const fade = series.filter((s) => s.tradeable && s.best_direction === "fade").length;
+  const parts: string[] = [];
+  if (follow) parts.push(`${follow} worth following`);
+  if (fade) parts.push(`${fade} worth going against`);
+  const tail = parts.length ? parts.join(" and ") : "none stood out either way";
+  return `${calls} calls across ${series.length} series; ${tail}.`;
 }
 
 function ActivityLog({ running, gateDays }: { running: boolean; gateDays: number }) {

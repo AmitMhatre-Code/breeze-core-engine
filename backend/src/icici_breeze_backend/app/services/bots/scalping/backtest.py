@@ -2,7 +2,8 @@
 
 The bot trades a cell of the signal grid (`SignalChoice`), so the replay acts on that series'
 replayed readings (`backtest_common.series_readings`) -- the very calls the signal backtest
-scores -- one trade per call, held until the call ends (`signal.call_ended`, as live).
+scores -- one trade per call, held until the stop, the trailing stop, a signal reversal or the
+square-off closes it (`signal.call_reversed`, as live).
 
 **Two ways to price the option, never mixed in one run.**
 
@@ -36,7 +37,6 @@ from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, Reas
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
 from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
-from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
     MINUTE,
     DayLedger,
@@ -68,7 +68,7 @@ from icici_breeze_backend.app.services.bots.scalping.paper import (
     simulate_sell,
 )
 from icici_breeze_backend.app.services.bots.scalping.signal import (
-    call_ended,
+    call_reversed,
     call_unbroken,
     evaluate_reading,
 )
@@ -276,31 +276,24 @@ def _fresh_call_hold(reading: dict[str, Any], ledger: DayLedger) -> Optional[tup
     return None
 
 
-def _epoch(moment: datetime.datetime) -> float:
-    return moment.replace(tzinfo=IST).timestamp()
-
-
-def call_end_time(
+def call_reversal_time(
     readings: dict[datetime.datetime, dict[str, Any]],
     later_bars: Sequence[HistCandle],
     *,
     series_id: str,
     direction: str,
     side: str,
-    started_at: float,
-    known_until: Optional[float],
 ) -> Optional[datetime.datetime]:
-    """When the runtime would first see that the call behind a trade has ended: the close of
-    the first later bar whose reading is no longer that call -- judged by `signal.call_ended`,
-    the function the live exit uses. None when it outlasts the session."""
-    until = known_until
+    """When the runtime would first see the signal fire the other way: the close of the first
+    later bar whose reading is a call against the open trade -- judged by `signal.call_reversed`,
+    the function the live exit uses. None when nothing turns before the session ends.
+
+    A call merely lapsing no longer closes a trade, so this no longer needs to know when the call
+    began or when it would have run out."""
     for bar in later_bars:
         reading = apply_direction(readings.get(bar.ts) or unavailable_reading(series_id), direction)
-        seen_at = bar.ts + MINUTE
-        ended, until = call_ended(reading, started_at=started_at, side=side, known_until=until,
-                                  now=_epoch(seen_at))
-        if ended:
-            return seen_at
+        if call_reversed(reading, side=side):
+            return bar.ts + MINUTE
     return None
 
 
@@ -399,14 +392,14 @@ def _run_day(
         fill = simulate_buy(bid, ask, quantity, charges)
         started = float(signal.values["call_started_at"])
         ledger.opened(candle_start=int(started), side=str(signal.side))
-        call_end_at = call_end_time(
+        reversal_at = call_reversal_time(
             readings, day_bars[i:], series_id=series_id, direction=choice.direction,
-            side=str(signal.side), started_at=started, known_until=signal.values.get("held_until"),
+            side=str(signal.side),
         )
 
         exit_at, exit_bid, exit_ask, reason = _hold(
             points, entry_idx, entry_at, fill.price, quantity, config, spread, ledger, day == expiry,
-            call_end_at=call_end_at,
+            reversal_at=reversal_at,
         )
         out = simulate_sell(exit_bid, exit_ask, quantity, charges)
         gross, friction, net = round_trip_pnl(fill, out)
@@ -501,9 +494,9 @@ def _hold(
     ledger: DayLedger,
     is_expiry_day: bool,
     *,
-    call_end_at: Optional[datetime.datetime] = None,
+    reversal_at: Optional[datetime.datetime] = None,
 ) -> tuple[datetime.datetime, float, float, str]:
-    """Walk the price path through the ladder, the call's end and the exit gates.
+    """Walk the price path through the ladder, a signal reversal and the exit gates.
     (at, bid, ask, reason)."""
     state = ladder_mod.open_ladder(entry_price, entry_at.timestamp(), config.exits)
     at, bid, ask = entry_at, *_touch(points[entry_idx][1], spread)
@@ -512,8 +505,8 @@ def _hold(
         bid, ask = _touch(price, spread)
         state, _ = ladder_mod.advance(state, bid, config.exits)
         verdict = ladder_mod.exit_decision(state, bid, ts.timestamp(), config.exits)
-        if verdict is None and call_end_at is not None and ts >= call_end_at:
-            verdict = (ReasonCode.SIGNAL_WINDOW_ENDED, "The call that opened the trade ended.")
+        if verdict is None and reversal_at is not None and ts >= reversal_at:
+            verdict = (ReasonCode.SIGNAL_REVERSED, "The signal turned the other way.")
         decision = gate(
             config,
             ledger,

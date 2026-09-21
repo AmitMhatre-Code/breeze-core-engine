@@ -10,9 +10,26 @@ nearest expiry's at-the-money option, bought and sold at the same premium:
     breakeven points = cost / (lot size x delta)        breakeven bps = points / level x 10^4
 
 The premium is the previous session's close from the F&O bhavcopy, not a live quote: the screen
-reads this every minute, and about three-quarters of a round trip is flat brokerage and its GST,
-so a day-old premium moves the answer by a few rupees. With no bhavcopy price the cost is the flat
-part alone. The bhavcopy has no bid or ask, so the spread a real fill gives up is NOT included.
+reads this every minute, and about three-quarters of a *one-lot* round trip is flat brokerage and
+its GST, so a day-old premium moves the answer by a few rupees. With no bhavcopy price the cost is
+the flat part alone.
+
+Why the bar depends on how many lots
+------------------------------------
+Brokerage is Rs 20 per order however big the order is, so it amortises and the bar falls steeply
+with size. Priced on NIFTY at a Rs 90 premium: one lot needs 0.80 bps, five lots 0.31 and ten
+lots 0.24 -- a third of the one-lot figure. Judging a signal against the one-lot bar therefore
+fails signals that a real position size would clear, which is why `lots` is an argument and not
+an assumption. It defaults to 1 so an unsized caller gets the most conservative bar.
+
+Why the spread is in the bar
+----------------------------
+The bhavcopy has no bid or ask, so this used to leave the spread out entirely and say so. That
+made the bar too kind in the opposite direction: unlike brokerage, the spread scales with size
+and never amortises, so at the sizes where brokerage stops mattering the spread is most of what
+is left. It is taken from `scalping/spreads.spread_stats()` -- the same observed median this
+deployment feeds its bot backtests, never a second number -- and `spread_source` reports whether
+that was calibrated from real quotes or is still the uncalibrated default.
 
 `SCALP_DELTA` assumes an at-the-money option. A scalper buying further out earns less per index
 point and needs a bigger move, so this is the lowest bar a trade could clear, not a promise.
@@ -144,28 +161,66 @@ def atm_premium(label: str, today: date | None = None) -> float | None:
     return _daily("premium", label, today, _atm_premium)
 
 
-def breakeven(label: str, level: float | None) -> dict[str, Any]:
-    """The round trip, its inputs, and the breakeven move in index points and bps. `points`/`bps`
-    are None when the lot size or the index level is not known, and the caller falls back."""
+def _spread_rupees(premium: float | None, quantity: int) -> tuple[float, str, float]:
+    """(rupees given up to the spread over a round trip, where that came from, the % used).
+
+    One full spread per round trip: half on the way in, half on the way out. With no premium
+    there is nothing to take a percentage of, so the spread is 0 rather than a guess."""
+    try:
+        from icici_breeze_backend.app.services.bots.scalping import spreads
+
+        stats = spreads.spread_stats()
+    except Exception:  # noqa: BLE001 -- an unreadable sample table must not break the bar
+        return 0.0, "unavailable", 0.0
+    if not premium or premium <= 0:
+        return 0.0, stats.source, stats.median_spread_pct
+    return stats.spread_for(float(premium)) * quantity, stats.source, stats.median_spread_pct
+
+
+def breakeven(label: str, level: float | None, *, lots: int = 1) -> dict[str, Any]:
+    """The round trip, its inputs, and the breakeven move in index points and bps, for a position
+    of `lots` lots. `points`/`bps` are None when the lot size or the index level is not known, and
+    the caller falls back.
+
+    `charges_bps` and `spread_bps` split the bar into the half that amortises with size and the
+    half that does not -- see the module docstring. `bps` is their sum, and is what a call has to
+    beat."""
+    lots = max(1, int(lots))
     lot = lot_size(label)
     premium = atm_premium(label)
-    cost = points = bps = None
+    cost = charges = spread = points = bps = charges_bps = spread_bps = None
+    spread_source = "unavailable"
+    spread_pct = 0.0
     if lot:
+        quantity = lot * lots
         price = premium or 0.0  # no price: the flat brokerage and its GST alone
-        cost = trading_charges.load_charges().round_trip(
-            price, price, lot, exchange_code=_SEGMENT_FOR_LABEL.get(label, cfg.NFO)
+        charges = trading_charges.load_charges().round_trip(
+            price, price, quantity, exchange_code=_SEGMENT_FOR_LABEL.get(label, cfg.NFO)
         )
+        spread, spread_source, spread_pct = _spread_rupees(premium, quantity)
+        cost = charges + spread
         if level and level > 0:
-            points = cost / (lot * SCALP_DELTA)
+            per_point = quantity * SCALP_DELTA
+            points = cost / per_point
             bps = points / level * 1e4
+            charges_bps = charges / per_point / level * 1e4
+            spread_bps = spread / per_point / level * 1e4
     return {
         "cost_rupees": round(cost, 2) if cost is not None else None,
+        "charges_rupees": round(charges, 2) if charges is not None else None,
+        "spread_rupees": round(spread, 2) if spread is not None else None,
+        "spread_source": spread_source,
+        "spread_pct_of_premium": round(spread_pct, 4),
         "premium": premium,
         "lot_size": lot,
+        "lots": lots,
+        "quantity": (lot * lots) if lot else None,
         "delta": SCALP_DELTA,
         "index_level": level,
         "points": round(points, 2) if points is not None else None,
         "bps": round(bps, 3) if bps is not None else None,
+        "charges_bps": round(charges_bps, 3) if charges_bps is not None else None,
+        "spread_bps": round(spread_bps, 3) if spread_bps is not None else None,
     }
 
 

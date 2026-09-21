@@ -236,9 +236,12 @@ def test_one_call_buys_once_in_the_backtest_too():
     assert result.summary()["skipped_same_signal"] == result.skipped_same_signal
 
 
-def test_a_trade_is_closed_when_its_call_ends():
-    """The duration is the horizon the call is about: the trade is held until the call lapses,
-    then closed, however the option has moved (stop and ladder permitting)."""
+def test_a_lapsed_call_no_longer_closes_the_trade():
+    """The call's length is no longer the maximum hold.
+
+    It used to be: a trade was closed the moment its call lapsed, which made a one-minute signal
+    mean a one-minute hold and left the trailing stop no room to move. Now a call going quiet is
+    nothing, and a winner runs until the stop, a reversal or the square-off takes it."""
     day = _NEAR_EXPIRY
     closes = [24_000.0] * 25 + [24_000.0 + 1 * i for i in range(1, 30)]
     bars = _bars(day, closes, [1_000] * len(closes))
@@ -247,9 +250,31 @@ def test_a_trade_is_closed_when_its_call_ends():
                           vix_by_day={day: 13.0})
     assert len(result.cycles) == 1
     c = result.cycles[0]
-    assert c.exit_reason == "signal_window_ended"
-    # Seen at the close of the first quiet bar (index 31, 09:46), i.e. 09:47.
-    assert c.exited_at == datetime.datetime.combine(day, datetime.time(9, 47))
+    assert c.exit_reason != "signal_window_ended"
+    # It outlives the bar the call lapsed on (09:47), which is where it used to be closed.
+    assert c.exited_at > datetime.datetime.combine(day, datetime.time(9, 47))
+
+
+def test_a_trade_is_closed_when_the_signal_turns_the_other_way():
+    """A call the other way is not the clock running out -- it is the signal saying the opposite
+    of what opened the trade, and that still closes it."""
+    day = _NEAR_EXPIRY
+    closes = [24_000.0] * 25 + [24_000.0 + 1 * i for i in range(1, 30)]
+    bars = _bars(day, closes, [1_000] * len(closes))
+    readings = _scripted_call(bars, 25, 30)
+    # From bar 34 the signal calls bearish against the open bullish trade.
+    started = bars[34].ts.replace(tzinfo=IST).timestamp() + 60
+    for b in bars[34:]:
+        close = b.ts.replace(tzinfo=IST).timestamp() + 60
+        readings[b.ts] = {"state": "bearish", "call_started_at": started,
+                          "held_until": close + 60, "signal": -0.9, "reason": None}
+    result = run_backtest(bars, config=_config(), readings=readings, charges=CHARGES, spread=SPREAD,
+                          vix_by_day={day: 13.0})
+    assert result.cycles
+    c = result.cycles[0]
+    assert c.exit_reason == "signal_reversed"
+    # Seen at the close of the first bearish bar (index 34, 09:49), i.e. 09:50.
+    assert c.exited_at == datetime.datetime.combine(day, datetime.time(9, 50))
 
 
 def test_fade_buys_the_put_on_a_bullish_call():

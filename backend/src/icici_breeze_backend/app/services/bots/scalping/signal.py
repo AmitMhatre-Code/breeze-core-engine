@@ -77,6 +77,28 @@ def call_unbroken(payload: dict[str, Any], *, entry_candle_start: int, side: str
     return int(float(started)) == int(entry_candle_start)
 
 
+def call_reversed(payload: dict[str, Any], *, side: str) -> bool:
+    """True when the live reading is a call the *other* way from the trade that is open.
+
+    This is what closes a signal trade now. It used to be closed when its call simply ran out
+    (`call_ended`, decision 5), which welded how long a trade may be held to the length of the
+    window that produced it: a one-minute call meant a one-minute maximum hold, and the trailing
+    stop -- the whole mechanism for letting a winner run -- never got a chance to move. Measured
+    over 117 sessions, 89% of one-minute calls ended by simply lapsing, so nearly every trade was
+    closed by that clock rather than by anything about the trade.
+
+    A call merely lapsing to quiet is now nothing: the stop and the trailing stop decide, and the
+    hard square-off still flattens everything before the close (`decide`). But a call fired the
+    other way is not the clock running out, it is the signal saying the opposite of what opened
+    the trade, and holding through that would be holding a position the bot's own signal is now
+    against. `unavailable` is not a reversal and never closes anything (#30).
+
+    `payload` has already been turned the bot's way, so for a bot set to fade, "the other way"
+    means the other way round for the bot, not for the mechanism (`index_signal.series`)."""
+    state = str(payload.get("state") or "unavailable")
+    return state in ("bullish", "bearish") and state != side
+
+
 def call_ended(
     payload: dict[str, Any], *, started_at: float, side: str, known_until: Optional[float], now: float
 ) -> tuple[bool, Optional[float]]:

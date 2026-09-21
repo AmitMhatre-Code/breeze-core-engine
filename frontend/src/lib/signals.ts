@@ -38,6 +38,37 @@ export type SideVerdict = {
   separate_calls: number;
 };
 
+/** One horizon, one direction: what a trade taken on every call would have averaged. */
+export type HorizonScore = {
+  calls: number;
+  days: number;
+  right: number;
+  wrong: number;
+  hit_rate: number | null;
+  mean_move_bps: number | null;
+  /** The average move once the round trip is paid. Positive means it made money. */
+  net_bps: number | null;
+  /** How many times its own day-to-day scatter that average is. ~2+ means it stands out. */
+  t: number | null;
+  stands_out: boolean;
+  verdict: "pays" | "unclear" | "loses" | "not_enough_days";
+};
+
+export type BestHorizon = HorizonScore & {
+  horizon_minutes: number;
+  direction: SignalDirection;
+};
+
+export type BreakevenDetail = {
+  bps: number | null;
+  charges_bps: number | null;
+  spread_bps: number | null;
+  lots: number | null;
+  lot_size: number | null;
+  spread_source: string | null;
+  premium: number | null;
+};
+
 export type SeriesBacktestSummary = {
   sessions_replayed: number;
   calls: number;
@@ -49,10 +80,15 @@ export type SeriesBacktestSummary = {
   verdict: "edge" | "worse" | "no_edge" | "too_few_calls";
   sides: Record<"bullish" | "bearish", SideVerdict>;
   breakeven_bps: number | null;
-  rough_pnl_one_lot_rupees: number | null;
+  rough_pnl_rupees: number | null;
   mean_move_bps: number | null;
   withdrawn_early: number;
   directional_share: number | null;
+  /** Keyed by minutes ("1" | "5" | "15" | "30"), each with both directions. */
+  horizons: Record<string, Record<SignalDirection, HorizonScore>> | null;
+  best: BestHorizon | null;
+  tradeable: boolean;
+  breakeven: BreakevenDetail | null;
 };
 
 export type SignalSeries = {
@@ -109,6 +145,8 @@ export type SignalsOverview = {
   navbar_mechanism: SignalMechanism;
   navbar_duration: number;
   gate_days: number;
+  cost_lots: number;
+  max_cost_lots: number;
   last_backtest: { id: string; from: string; to: string; range_days: number; finished_at: string | null } | null;
   job: SignalJob | null;
 };
@@ -127,7 +165,14 @@ export type SignalBacktestRun = {
   calls: number;
   has_zip: boolean;
   counts_for_gate: boolean;
-  series: Record<string, { calls: number | null; hit_rate: number | null; verdict: string | null }>;
+  series: Record<string, {
+    calls: number | null;
+    hit_rate: number | null;
+    verdict: string | null;
+    tradeable?: boolean;
+    best_direction?: SignalDirection | null;
+    best_net_bps?: number | null;
+  }>;
 };
 
 export const SIGNALS_QUERY_KEY = ["signals"] as const;
@@ -165,6 +210,15 @@ export function useSetNavbarMechanism() {
       void qc.invalidateQueries({ queryKey: SIGNALS_QUERY_KEY });
       void qc.invalidateQueries({ queryKey: ["dashboard", "index-quotes"] });
     },
+  });
+}
+
+export function useSetCostLots() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lots: number) =>
+      apiClient.put<{ cost_lots: number }>("/api/signals/cost-lots", { lots }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: SIGNALS_QUERY_KEY }),
   });
 }
 
@@ -209,6 +263,7 @@ const REASON_TEXT: Record<string, string> = {
   excluded_session: "rollover day",
   no_open_interest: "no open-interest data",
   volume_unavailable: "volume unknown",
+  anchor_not_traded: "nothing traded to measure from",
   vwap_unavailable: "no average price yet",
   not_published: "not running",
   no_expansion: "nothing unusual",
@@ -222,29 +277,75 @@ export function reasonText(reason: string | null | undefined): string {
   return REASON_TEXT[reason] ?? reason.replace(/_/g, " ");
 }
 
-function pct(x: number | null | undefined): string {
-  return x === null || x === undefined ? "—" : `${Math.round(x * 100)}%`;
+function bps(x: number | null | undefined): string {
+  return x === null || x === undefined ? "—" : `${x > 0 ? "+" : ""}${x.toFixed(2)} bps`;
 }
 
-/** One sentence a layman can read: what the last backtest says about this series. */
+const DIRECTION_PHRASE: Record<SignalDirection, string> = {
+  follow: "trading with it",
+  fade: "trading against it",
+};
+
+/**
+ * One sentence a layman can read: what the last backtest says about this series.
+ *
+ * It reports the best of the horizons in BOTH directions, because neither "at its own duration"
+ * nor "with the signal" is privileged. A signal that is reliably wrong is a finding — it is
+ * traded backwards — and the old sentence buried that under "worse than the market's own trend",
+ * which reads like a failure.
+ */
 export function backtestSentence(s: SeriesBacktestSummary | null, duration: number): string {
   if (!s) return "Not backtested yet.";
   if (!s.sessions_replayed) return "No data in the last backtest.";
   if (!s.calls) return `No calls in ${s.sessions_replayed} sessions.`;
-  const decided = s.right + s.wrong;
   const head = `${s.calls} calls over ${s.sessions_replayed} sessions`;
-  if (!decided) return `${head}; none moved far enough to pay for a trade within ${duration} min.`;
-  const verdict = {
-    edge: "better than the market's own trend",
-    worse: "worse than the market's own trend",
-    no_edge: "no better than the market's own trend",
-    too_few_calls: "too few calls to judge yet",
-  }[s.verdict];
-  return `${head}; right ${pct(s.hit_rate)} of the time after costs — ${verdict}.`;
+  const best = s.best;
+  if (!best || best.net_bps === null) {
+    return `${head}; none of them moved far enough to pay for a trade.`;
+  }
+  const how = DIRECTION_PHRASE[best.direction];
+  const when = best.horizon_minutes === duration
+    ? `over the ${duration} min it stands`
+    : `held ${best.horizon_minutes} min rather than ${duration}`;
+  if (best.verdict === "not_enough_days") {
+    return `${head}; too few sessions to say anything yet.`;
+  }
+  if (best.verdict === "pays") {
+    return `${head}. Best was ${how}, ${when}: ${bps(best.net_bps)} a call after costs, `
+      + `which stands out against the day-to-day swings.`;
+  }
+  if (best.verdict === "unclear") {
+    return `${head}. The best it managed was ${how}, ${when}: ${bps(best.net_bps)} a call after `
+      + `costs — but that is inside the normal day-to-day swings, so it may be luck.`;
+  }
+  return `${head}; nothing paid for its costs, either with the signal or against it `
+    + `(best ${bps(best.net_bps)} a call).`;
 }
 
-export function verdictTone(v: SeriesBacktestSummary["verdict"] | undefined): "up" | "down" | "muted" {
-  if (v === "edge") return "up";
-  if (v === "worse") return "down";
+/** The second line: where the money was, direction by direction, at the best horizon. */
+export function horizonDetail(s: SeriesBacktestSummary | null): string | null {
+  if (!s?.horizons || !s.best) return null;
+  const row = s.horizons[String(s.best.horizon_minutes)];
+  if (!row) return null;
+  const parts = (["follow", "fade"] as SignalDirection[]).map((d) => {
+    const h = row[d];
+    return `${d === "follow" ? "with" : "against"} ${bps(h?.net_bps)}`;
+  });
+  const be = s.breakeven;
+  const bar = be?.bps
+    ? ` Costs ${be.bps.toFixed(2)} bps at ${be.lots ?? 1} lot${(be.lots ?? 1) === 1 ? "" : "s"}`
+      + (be.charges_bps !== null && be.spread_bps !== null
+        ? ` (${be.charges_bps.toFixed(2)} charges, ${be.spread_bps.toFixed(2)} spread).`
+        : ".")
+    : "";
+  return `At ${s.best.horizon_minutes} min: ${parts.join(", ")} a call after costs.${bar}`;
+}
+
+export function verdictTone(
+  best: BestHorizon | null | undefined,
+): "up" | "down" | "muted" {
+  if (!best || best.net_bps === null) return "muted";
+  if (best.verdict === "pays") return "up";
+  if (best.verdict === "loses") return "down";
   return "muted";
 }

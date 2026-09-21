@@ -44,6 +44,27 @@ unwind as a call in the opposite direction would be a reversal bet -- a much str
 than "new money is not behind this move", and one nothing here has evidence for. Refusing to
 call is the fail-closed reading, consistent with `unavailable` never being `neutral` (#30).
 
+Why a window whose anchor bar never traded is no reading
+--------------------------------------------------------
+The price move is measured from the close of the bar W minutes back. When that bar had no trade,
+ICICI still serves it -- open, high, low and close all equal to the last traded price, volume 0.
+Its close is therefore a price carried forward from some earlier minute, so the "W-minute move"
+actually happened over however long it had been since the market last traded, and ranking it
+against genuine W-minute windows overstates it. BSESEN has no trade in about 36% of minutes, so
+this is most of what a short SENSEX window measures.
+
+Measured over 117 sessions (2026-04-01 to 09-18), faded at +15 minutes: on the 1-minute window
+calls whose anchor traded were worth +1.64 bps (t 5.6) and calls whose anchor was dead +0.41
+(t 0.5) -- the dead ones carry nothing. The gap narrows to nothing by the 15-minute window, where
+one stale minute at the start no longer dominates fifteen minutes of real trading. The rule is
+applied at every window anyway, because it is the same defect at every window and a threshold
+picked off the results is how a backtest gets fitted to itself. What it costs at the long windows
+is calls that were inside the noise in either direction.
+
+It gates the *current* reading only, never the baseline. The baseline is a description of what a
+typical window looks like, and stale-anchored windows are part of that truth; dropping a third of
+SENSEX's baseline would move the percentile thresholds for reasons nothing here has measured.
+
 Why SENSEX runs without the OI half
 -----------------------------------
 ICICI serves no open interest for BSE. Measured 2026-09-16 on one session with a working NSE
@@ -64,6 +85,7 @@ from typing import Any, Deque, Literal, Optional
 from icici_breeze_backend.app.services.index_signal import bars as bars_mod
 from icici_breeze_backend.app.services.index_signal.bars import Bar
 from icici_breeze_backend.app.services.index_signal.states import (
+    REASON_ANCHOR_NOT_TRADED,
     REASON_MARKET_CLOSED,
     REASON_WARMING_UP,
     DirectionalState,
@@ -239,6 +261,11 @@ def evaluate(
     now = _window_reading(bars, len(bars) - 1, w, params.max_gap_seconds)
     if now is None:
         return None, None, {"bars": len(bars)}, REASON_STALE
+    anchor = bars[len(bars) - 1 - w]
+    if anchor.volume is None or float(anchor.volume) <= 0:
+        # The move would be measured from a price carried forward, not a traded one -- see the
+        # module docstring. Not a quiet market: there is no reading at all (#30).
+        return None, None, {"bars": len(bars), "anchor_volume": anchor.volume}, REASON_ANCHOR_NOT_TRADED
     price_bps, volume, oi_delta = now
     if params.oi_window != w:
         oi_delta = _oi_reading(bars, len(bars) - 1, params.oi_window, params.max_gap_seconds)

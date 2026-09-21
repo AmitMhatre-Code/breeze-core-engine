@@ -67,3 +67,38 @@ def test_an_unreadable_signal_holds_until_the_call_would_have_lapsed():
     dark = {"state": "unavailable", "reason": "stale"}
     assert call_ended(dark, started_at=1000.0, side="bullish", known_until=1060.0, now=1030.0) == (False, 1060.0)
     assert call_ended(dark, started_at=1000.0, side="bullish", known_until=1060.0, now=1060.0)[0]
+
+
+# -- what closes a signal trade -----------------------------------------------------------
+
+
+def test_a_call_going_quiet_no_longer_closes_a_trade():
+    """The call's own length used to be the maximum hold, which left the trailing stop no room
+    to move: 89% of one-minute calls simply lapsed, so nearly every trade was closed by that
+    clock rather than by anything about the trade."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_reversed
+
+    quiet = {"state": "neutral", "reason": "no_expansion"}
+    assert call_reversed(quiet, side="bullish") is False
+
+
+def test_an_unreadable_signal_is_not_a_reversal():
+    """A feed blip must hold a position, never flatten one (#30)."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_reversed
+
+    for reason in ("warming_up", "stale", "not_published", "anchor_not_traded"):
+        assert call_reversed({"state": "unavailable", "reason": reason}, side="bullish") is False
+
+
+def test_a_call_the_other_way_closes_the_trade():
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_reversed
+
+    assert call_reversed({"state": "bearish"}, side="bullish") is True
+    assert call_reversed({"state": "bullish"}, side="bearish") is True
+
+
+def test_a_fresh_call_the_same_way_holds():
+    """A re-fire is the signal repeating itself, not contradicting itself."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_reversed
+
+    assert call_reversed({"state": "bullish", "call_started_at": 9_999.0}, side="bullish") is False

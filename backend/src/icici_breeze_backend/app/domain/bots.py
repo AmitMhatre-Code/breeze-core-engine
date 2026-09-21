@@ -114,8 +114,11 @@ class ReasonCode:
     TRAILING_STOP = "trailing_stop"
     STOP_LOSS = "stop_loss"
     TIME_INVALIDATION = "time_invalidation"
-    # Bot 3 on a signal variant: the variant's hold elapsed -- the horizon the call was about.
+    # Retired: the call behind a signal trade ran out. A signal trade is no longer closed by that
+    # clock -- see `scalping/signal.call_reversed`. Kept so old cycles still read back.
     SIGNAL_WINDOW_ENDED = "signal_window_ended"
+    # The signal fired the other way while the trade was open.
+    SIGNAL_REVERSED = "signal_reversed"
     DRIFT_STOP = "drift_stop"
     CREDIT_DECAY_TARGET = "credit_decay_target"
     SQUARE_OFF = "square_off"

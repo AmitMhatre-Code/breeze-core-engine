@@ -281,7 +281,7 @@ NIFTY futures ticks (NFO 4.1!)   BSESEN futures ticks (BFO 8.1!)   ← scalping/
 - **Settings (`settings.py`)**: one row, `signal_settings.navbar_mechanism`; the navbar shows that mechanism's 15-minute reading.
 - **API** (`route_signals.py`, mounted at `/api/signals` so the `/signals` page is never proxied): `GET /api/signals` (sections, readings, last-run summaries, gate status, job), `PUT /api/signals/navbar`, `POST /api/signals/backtest`, `GET …/backtest/job`, `POST …/backtest/cancel`, `GET …/backtest/runs`, `GET …/backtest/runs/{id}/zip`.
 - **Navbar**: `/dashboard/index-quotes` carries `signals.{nifty,sensex}` from `reader.navbar_view()`, rendered as a ▲ BULL / ▼ BEAR / ● NEUT chip, a muted dash for `unavailable`.
-- **Bots**: Bot 3 trades a `SignalChoice` (mechanism, duration, follow/fade), held until its call ends; Bot 4 can hold flies while a chosen series has a live call; CAS Bingo reads flips from its chosen series, recomputed for the day by `publisher.today_series`. Bot backtests replay every signal setting and write one zip per run (`bots/backtest_combos.py`).
+- **Bots**: Bot 3 trades a `SignalChoice` (mechanism, duration, follow/fade), held until its stop, its trailing stop, a call the other way (`signal.call_reversed`) or the square-off closes it — not until its call runs out (#40); Bot 4 can hold flies while a chosen series has a live call; CAS Bingo reads flips from its chosen series, recomputed for the day by `publisher.today_series`. Bot backtests replay every signal setting and write one zip per run (`bots/backtest_combos.py`).
 - **Mock mode**: `MockBreezeSdk` streams synthetic futures ticks for NIFTY (NFO) and BSESEN (BFO), so the grid moves locally.
 
 ---

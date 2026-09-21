@@ -40,13 +40,20 @@ _READING_FIELDS = (
 )
 _SUMMARY_FIELDS = (
     "sessions_replayed", "calls", "bullish_calls", "bearish_calls", "right", "wrong", "hit_rate",
-    "verdict", "sides", "breakeven_bps", "rough_pnl_one_lot_rupees", "withdrawn_early",
+    "verdict", "sides", "breakeven_bps", "rough_pnl_rupees", "withdrawn_early",
     "directional_share", "up_days", "down_days", "mean_daily_correlation",
+    # Both directions at every horizon, and the best of them -- the page reports a signal that is
+    # reliably wrong as a finding, not as a failure.
+    "horizons", "best", "tradeable", "breakeven",
 )
 
 
 class NavbarBody(BaseModel):
     mechanism: Literal["expansion", "momentum"]
+
+
+class CostLotsBody(BaseModel):
+    lots: int
 
 
 class BacktestBody(BaseModel):
@@ -105,6 +112,8 @@ def signals_overview(ctx: RequestContext = Depends(get_request_context)) -> dict
         "mechanisms": mechanisms,
         "navbar_mechanism": signal_settings.navbar_mechanism(),
         "navbar_duration": NAVBAR_DURATION,
+        "cost_lots": signal_settings.cost_lots(),
+        "max_cost_lots": signal_settings.MAX_COST_LOTS,
         "gate_days": gate.GATE_DAYS,
         "last_backtest": None if latest is None else {
             "id": latest["id"],
@@ -121,6 +130,17 @@ def signals_overview(ctx: RequestContext = Depends(get_request_context)) -> dict
 @router.put("/navbar")
 def set_navbar(body: NavbarBody, ctx: RequestContext = Depends(get_request_context)) -> dict[str, Any]:
     return {"navbar_mechanism": signal_settings.set_navbar_mechanism(body.mechanism)}
+
+
+@router.put("/cost-lots")
+def set_cost_lots(body: CostLotsBody, ctx: RequestContext = Depends(get_request_context)) -> dict[str, Any]:
+    """The size the breakeven bar is priced on. Stored figures are not rescored -- the next
+    backtest run prices its bar on the new size, and the run that produced a summary records the
+    size it used."""
+    try:
+        return {"cost_lots": signal_settings.set_cost_lots(body.lots)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/backtest")

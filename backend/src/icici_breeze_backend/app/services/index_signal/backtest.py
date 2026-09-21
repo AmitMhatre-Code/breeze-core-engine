@@ -227,7 +227,9 @@ Every file is a plain CSV (open in Excel). Times are IST. "bps" is basis points:
 
 run.json
     The run: period, dates, when it ran, the app and mechanism versions, every parameter of every
-    series, how many ICICI calls the fetch spent, and notes (data gaps, days without bars).
+    series, how many ICICI calls the fetch spent, the cost bar each index was judged against
+    (its size in lots, the charges and the spread, and where the spread figure came from), and
+    notes (data gaps, days without bars).
 
 summary.csv
     One row per index x mechanism x duration -- the headline numbers:
@@ -243,11 +245,30 @@ summary.csv
     verdict                edge (both sides better), worse (a side reliably worse), no_edge,
                            or too_few_calls
     mean_move_*_bps        average index move the called way after the call
-    breakeven_bps          the move one lot of the at-the-money option needs to pay its round-trip
-                           charges (Settings -> Trading Costs), in bps of the index
-    rough_pnl_one_lot_rupees  ROUGH: called-way index points x lot x delta 0.5, less charges,
-                           summed over calls. No spread, no time decay -- the bot backtests price
+    breakeven_bps          the move the at-the-money option needs to pay its round-trip charges
+                           (Settings -> Trading Costs) AND the bid-ask spread, in bps of the
+                           index, priced on the size set on the Signals page. Most of a one-lot
+                           round trip is flat brokerage, which amortises, so this falls steeply
+                           with size -- run.json records the size and splits the bar into its
+                           charges and spread halves.
+    rough_pnl_rupees       ROUGH: called-way index points x quantity x delta 0.5, less charges and
+                           spread, summed over calls. No time decay -- the bot backtests price
                            real options; this is only for comparing signals with each other.
+
+    follow_<h>m_net_bps    the average move after a call, h minutes later, once the bar is paid.
+    fade_<h>m_net_bps      the same for a trade taken AGAINST the call. A signal that is reliably
+                           wrong is worth as much as one that is reliably right, so both are
+                           scored; neither is "the" answer.
+    follow/fade_<h>m_t     how many times its own day-to-day scatter that average is. Around 2 or
+                           more means it stands out; under that, the average is inside the noise
+                           however large it looks. Averaged per day first, never pooled.
+    follow/fade_<h>m_verdict  pays (positive and stands out) / unclear (positive, inside the
+                           noise) / loses / not_enough_days
+    best_horizon_minutes, best_direction, best_net_bps, best_t, tradeable
+                           the best of those twelve cells. A call's information does not have to
+                           peak at the length of the window that produced it -- a one-minute
+                           signal can say most about the next fifteen minutes -- so the horizon
+                           is reported rather than assumed.
     mean_daily_correlation strength vs the next move, correlated per day then averaged (pooling
                            days manufactures correlation)
 
@@ -263,8 +284,11 @@ summary.csv
 
 <INDEX>/<mechanism>-<duration>/calls.csv
     One row per call: when it fired, which way, at what level, everything the mechanism read when
-    it fired (c_*), how it ended (lapsed / turned / unavailable / session_end), the move after one
-    and two durations and at its end, the best and worst move while it stood, and the result.
+    it fired (c_*), how it ended (lapsed / turned / unavailable / session_end), the move at 1, 5,
+    15 and 30 minutes as well as after one and two durations and at its end, the best and worst
+    move while it stood, and the result. move_<h>m_bps is signed the way the call pointed, so a
+    negative number is the index going the other way -- and a column of negatives is what a fade
+    is made of.
 
 <INDEX>/<mechanism>-<duration>/days.csv
     One row per session: the day's move, readings, calls, hit rate, the day's correlation, and
@@ -286,9 +310,9 @@ serves no BSE open interest, so SENSEX expansion reads price and volume only.
 
 def _breakeven(index: str, level: Optional[float]) -> tuple[dict[str, Any], float, Optional[str]]:
     try:
-        from icici_breeze_backend.app.services.index_signal import breakeven
+        from icici_breeze_backend.app.services.index_signal import breakeven, settings
 
-        be = breakeven.breakeven(index, level)
+        be = breakeven.breakeven(index, level, lots=settings.cost_lots())
     except Exception:  # noqa: BLE001
         _logger.debug("signal backtest: breakeven failed for %s", index, exc_info=True)
         be = {}
@@ -315,11 +339,23 @@ def _summary_row(key: SeriesKey, s: dict[str, Any]) -> dict[str, Any]:
               "bullish_calls", "bearish_calls", "right", "wrong", "hit_rate", "verdict",
               f"mean_move_{d}m_bps", f"mean_move_{2 * d}m_bps", "mean_move_at_end_bps",
               "mean_best_move_bps", "mean_worst_move_bps", "withdrawn_early", "breakeven_bps",
-              "rough_pnl_one_lot_rupees", "mean_daily_correlation"):
+              "rough_pnl_rupees", "mean_daily_correlation"):
         row[k] = s.get(k)
     for side, v in (s.get("sides") or {}).items():
         for k in ("hit_rate", "hit_rate_low", "hit_rate_high", "trend_share", "separate_calls", "verdict"):
             row[f"{side}_{k}"] = v.get(k)
+    # Every horizon, both ways round. A signal's information need not peak at its own duration,
+    # and a signal that is reliably wrong is worth exactly as much as one that is reliably right.
+    for horizon, both in (s.get("horizons") or {}).items():
+        for direction, score in both.items():
+            for k in ("net_bps", "t", "hit_rate", "verdict"):
+                row[f"{direction}_{horizon}m_{k}"] = score.get(k)
+    best = s.get("best") or {}
+    row["best_horizon_minutes"] = best.get("horizon_minutes")
+    row["best_direction"] = best.get("direction")
+    row["best_net_bps"] = best.get("net_bps")
+    row["best_t"] = best.get("t")
+    row["tradeable"] = s.get("tradeable")
     return row
 
 
@@ -408,6 +444,9 @@ def run_backtest(
                 "app_version": getattr(cfg, "APP_VERSION", None),
                 "versions": VERSIONS,
                 "icici_calls_spent": calls,
+                # The bar every call in this run was judged against, and what it is made of. It
+                # depends on a setting, so a run that does not record it cannot be re-read later.
+                "cost_bar": {index: breakevens[index][0] for index in breakevens},
                 "notes": notes,
                 "series": {k.id: params_dict(k) for k in all_keys()},
             }
@@ -505,7 +544,24 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
 
 
 def _headline(summaries: dict[str, dict[str, Any]]) -> str:
+    """One line for the activity log.
+
+    It counts what stood out in *either* direction. Counting only `verdict == "edge"` -- following
+    the signal, at its own duration -- printed "no series showed an edge" over a run whose most
+    useful finding was that several series were reliably wrong, which is a signal to trade
+    backwards, not a signal that failed."""
     calls = sum(int(s.get("calls") or 0) for s in summaries.values())
-    edges = [sid for sid, s in summaries.items() if s.get("verdict") == "edge"]
-    tail = f" {len(edges)} series showed an edge." if edges else " No series showed an edge."
+    follow = [sid for sid, s in summaries.items()
+              if (s.get("best") or {}).get("direction") == "follow" and s.get("tradeable")]
+    fade = [sid for sid, s in summaries.items()
+            if (s.get("best") or {}).get("direction") == "fade" and s.get("tradeable")]
+    if not follow and not fade:
+        tail = " None of them stood out, either followed or faded."
+    else:
+        parts = []
+        if follow:
+            parts.append(f"{len(follow)} worth following")
+        if fade:
+            parts.append(f"{len(fade)} worth going against")
+        tail = f" {' and '.join(parts)}."
     return f"Replayed {len(summaries)} series; {calls} calls in total.{tail}"

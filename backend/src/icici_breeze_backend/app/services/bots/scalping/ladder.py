@@ -130,10 +130,11 @@ def exit_decision(
 ) -> Optional[tuple[str, str]]:
     """(reason_code, reason_text) when this ladder's stop says close, else None.
 
-    Only the stop lives here. How long a trade is held is the signal's business: it is closed
-    when the call that opened it ends (`signal.call_ended`), checked by the caller after this --
-    a trade that has both blown its stop and outlived its call is a stop-out. The 90-second
-    "went nowhere" rule was retired with the signal grid (decision 16)."""
+    Only the stop lives here, and with the call's clock gone the stop and the trail are what
+    close a winning or losing trade. The caller still checks two things after this: whether the
+    signal has fired the other way (`signal.call_reversed`) and the hard square-off, so a trade
+    that has blown its stop and been reversed on is a stop-out. The 90-second "went nowhere" rule
+    was retired with the signal grid (decision 16)."""
     del now_epoch  # kept so callers need not change shape; the stop is price-only
     price = float(bid)
     if price <= state.stop_price:

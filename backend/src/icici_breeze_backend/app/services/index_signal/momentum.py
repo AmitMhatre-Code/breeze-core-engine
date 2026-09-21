@@ -10,12 +10,35 @@ replayed from ICICI history and read by any bot (docs/signals-streamline-plan.md
     call     = bullish when close > EMA and close > VWAP and volume ranks in the top fifth;
                bearish is the mirror; a call stands for one candle and extends while it re-fires
 
-Levels reset every session; sizes carry over
---------------------------------------------
-EMA and VWAP are price *levels*, so both are rebuilt from today's bars only -- an overnight gap
-must never read as a breakout at the open (decision 15). The volume ranking compares *sizes*, so
-it keeps the trailing candles across the night, which is what lets the first candle of the day
-be ranked at all.
+VWAP resets every session; the trend line is carried over, shifted by the gap
+------------------------------------------------------------------------------
+The rule this replaces was simpler: EMA and VWAP are price *levels*, so both were rebuilt from
+today's bars only, and an overnight gap could never read as a breakout at the open (decision 15).
+VWAP still works that way -- it is an average of today's trading and means nothing else.
+
+The EMA could not. EMA(9) on d-minute candles needs nine completed candles, so rebuilt daily it
+said nothing until 09:15 + 9d: 09:24 at one minute, 10:00 at five and **11:30 at fifteen**, every
+single day. Measured over 117 sessions (2026-04-01 to 09-18) the fifteen-minute series produced
+its first reading at 11:30 on every one of them, its first call at 13:00, and no call at all on
+101 of the 117 -- and fifteen minutes is the reading the navbar shows. A third of the session was
+not "warming up" in any recoverable sense; it was a rule the signal could not satisfy.
+
+So the line now starts where yesterday's ended, **moved by the overnight gap**:
+
+    seed = yesterday's final EMA + (today's first candle open - yesterday's final candle close)
+
+which keeps the property decision 15 actually existed to protect. A flat open puts the first
+candle exactly on the line, not above it, so the gap alone can never fire a call -- only trading
+away from the gap-adjusted line can. The seed then decays as any EMA does: after nine candles it
+carries 13% of the weight, after eighteen under 2%, so by mid-morning the line is today's.
+
+Replay parity survives it because of that decay. A live engine warmed on two sessions and a
+replay warmed on a week disagree only through a seed that both have already decayed away by an
+order of magnitude before the range begins. With no previous session at all -- a cold cache --
+there is no seed and the old nine-candle wait applies, which is the fail-closed answer.
+
+The volume ranking compares *sizes*, not levels, so it keeps the trailing candles across the
+night as it always did, which is what lets the first candle of the day be ranked at all.
 
 Why VWAP is rebuilt from bars, not read from the tick
 -----------------------------------------------------
@@ -105,18 +128,31 @@ class MomentumEvaluator:
         self._cur: Optional[Candle] = None
         self._cur_index: Optional[int] = None
         self._volumes: Deque[float] = deque(maxlen=params.volume_lookback)
+        #: Today's running EMA once it has a seed from the previous session. None means there is
+        #: no seed and the nine-candle SMA-seeded EMA over today's closes applies instead.
+        self._ema: Optional[float] = None
+        #: (the previous session's final EMA, its final candle close), for the gap shift.
+        self._carry: Optional[tuple[float, float]] = None
 
     # -- session state ---------------------------------------------------------------------
 
     def _roll_day(self, day: datetime.date) -> None:
         if day == self._day:
             return
+        # Keep where the trend line ended, to be carried into the new session shifted by the
+        # overnight gap -- see the module docstring. VWAP is not carried: it is an average of
+        # one session's trading and means nothing across two.
+        if self._closes:
+            last = self._ema if self._ema is not None else ema_of(self._closes, self.params.ema_period)
+            if last is not None:
+                self._carry = (last, self._closes[-1])
         self._day = day
         self._closes = []
         self._pv = 0.0
         self._v = 0.0
         self._cur = None
         self._cur_index = None
+        self._ema = None
 
     @property
     def session_vwap(self) -> Optional[float]:
@@ -162,6 +198,23 @@ class MomentumEvaluator:
             self._cur = None
         return result
 
+    def _advance_ema(self, candle: Candle) -> Optional[float]:
+        """Today's trend line after this candle.
+
+        On the session's first candle the previous session's line is carried in, moved by the
+        overnight gap, so a gap can never by itself put a close on one side of the line. With no
+        previous session there is no seed and the nine-candle SMA-seeded EMA applies, which means
+        no reading until nine candles exist -- the old behaviour, kept for a cold start."""
+        p = self.params
+        if len(self._closes) == 1 and self._carry is not None:
+            carried_ema, prev_close = self._carry
+            self._ema = carried_ema + (candle.open - prev_close)
+        if self._ema is None:
+            return ema_of(self._closes, p.ema_period)
+        k = 2.0 / (p.ema_period + 1)
+        self._ema = (candle.close - self._ema) * k + self._ema
+        return self._ema
+
     def _complete(self, candle: Candle, *, short: bool) -> Evaluation:
         p = self.params
         volume = None if short or candle.bars < p.candle_minutes else candle.volume
@@ -170,7 +223,7 @@ class MomentumEvaluator:
         if volume is not None:
             self._volumes.append(volume)
 
-        ema = ema_of(self._closes, p.ema_period)
+        ema = self._advance_ema(candle)
         vwap = self.session_vwap
         rank = percentile_rank(prior, volume) if volume is not None and len(prior) >= p.volume_lookback else None
         components: dict[str, Any] = {

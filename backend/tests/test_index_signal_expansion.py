@@ -184,3 +184,63 @@ def test_a_small_feed_hole_is_tolerated_and_a_large_one_invalidates_the_window()
     # Six consecutive bars gone is a seven-minute hole, past max_gap_seconds.
     many_missing = [b for i, b in enumerate(bars) if not 88 <= i <= 93]
     assert ex._window_reading(many_missing, len(many_missing) - 1, 15) is None
+
+
+# -- a window measured from a price that never traded ------------------------------------
+
+
+def _fire(bars: list[ex.Bar], p: ex.ExpansionParams):
+    """The move on the last bar, big enough and heavy enough to fire if nothing blocks it."""
+    return ex.evaluate(bars, p)
+
+
+def test_a_window_whose_anchor_bar_never_traded_is_no_reading():
+    """BSESEN has no trade in ~36% of minutes and ICICI still serves the bar, with its close
+    carried forward from whenever the market last traded. Measuring a "one-minute move" from
+    that price attributes to one minute whatever happened over however long the gap was."""
+    p = params(window_minutes=1, oi_window_minutes=15, min_baseline_bars=60, baseline_bars=120)
+    bars = flat(100)
+    # The anchor (second to last) never traded; the last bar moves far on heavy volume.
+    bars[-2] = ex.Bar(ts=bars[-2].ts, close=100.0, volume=0.0, oi=1_000_000.0)
+    bars[-1] = ex.Bar(ts=bars[-1].ts, close=103.0, volume=100_000.0, oi=1_050_000.0)
+    side, strength, components, reason = _fire(bars, p)
+    assert side is None and strength is None
+    assert reason == "anchor_not_traded"
+    assert components["anchor_volume"] == 0.0
+
+
+def test_the_same_window_reads_normally_once_the_anchor_has_traded():
+    p = params(window_minutes=1, oi_window_minutes=15, min_baseline_bars=60, baseline_bars=120)
+    bars = flat(100)
+    bars[-2] = ex.Bar(ts=bars[-2].ts, close=100.0, volume=100.0, oi=1_000_000.0)
+    bars[-1] = ex.Bar(ts=bars[-1].ts, close=103.0, volume=100_000.0, oi=1_050_000.0)
+    side, strength, _components, reason = _fire(bars, p)
+    assert side == "bullish" and reason is None
+    assert strength is not None and strength > 0
+
+
+def test_an_unknown_anchor_volume_is_treated_as_untraded():
+    """None is "we do not know whether it traded", and a reading nobody can vouch for is no
+    reading -- the same fail-closed rule `unavailable` follows everywhere else (#30)."""
+    p = params(window_minutes=1, oi_window_minutes=15, min_baseline_bars=60, baseline_bars=120)
+    bars = flat(100)
+    bars[-2] = ex.Bar(ts=bars[-2].ts, close=100.0, volume=None, oi=1_000_000.0)
+    bars[-1] = ex.Bar(ts=bars[-1].ts, close=103.0, volume=100_000.0, oi=1_050_000.0)
+    assert _fire(bars, p)[3] == "anchor_not_traded"
+
+
+def test_the_baseline_still_keeps_windows_whose_anchor_never_traded():
+    """The gate is on the current reading only. The baseline describes what a typical window
+    looks like, and stale-anchored windows are part of that truth -- dropping a third of
+    SENSEX's baseline would move the percentile thresholds for unmeasured reasons."""
+    p = params(window_minutes=1, oi_window_minutes=15, min_baseline_bars=60, baseline_bars=120)
+    bars = flat(100)
+    for i in range(10, 40):  # a stretch of dead minutes well inside the baseline
+        bars[i] = ex.Bar(ts=bars[i].ts, close=100.0, volume=0.0, oi=1_000_000.0)
+    bars[-2] = ex.Bar(ts=bars[-2].ts, close=100.0, volume=100.0, oi=1_000_000.0)
+    bars[-1] = ex.Bar(ts=bars[-1].ts, close=103.0, volume=100_000.0, oi=1_050_000.0)
+    side, _strength, components, reason = _fire(bars, p)
+    assert side == "bullish" and reason is None
+    # Those dead windows were ranked against, not thrown away: a baseline that had dropped them
+    # would be a different distribution, and these ranks are taken against the full one.
+    assert components["price_rank"] is not None and components["volume_rank"] is not None

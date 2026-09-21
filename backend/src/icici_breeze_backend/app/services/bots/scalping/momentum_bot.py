@@ -329,40 +329,33 @@ def call_stamp(signal: Any) -> Optional[dict[str, Any]]:
     }
 
 
-def call_exit(cycle: Any, *, now: Optional[float] = None) -> Optional[tuple[str, str]]:
-    """Close the trade once the call that opened it has ended (decision 5).
+def call_exit(cycle: Any) -> Optional[tuple[str, str]]:
+    """Close the trade if the signal fires the other way while it is open.
 
-    Reads the stamped series live each pass. A reading that cannot be had holds the trade
-    until the call would have lapsed on its own. Persists the call's latest known end so a
-    restart mid-trade keeps it."""
-    from icici_breeze_backend.app.services.bots.scalping.signal import call_ended
+    A signal trade is no longer closed by its call running out. That clock made the signal's own
+    window the maximum hold and stopped the trailing stop ever working, so it went and the stop,
+    the trailing stop and the hard square-off are what close a trade -- see
+    `scalping/signal.call_reversed`, which carries the measurements. A reading that cannot be had
+    is not a reversal, so a feed blip holds the trade rather than flattening it.
+
+    Reads the stamped series live each pass, already turned the bot's way."""
+    from icici_breeze_backend.app.services.bots.scalping.signal import call_reversed
     from icici_breeze_backend.app.services.index_signal.reader import get_signal
 
     detail = cycle.detail or {}
     call = detail.get("call")
-    ts = time.time() if now is None else now
     if not isinstance(call, dict) or not call.get("series"):
         return None
     try:
         reading = get_signal(str(call["series"]), direction=str(call.get("direction") or "follow"))
-    except Exception:  # noqa: BLE001 -- unreadable is not evidence the call ended
+    except Exception:  # noqa: BLE001 -- unreadable is not evidence of anything
         reading = {"state": "unavailable"}
-    ended, until = call_ended(
-        reading, started_at=float(call["started_at"]), side=str(call.get("side")),
-        known_until=call.get("until"), now=ts,
-    )
-    if until is not None and until != call.get("until"):
-        from icici_breeze_backend.app.repositories import bots as repo
-
-        updated = {**detail, "call": {**call, "until": until}}
-        repo.update_cycle_detail(cycle.id, updated)
-        cycle.detail = updated
-    if not ended:
+    side = str(call.get("side"))
+    if not call_reversed(reading, side=side):
         return None
     return (
-        ReasonCode.SIGNAL_WINDOW_ENDED,
-        f"The {call.get('side')} call that opened this trade has ended "
-        f"({reading.get('state')}{': ' + str(reading.get('reason')) if reading.get('reason') else ''}).",
+        ReasonCode.SIGNAL_REVERSED,
+        f"The signal turned {reading.get('state')} while this {side} trade was open.",
     )
 
 
