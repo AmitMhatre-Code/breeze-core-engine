@@ -29,7 +29,9 @@ BotType = Literal[
 # "backtest" is a replay, never a trade. It shares the Activity table with live runs so one
 # surface shows everything a bot has done, but it MUST be excluded from every guard that asks
 # "has this bot already acted today?" -- see `repositories/bots.LIVE_RUNS_ONLY` (#35).
-BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session", "backtest"]
+# "telegram" is a HITL approval tapped on a phone rather than in the app -- see
+# `services/bots/proposals.approve`'s `trigger` docstring.
+BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session", "backtest", "telegram"]
 
 # Terminal run states. `proposed` is Bot 1 finishing successfully with something for the
 # user to approve -- distinct from `completed`, which means orders were actually placed.
