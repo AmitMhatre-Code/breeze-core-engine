@@ -795,11 +795,11 @@ def _close_live(
         try:
             _notify(
                 user_id,
-                "\U0001f6d1 <b>Scalping bot could not exit</b>\n\n"
+                "\U0001f6d1 *Scalping bot could not exit*\n\n"
                 f"An exit for {leg.get('right')} {int(float(leg.get('strike_price') or 0))} "
                 f"did not fill after {result.attempts} attempts.\n\n"
                 f"{result.error or ''}\n\n"
-                "<b>The position is still open.</b> Close it from the Order Book.",
+                "*The position is still open.* Close it from the Order Book.",
                 kind="scalping_exit_failed",
             )
         except Exception:  # noqa: BLE001

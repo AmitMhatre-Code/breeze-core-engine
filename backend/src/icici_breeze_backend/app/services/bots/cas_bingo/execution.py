@@ -666,9 +666,9 @@ def alert_stuck(user_id: str, what: str, detail: Optional[str]) -> None:
     try:
         _notify(
             user_id,
-            "\U0001f6d1 <b>CAS Bingo needs checking</b>\n\n"
+            "\U0001f6d1 *CAS Bingo needs checking*\n\n"
             f"The bot stopped because {what}.\n\n{detail or ''}\n\n"
-            "<b>Check the Order Book for open legs.</b> The bot has been disarmed and will not "
+            "*Check the Order Book for open legs.* The bot has been disarmed and will not "
             "open anything new.",
             kind="cas_bingo_stuck",
         )

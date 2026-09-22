@@ -95,23 +95,23 @@ def disarm_conflicting_rule(user_id: str, conflict: SgConflict) -> None:
     )
 
     lines = [
-        "⚠️ <b>PB/SL rule disabled by a scalping bot</b>",
+        "⚠️ *PB/SL rule disabled by a scalping bot*",
         "",
-        f"A profit/stop-loss rule on <b>{INDEX_STOCK_CODE} {conflict.expiry_display}</b> has "
+        f"A profit/stop-loss rule on *{INDEX_STOCK_CODE} {conflict.expiry_display}* has "
         f"been switched off.",
         "",
-        "That rule applies to <i>every</i> leg on this stock and expiry, so it would have "
+        "That rule applies to _every_ leg on this stock and expiry, so it would have "
         "squared off the bot's position along with its own — at its price, not the bot's.",
     ]
     if conflict.other_legs > 0:
         lines += [
             "",
-            f"⚠️ <b>{conflict.other_legs} other leg(s)</b> on this expiry were covered by that "
-            f"rule and are now <b>unprotected</b>.",
+            f"⚠️ *{conflict.other_legs} other leg(s)* on this expiry were covered by that "
+            f"rule and are now *unprotected*.",
         ]
     lines += [
         "",
-        "If you want a PB/SL rule on this expiry, <b>stop the scalping bot first</b>, then "
+        "If you want a PB/SL rule on this expiry, *stop the scalping bot first*, then "
         "arm the rule.",
     ]
     try:
