@@ -108,7 +108,7 @@ def job(ctx: RequestContext = Depends(get_request_context)):
     return {
         "job": jobs.state(),
         "budget": {
-            "daily_calls": store.DAILY_CALL_BUDGET,
+            "daily_calls": store.daily_call_budget(),
             "spent_today": store.calls_spent(today),
             "remaining_today": store.calls_remaining(today),
         },

@@ -660,11 +660,14 @@ def _parse_ts(raw: Any) -> Optional[datetime.datetime]:
 # The daily call budget and the size cap (#36)
 # --------------------------------------------------------------------------------------
 
-#: ICICI calls backtests may spend per IST day, across every bot and every run. Measured
-#: 2026-09-17: a month of one bot is ~70-90 calls and six months ~460-550, so this admits any
-#: single run up to about six months and still stops a day of stacked long runs well short of
-#: the per-minute and per-day limits the live bots depend on. There is no bulk pre-cache; data
-#: is fetched only when a backtest needs it, and kept.
+#: What the daily call budget ships as. Measured 2026-09-17: a month of one bot is ~70-90 calls
+#: and six months ~460-550, so this admits any single run up to about six months and still stops
+#: a day of stacked long runs well short of the per-minute and per-day limits the live bots
+#: depend on. There is no bulk pre-cache; data is fetched only when a backtest needs it, and kept.
+#:
+#: This is now the *default*, not the ceiling: the live value is a setting
+#: (`services.backtest_budget`), so a day with the ICICI allowance to spare can be given a bigger
+#: one. Read it with `daily_call_budget()`; this constant is only the fallback.
 DAILY_CALL_BUDGET = 800
 
 #: The cache's ceiling on disk. Deployments run on an 8 GiB data volume shared with
@@ -692,8 +695,20 @@ def add_calls(day: datetime.date, calls: int, *, path: Optional[str] = None) -> 
     return total
 
 
+def daily_call_budget() -> int:
+    """The configured ceiling for one IST day. Imported lazily so this module -- which the
+    replay half uses, and which runs with no app settings DB in tests -- keeps working when
+    `users.sqlite3` is absent."""
+    try:
+        from icici_breeze_backend.app.services.backtest_budget import get_daily_call_budget
+
+        return get_daily_call_budget()
+    except Exception:  # noqa: BLE001 - a missing/locked settings DB must not stop a replay
+        return DAILY_CALL_BUDGET
+
+
 def calls_remaining(day: datetime.date, *, path: Optional[str] = None) -> int:
-    return max(0, DAILY_CALL_BUDGET - calls_spent(day, path=path))
+    return max(0, daily_call_budget() - calls_spent(day, path=path))
 
 
 def cache_bytes(path: Optional[str] = None) -> int:

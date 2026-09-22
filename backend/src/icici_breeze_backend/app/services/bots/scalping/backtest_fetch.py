@@ -142,7 +142,12 @@ class Fetcher:
             if reason:
                 raise Stopped(reason)
         if self.max_calls is not None and self.calls >= self.max_calls:
-            raise BudgetExhausted(f"call budget of {self.max_calls} spent")
+            raise BudgetExhausted(
+                f"today's backtest budget of {self.max_calls} ICICI calls ran out mid-fetch, so "
+                "the gap below is only partly filled. Run it again after IST midnight for a "
+                "fresh budget, or raise it now in Settings \u2192 API Usage \u2192 Backtest "
+                "call budget."
+            )
         if self.calls:
             self.sleep(CALL_SPACING_SECONDS)
         self.calls += 1

@@ -29,6 +29,8 @@ from icici_breeze_backend.app.domain.breeze_api_tester_catalog import (
 from icici_breeze_backend.app.domain.settings_api import (
     ApiUsagePreferencesResponse,
     ApiUsagePreferencesUpdateBody,
+    BacktestBudgetStateResponse,
+    BacktestBudgetUpdateBody,
     ApiUsageStateResponse,
     CredentialsStateResponse,
     CredentialsUpdateBody,
@@ -377,6 +379,48 @@ async def settings_api_usage_preferences_post(
 ):
     v = set_icici_rate_limit_pause_seconds(ctx.user_id, body.rate_limit_pause_seconds)
     return ApiUsagePreferencesResponse(user_id=ctx.user_id, rate_limit_pause_seconds=v)
+
+
+def _backtest_budget_response() -> BacktestBudgetStateResponse:
+    from icici_breeze_backend.app.services import backtest_budget
+    from icici_breeze_backend.app.services.bots.scalping import backtest_store
+    from icici_breeze_backend.app.core.timezone import now_ist
+
+    today = now_ist().date()
+    budget = backtest_budget.get_daily_call_budget()
+    spent = backtest_store.calls_spent(today)
+    return BacktestBudgetStateResponse(
+        daily_call_budget=budget,
+        default_daily_call_budget=backtest_budget.DEFAULT_DAILY_CALL_BUDGET,
+        min_daily_call_budget=backtest_budget.MIN_DAILY_CALL_BUDGET,
+        max_daily_call_budget=backtest_budget.MAX_DAILY_CALL_BUDGET,
+        recommended_max_daily_call_budget=backtest_budget.RECOMMENDED_MAX_DAILY_CALL_BUDGET,
+        spent_today=spent,
+        remaining_today=max(0, budget - spent),
+    )
+
+
+@router.get("/backtest-budget", response_model=BacktestBudgetStateResponse)
+async def settings_backtest_budget_get(ctx: RequestContext = Depends(get_request_context)):
+    """The ceiling backtests may spend today, and what is already gone.
+
+    `spent_today` is read from the backtest cache's ledger, so lowering the budget below what
+    has already been spent is legal and simply leaves nothing for today."""
+    return _backtest_budget_response()
+
+
+@router.post("/backtest-budget", response_model=BacktestBudgetStateResponse)
+async def settings_backtest_budget_post(
+    body: BacktestBudgetUpdateBody,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    from icici_breeze_backend.app.services import backtest_budget
+
+    try:
+        backtest_budget.set_daily_call_budget(body.daily_call_budget)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _backtest_budget_response()
 
 
 def _aggressive_order_prefs_response(user_id: str, prefs: dict) -> AggressiveOrderPreferencesResponse:

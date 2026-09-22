@@ -146,6 +146,16 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
             {budget ? `, within today's backtest budget (${budget.remaining_today} of ${budget.daily_calls} calls left)` : ""}.
             Anything that can&rsquo;t be fetched is skipped and reported, never modelled.
           </p>
+          {budget && budget.remaining_today === 0 ? (
+            <p className="mt-2 text-xs leading-relaxed text-amber-accent">
+              Today&rsquo;s backtest budget is spent, so this will replay on cached data only and
+              any gap stays as it is. The budget resets at IST midnight, or raise it in{" "}
+              <a href="/settings/api-usage" className="underline underline-offset-2">
+                Settings &rarr; API Usage
+              </a>
+              .
+            </p>
+          ) : null}
           {otherRunning ? (
             <p className="mt-2 text-xs text-down">Another backtest is running. Wait for it to finish.</p>
           ) : null}

@@ -79,6 +79,20 @@ class ApiUsagePreferencesUpdateBody(BaseModel):
     rate_limit_pause_seconds: float = Field(ge=0, le=3)
 
 
+class BacktestBudgetStateResponse(BaseModel):
+    daily_call_budget: int = 800
+    default_daily_call_budget: int = 800
+    min_daily_call_budget: int = 0
+    max_daily_call_budget: int = 5000
+    recommended_max_daily_call_budget: int = 2500
+    spent_today: int = 0
+    remaining_today: int = 0
+
+
+class BacktestBudgetUpdateBody(BaseModel):
+    daily_call_budget: int = Field(ge=0, le=5000)
+
+
 class AggressiveOrderPreferencesResponse(BaseModel):
     user_id: str = ""
     enabled: bool = False

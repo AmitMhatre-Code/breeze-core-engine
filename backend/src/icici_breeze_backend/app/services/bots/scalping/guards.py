@@ -158,7 +158,7 @@ def disarm_bot(user_id: str, bot_type: str, reason_text: str) -> None:
     noticed. The run log and the Telegram alert are what make it noticeable.
     """
     from icici_breeze_backend.app.repositories import bots as repo
-    from icici_breeze_backend.app.services.telegram_alerts import _notify
+    from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
 
     try:
         repo.update_bot(user_id, bot_type, enabled=False)
@@ -166,12 +166,13 @@ def disarm_bot(user_id: str, bot_type: str, reason_text: str) -> None:
         _logger.exception("scalping: could not disarm %s after its daily stop", bot_type)
         return
     _logger.warning("scalping: %s disarmed after breaching its daily loss limit", bot_type)
+    display_name = _BOT_LABEL.get(bot_type, bot_type)
     try:
         _notify(
             user_id,
-            "🛑 <b>Scalping bot stopped</b>\n\n"
-            f"<b>{bot_type}</b> hit its cumulative daily loss limit and has been "
-            f"<b>disabled</b>.\n\n{reason_text}\n\n"
+            "🛑 *Scalping bot stopped*\n\n"
+            f"*{display_name}* hit its cumulative daily loss limit and has been "
+            f"*disabled*.\n\n{reason_text}\n\n"
             "It will not trade again until you re-enable it.",
             kind="scalping_daily_stop",
         )
@@ -274,16 +275,17 @@ def _alert_orphan(user_id: str, bot_type: str, cycle: Any, why: str) -> None:
     Deliberately does not close or adopt the row: an unresolved intent is a fact for a human,
     and a bot that guesses here is a bot that either abandons a live position or invents one.
     """
-    from icici_breeze_backend.app.services.telegram_alerts import _notify
+    from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
 
     _logger.error(
         "scalping: cannot reconcile cycle %s for %s -- %s", cycle.id, bot_type, why
     )
+    display_name = _BOT_LABEL.get(bot_type, bot_type)
     try:
         _notify(
             user_id,
-            "\u26a0\ufe0f <b>Scalping bot needs checking</b>\n\n"
-            f"<b>{bot_type}</b> was interrupted while placing an order and {why}.\n\n"
+            "\u26a0\ufe0f *Scalping bot needs checking*\n\n"
+            f"*{display_name}* was interrupted while placing an order and {why}.\n\n"
             "Check the Order Book for an unexpected position. The bot will not open anything "
             "new until this is resolved.",
             kind="scalping_orphan",

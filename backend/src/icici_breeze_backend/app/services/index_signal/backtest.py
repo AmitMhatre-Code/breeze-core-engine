@@ -497,8 +497,9 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
                 notes.append("Nothing fetched: ICICI history isn't fetched between 09:00 and 15:45 IST "
                              "on a trading day. Only history already stored was replayed.")
             elif remaining <= 0:
-                notes.append(f"Nothing fetched: today's budget of {store.DAILY_CALL_BUDGET} ICICI calls "
-                             "is spent. Only history already stored was replayed.")
+                notes.append(f"Nothing fetched: today's backtest budget of {store.daily_call_budget()} "
+                             "ICICI calls is spent, so only history already stored was replayed. "
+                             "Raise it in Settings \u2192 API Usage \u2192 Backtest call budget.")
             else:
                 jobs._log(f"Fetching missing futures bars, {start_d} to {end_d}…")  # noqa: SLF001
                 with jobs._broker_scope(user_id):  # noqa: SLF001

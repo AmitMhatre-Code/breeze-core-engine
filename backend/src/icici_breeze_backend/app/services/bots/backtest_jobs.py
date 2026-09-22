@@ -29,6 +29,7 @@ from icici_breeze_backend.app.services.bots import backtest_service as service
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
     DEFAULT_MAX_CALLS,
+    BudgetExhausted,
     Fetcher,
     Stopped,
     market_hours_refusal,
@@ -424,8 +425,10 @@ def start_bot_backtest(
                 notes.append(f"Nothing fetched: {block} Replayed on cached data only.")
             elif remaining <= 0:
                 notes.append(
-                    f"Nothing fetched: today's backtest budget of {store.DAILY_CALL_BUDGET} ICICI "
-                    "calls is spent. Replayed on cached data only."
+                    f"Nothing fetched: today's backtest budget of {store.daily_call_budget()} "
+                    "ICICI calls is already spent, so this ran on cached data only and any gap "
+                    "below is unchanged. The budget resets at IST midnight; to raise it for "
+                    "today, go to Settings \u2192 API Usage \u2192 Backtest call budget."
                 )
             else:
                 note(f"Fetching missing data, up to {remaining} calls…")
@@ -444,6 +447,10 @@ def start_bot_backtest(
                             configs=[c.config for c in combos],
                         )
                         notes.append(outcome["message"])
+                    except BudgetExhausted as exc:
+                        # Its own message already says what to do about it, so it is not
+                        # dressed up as a generic early stop.
+                        notes.append(f"Fetch stopped early: {exc}")
                     except Stopped as exc:
                         notes.append(f"Fetch stopped early: {exc} Replayed on what was cached.")
                     finally:

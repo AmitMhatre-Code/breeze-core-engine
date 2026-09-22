@@ -40,6 +40,16 @@ type ApiUsagePreferences = {
   rate_limit_pause_seconds: number;
 };
 
+type BacktestBudget = {
+  daily_call_budget: number;
+  default_daily_call_budget: number;
+  min_daily_call_budget: number;
+  max_daily_call_budget: number;
+  recommended_max_daily_call_budget: number;
+  spent_today: number;
+  remaining_today: number;
+};
+
 type Mode = "api" | "route";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -133,6 +143,7 @@ export function ApiUsageScreen() {
   const [mode, setMode] = useState<Mode>("api");
   const [days, setDays] = useState<number>(30);
   const [pauseDraft, setPauseDraft] = useState<string>("");
+  const [budgetDraft, setBudgetDraft] = useState<string>("");
 
   const q = useQuery({
     queryKey: ["settings", "api-usage", days],
@@ -150,6 +161,29 @@ export function ApiUsageScreen() {
       setPauseDraft(String(prefQ.data.rate_limit_pause_seconds));
     }
   }, [prefQ.data?.rate_limit_pause_seconds]);
+
+  const budgetQ = useQuery({
+    queryKey: ["settings", "backtest-budget"],
+    queryFn: () => apiClient.get<BacktestBudget>("/api/settings/backtest-budget"),
+  });
+
+  useEffect(() => {
+    if (budgetQ.data) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs local draft from server setting once it loads
+      setBudgetDraft(String(budgetQ.data.daily_call_budget));
+    }
+  }, [budgetQ.data?.daily_call_budget]);
+
+  const saveBudget = useMutation({
+    mutationFn: (calls: number) =>
+      apiClient.post<BacktestBudget>("/api/settings/backtest-budget", {
+        daily_call_budget: calls,
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["settings", "backtest-budget"] });
+      void qc.invalidateQueries({ queryKey: ["bots", "backtest", "job"] });
+    },
+  });
 
   const savePause = useMutation({
     mutationFn: (seconds: number) =>
@@ -260,6 +294,93 @@ export function ApiUsageScreen() {
           {prefQ.error ? (
             <p className="text-xs text-down">
               {prefQ.error instanceof Error ? prefQ.error.message : "Could not load preference"}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="app-card space-y-3 p-5">
+          <h3 className="text-heading font-bold text-foreground">Backtest call budget</h3>
+          <p className="text-xs leading-relaxed text-muted">
+            ICICI calls that backtests may spend per IST day, across every bot and every run.
+            Backfilling history is advisory work, so it is deliberately a fraction of ICICI&rsquo;s
+            ~5,000-a-day allowance &mdash; the rest belongs to live trading, the dashboard and
+            reference data. On a day with the allowance to spare, raise it to fill a long gap in
+            one sitting. It resets at IST midnight; it does not carry over.
+          </p>
+          <div>
+            <label
+              htmlFor="backtest-daily-call-budget"
+              className="mb-1.5 block text-micro font-semibold uppercase tracking-[.06em] text-faint"
+            >
+              Calls per day
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="backtest-daily-call-budget"
+                type="number"
+                min={budgetQ.data?.min_daily_call_budget ?? 0}
+                max={budgetQ.data?.max_daily_call_budget ?? 5000}
+                step={100}
+                inputMode="numeric"
+                className="h-10 w-28 rounded-t-[3px] border-0 border-b border-muted bg-background dark:bg-elevated px-3 font-mono text-sm tabular-nums text-foreground outline-none transition hover:border-accent focus:border-accent-strong focus:bg-panel disabled:cursor-not-allowed disabled:opacity-60 [-moz-appearance:textfield] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={budgetDraft}
+                onChange={(e) => setBudgetDraft(e.target.value)}
+                disabled={budgetQ.isLoading || saveBudget.isPending}
+              />
+              <button
+                type="button"
+                className="app-btn-outline rounded-[9px] px-4 py-2 text-xs"
+                disabled={budgetQ.isLoading || saveBudget.isPending || budgetDraft.trim() === ""}
+                aria-busy={saveBudget.isPending}
+                onClick={() => {
+                  const lo = budgetQ.data?.min_daily_call_budget ?? 0;
+                  const hi = budgetQ.data?.max_daily_call_budget ?? 5000;
+                  const n = parseInt(budgetDraft.trim(), 10);
+                  if (!Number.isFinite(n) || n < lo || n > hi) {
+                    alert(`Enter a whole number between ${lo} and ${hi}.`);
+                    return;
+                  }
+                  saveBudget.mutate(n, {
+                    onError: (e) => alert(e instanceof Error ? e.message : "Save failed"),
+                    onSuccess: () => alert("Saved."),
+                  });
+                }}
+              >
+                <AsyncLabelSpan busy={saveBudget.isPending} idleLabel="Save" busyLabel="Saving…" />
+              </button>
+            </div>
+          </div>
+          {budgetQ.data ? (
+            <p className="text-xs text-muted">
+              Spent today:{" "}
+              <strong className="font-mono font-semibold text-foreground tabular-nums">
+                {budgetQ.data.spent_today}
+              </strong>{" "}
+              &middot; remaining:{" "}
+              <strong
+                className={[
+                  "font-mono font-semibold tabular-nums",
+                  budgetQ.data.remaining_today === 0 ? "text-down" : "text-foreground",
+                ].join(" ")}
+              >
+                {budgetQ.data.remaining_today}
+              </strong>
+              {budgetQ.data.remaining_today === 0
+                ? " — a backtest started now will replay on cached data only."
+                : null}
+            </p>
+          ) : null}
+          {budgetQ.data && Number(budgetDraft) > budgetQ.data.recommended_max_daily_call_budget ? (
+            <p className="text-xs text-amber-accent">
+              Above {budgetQ.data.recommended_max_daily_call_budget} a backtest starts competing
+              with the rest of the deployment&rsquo;s ICICI traffic even outside market hours.
+              Use it for a one-off backfill, then put it back to{" "}
+              {budgetQ.data.default_daily_call_budget}.
+            </p>
+          ) : null}
+          {budgetQ.error ? (
+            <p className="text-xs text-down">
+              {budgetQ.error instanceof Error ? budgetQ.error.message : "Could not load the budget"}
             </p>
           ) : null}
         </section>

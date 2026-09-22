@@ -9,6 +9,7 @@ never leaves one spinning.
 from __future__ import annotations
 
 import datetime
+import os
 import threading
 
 import pytest
@@ -25,6 +26,7 @@ from icici_breeze_backend.app.domain.bots import (
     MomentumLongScalperConfig,
 )
 from icici_breeze_backend.app.repositories import bots as repo
+from icici_breeze_backend.app.services import backtest_budget as budget_mod
 from icici_breeze_backend.app.services.bots import backtest_jobs as jobs
 from icici_breeze_backend.app.services.bots import backtest_service as service
 from icici_breeze_backend.app.services.bots import charges as charges_mod
@@ -45,6 +47,7 @@ def env(tmp_path, monkeypatch):
     users = str(tmp_path / "users.sqlite3")
     cache = str(tmp_path / "backtest.sqlite3")
     monkeypatch.setattr(repo, "_db_path", lambda: users)
+    monkeypatch.setattr(budget_mod, "_db_path", lambda: users)
     monkeypatch.setattr(spreads, "_db_path", lambda: users)
     monkeypatch.setattr(charges_mod, "_db_path", lambda: users)
     monkeypatch.setattr(store, "db_path", lambda: cache)
@@ -438,6 +441,32 @@ class TestBudgetAndCap:
         assert store.calls_spent(day) == 500
         assert store.calls_remaining(day) == store.DAILY_CALL_BUDGET - 500
         assert store.calls_remaining(D(2026, 9, 18)) == store.DAILY_CALL_BUDGET  # a new day resets
+
+    def test_the_budget_is_a_setting_and_the_ledger_is_measured_against_it(self, env):
+        day = D(2026, 9, 17)
+        # Unset, it is the shipped default.
+        assert store.daily_call_budget() == budget_mod.DEFAULT_DAILY_CALL_BUDGET
+        budget_mod.set_daily_call_budget(2000, env["users"])
+        assert store.daily_call_budget() == 2000
+        store.add_calls(day, 900)
+        # The ledger is untouched by the change; only the ceiling moved.
+        assert store.calls_spent(day) == 900
+        assert store.calls_remaining(day) == 1100
+        # Lowering it below what today already spent leaves nothing, never a negative.
+        budget_mod.set_daily_call_budget(500, env["users"])
+        assert store.calls_remaining(day) == 0
+
+    def test_the_budget_rejects_values_outside_icicis_own_daily_allowance(self, env):
+        for bad in (-1, budget_mod.MAX_DAILY_CALL_BUDGET + 1):
+            with pytest.raises(ValueError, match="between"):
+                budget_mod.set_daily_call_budget(bad, env["users"])
+
+    def test_reading_the_budget_never_creates_the_table(self, tmp_path):
+        """A getter that ran DDL would have every replay writing to the app DB -- including a
+        test with its own temp copy."""
+        fresh = str(tmp_path / "untouched.sqlite3")
+        assert budget_mod.get_daily_call_budget(fresh) == budget_mod.DEFAULT_DAILY_CALL_BUDGET
+        assert not os.path.exists(fresh)
 
     def test_the_cap_evicts_option_history_oldest_expiry_first_and_never_the_underlying(self, env):
         from icici_breeze_backend.app.services.bots.scalping.backtest_store import OptionKey

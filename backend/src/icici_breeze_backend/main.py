@@ -222,6 +222,11 @@ def _ensure_app_database() -> None:
             )
 
             ensure_pnl_engine_settings_table(db_path)
+            from icici_breeze_backend.app.services.backtest_budget import (
+                ensure_backtest_budget_table,
+            )
+
+            ensure_backtest_budget_table(db_path)
             from icici_breeze_backend.app.db.squareoff_rules_migrate import (
                 ensure_squareoff_rules_table,
             )
