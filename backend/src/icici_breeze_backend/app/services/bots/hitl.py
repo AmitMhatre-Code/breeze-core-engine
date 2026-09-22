@@ -533,6 +533,14 @@ def _stop_line(stop: Any) -> str:
             "rest in the Order Book (the stop then arms on what filled) or set PB/SL "
             "yourself."
         )
+    if stop.status == "skipped":
+        # Final, not a retry -- unlike the generic "failed" branch below, nothing will arm
+        # this later, so the message must not promise a retry that is not coming.
+        return (
+            f"⚠️ *{label} stop NOT armed:* {_md(stop.detail or 'existing open position in this group')}\n"
+            "This position has no automatic exit, and none will be armed automatically -- "
+            "set PB/SL yourself in Portfolio if you want it protected."
+        )
     return (
         f"🚨 *{label} stop NOT armed:* {_md(stop.detail or 'unknown error')}\n"
         "This position has no automatic exit. Retrying every 2 minutes; set PB/SL "

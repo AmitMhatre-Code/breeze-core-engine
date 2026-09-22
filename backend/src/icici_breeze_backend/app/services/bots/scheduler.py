@@ -610,6 +610,10 @@ def _fire(
         # on the last fill and rewrites this run's verdict when it does.
         waiting = [r for r in placed if r.rule_id is None and r.arm_pending]
         unprotected = [r for r in placed if r.rule_id is None and not r.arm_pending]
+        # This run is the only message the user gets for it -- unlike a Telegram-approval
+        # run, nothing else folds the reason into a reply, so it has to be sent here.
+        for r in unprotected:
+            bot2.notify_arm_skipped(user_id, r)
         lines = []
         for r in placed:
             line = _describe(r)
@@ -622,6 +626,10 @@ def _fire(
             lines.append(line)
         if any(r.reason_code == ReasonCode.EXIT_ARM_FAILED for r in placed):
             reason_code = ReasonCode.EXIT_ARM_FAILED
+        elif any(
+            r.reason_code == ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION for r in placed
+        ):
+            reason_code = ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
         elif waiting:
             reason_code = ReasonCode.EXIT_ARM_PENDING
         else:

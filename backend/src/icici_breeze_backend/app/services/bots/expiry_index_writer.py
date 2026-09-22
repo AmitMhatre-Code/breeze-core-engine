@@ -729,11 +729,24 @@ def execute_plan(
     `limit_price` actually sent, so a report can say exactly which leg went out at what --
     rather than smearing one index-level error across every leg.
     """
+    from icici_breeze_backend.app.services import portfolio_pnl_engine
     from icici_breeze_backend.app.services.bots import exit_arming, placement
 
     if run_id:
         result.run_id = run_id
     exchange = result.exchange_code
+    # Captured before this bot's own legs go on, and used after placement: an SG rule pools
+    # P&L across every leg sharing (stock_code, expiry_display), so arming one after adding
+    # to a group that already had something else in it would silently fold an unrelated
+    # position into this bot's stop. Same limitation as the manual arm route's own check
+    # (`route_squareoff_rules.arm_rule`): an un-warmed registry reads as "nothing open" and
+    # this fails open, not closed.
+    try:
+        other_legs_before_entry = portfolio_pnl_engine.group_legs_for_user(
+            user_id, result.index_code, result.expiry_display
+        )
+    except Exception:  # noqa: BLE001
+        other_legs_before_entry = []
     # Listening has to start before the first order goes out: a fast fill's events arrive
     # while the remaining freeze slices are still being placed.
     exit_arming.prepare(proc, user_id)
@@ -769,14 +782,17 @@ def execute_plan(
         if not result.order_ids:
             return result
 
-    result.rule_id = _arm_exit(
-        proc,
-        user_id,
-        result,
-        config=config,
-        exchange=exchange,
-        expiry_display=result.expiry_display,
-    )
+    if other_legs_before_entry:
+        _skip_arm_existing_position(result, other_legs=len(other_legs_before_entry))
+    else:
+        result.rule_id = _arm_exit(
+            proc,
+            user_id,
+            result,
+            config=config,
+            exchange=exchange,
+            expiry_display=result.expiry_display,
+        )
     return result
 
 
@@ -954,3 +970,54 @@ def _record_arm_failure(result: FireResult, e: Exception) -> None:
     result.error = message
     result.arm_error = str(e)
     result.reason_code = ReasonCode.EXIT_ARM_FAILED
+
+
+def _skip_arm_existing_position(result: FireResult, *, other_legs: int) -> None:
+    """Position filled; the group already carried other open legs, so no stop is armed.
+
+    A Strategy Group rule pools P&L across every leg sharing (stock_code, expiry_display) --
+    arming one here would silently fold the user's other position into this bot's stop and
+    could close it at a moment and price they never chose (the same hazard
+    `bots/scalping/guards.find_sg_conflict` refuses to trade into, from the other direction).
+    Bot 2 never disarms or touches what was already there; it leaves its own new legs
+    unprotected and says so. Unlike a genuine arm failure this is final -- there is nothing
+    for `bots/exit_arming` to retry, since the other position will not close itself.
+    """
+    detail = (
+        f"{other_legs} other open leg(s) already exist for {result.index_code} "
+        f"{result.expiry_display}; arming a stop here would pool profit/loss across both "
+        "positions"
+    )
+    message = f"Position is OPEN but no stop was armed: {detail}"
+    if result.error:
+        message = f"{message}. Also: {result.error}"
+    result.error = message
+    result.arm_error = detail
+    result.reason_code = ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
+
+
+def notify_arm_skipped(user_id: str, result: FireResult) -> None:
+    """Tell the user directly why this position has no automatic exit.
+
+    Only the autonomous scheduler calls this: it has no other message that reaches the user
+    for this run, unlike the Telegram-approval path, where `hitl.format_outcome` already
+    folds this reason into the single reply it sends after the tap. Calling it from both
+    would double the message.
+    """
+    if result.reason_code != ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION:
+        return
+    try:
+        from icici_breeze_backend.app.services.telegram_alerts import notify_bot_exit_update
+    except Exception:  # noqa: BLE001
+        _logger.exception("bot2: could not import telegram alerts")
+        return
+    label = INDEX_LABEL.get(result.index_code, result.index_code)
+    text = (
+        f"⚠️ *Stop NOT armed* — {label} {result.expiry_display}: {result.arm_error}.\n\n"
+        "This position has no automatic exit, and it will not be armed automatically later "
+        "-- set PB/SL yourself in Portfolio if you want it protected."
+    )
+    try:
+        notify_bot_exit_update(user_id, text)
+    except Exception:  # noqa: BLE001
+        _logger.exception("bot2: telegram update failed")

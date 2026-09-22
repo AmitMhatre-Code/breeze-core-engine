@@ -155,6 +155,11 @@ class ReasonCode:
     # `bots/exit_arming` arms it the moment the order feed reports every order done, and
     # rewrites the run's reason when it does.
     EXIT_ARM_PENDING = "exit_arm_pending"
+    # The position filled, but the group already carried other open legs, so no stop was
+    # armed at all -- arming one would have pooled P&L across an unrelated position. Distinct
+    # from EXIT_ARM_FAILED: this is a final decision, not something a retry could resolve, so
+    # `bots/exit_arming` never sees it and there is no follow-up message coming later.
+    EXIT_ARM_SKIPPED_EXISTING_POSITION = "exit_arm_skipped_existing_position"
     BROKER_ERROR = "broker_error"
     RATE_LIMITED = "rate_limited"
     INTERNAL_ERROR = "internal_error"
@@ -1367,7 +1372,8 @@ class ExitStopResult(BaseModel):
 
     stock_code: str
     expiry_display: str
-    # "armed" | "pending" (waiting for the orders to finish filling) | "failed"
+    # "armed" | "pending" (waiting for the orders to finish filling) | "failed" |
+    # "skipped" (other open positions already in this group -- final, not retried)
     status: str
     rule_id: Optional[str] = None
     # The `bot_pending_exits` row arming it later, when it was not armed at placement.

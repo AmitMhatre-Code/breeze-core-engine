@@ -641,10 +641,13 @@ def _approve_index_plan(
     placed_count = sum(1 for p in placed if not p.error)
     waiting = [s for s in stops if s.status == "pending"]
     failed_stops = [s for s in stops if s.status == "failed"]
+    skipped_stops = [s for s in stops if s.status == "skipped"]
     if not all_ok:
         status, reason_code = "failed", ReasonCode.ORDER_REJECTED
     elif failed_stops:
         status, reason_code = "failed", ReasonCode.EXIT_ARM_FAILED
+    elif skipped_stops:
+        status, reason_code = "failed", ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
     elif waiting:
         status, reason_code = "completed", ReasonCode.EXIT_ARM_PENDING
     else:
@@ -654,6 +657,10 @@ def _approve_index_plan(
     reason_text += "".join(
         f" — {bot2.INDEX_LABEL.get(s.stock_code, s.stock_code)} stop NOT armed: {s.detail}"
         for s in failed_stops
+    )
+    reason_text += "".join(
+        f" — {bot2.INDEX_LABEL.get(s.stock_code, s.stock_code)} stop not armed: {s.detail}"
+        for s in skipped_stops
     )
     repo.finish_run(
         run_id,
@@ -686,6 +693,10 @@ def _stop_result(result) -> Optional[ExitStopResult]:
     if result.arm_pending:
         return ExitStopResult(
             status="pending", pending_exit_id=result.pending_exit_id, **common
+        )
+    if result.reason_code == ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION:
+        return ExitStopResult(
+            status="skipped", detail=result.arm_error or result.error, **common
         )
     if result.arm_error or result.reason_code == ReasonCode.EXIT_ARM_FAILED:
         return ExitStopResult(
