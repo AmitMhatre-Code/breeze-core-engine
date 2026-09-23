@@ -138,6 +138,28 @@ def test_a_failed_run_never_opens_the_gate(env):
     assert not gate.mechanism_availability("expansion", fresh=True)["available"]
 
 
+def test_a_run_cut_off_by_a_restart_is_closed_at_startup(env):
+    """A signal run is a thread of this process, so one still `running` at startup is stale."""
+    bt.create_run("cut-off", "u1", "custom", D(2026, 8, 1), D(2026, 8, 30))
+    _completed("done", D(2026, 8, 1), D(2026, 8, 30))
+    assert bt.get_run("cut-off")["status"] == "running"
+
+    assert bt.reap_orphaned_runs() == 1
+
+    reaped = bt.get_run("cut-off")
+    assert reaped["status"] == "failed"
+    assert "restart" in (reaped["error"] or "")
+    assert reaped["finished_at"]
+    assert bt.get_run("done")["status"] == "completed", "a finished run keeps its verdict"
+    assert bt.reap_orphaned_runs() == 0, "nothing left to reap on the next restart"
+
+
+def test_an_interrupted_run_never_opened_the_gate_either(env):
+    """The reaper is for the run list; a `running` row must not have counted for the 30 days."""
+    bt.create_run("in-flight", "u1", "custom", D(2026, 8, 1), D(2026, 8, 30))
+    assert not gate.mechanism_availability("expansion", fresh=True)["available"]
+
+
 @pytest.fixture
 def client(env, monkeypatch):
     async def _ctx():

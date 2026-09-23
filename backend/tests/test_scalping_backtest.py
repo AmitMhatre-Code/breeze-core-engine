@@ -11,6 +11,7 @@ path, or the two cannot be believed together.
 from __future__ import annotations
 
 import datetime
+import sqlite3
 
 import pytest
 
@@ -350,9 +351,30 @@ def test_coverage_reports_what_is_cached(store):
 def spread_db(tmp_path, monkeypatch):
     path = str(tmp_path / "users_test.sqlite3")
     monkeypatch.setattr(spreads, "_db_path", lambda: path)
+    # Retention is guarded once per process per day, so it would otherwise fire in whichever
+    # test happened to run first and never again.
+    monkeypatch.setattr(spreads, "_last_pruned", {})
     ensure_bots_tables(path)
     spreads.reset_throttle_for_tests()
     return path
+
+
+def _sample_aged(path: str, days_old: int) -> None:
+    """Insert one sample stamped `days_old` days back, in the IST the column defaults to."""
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO scalping_spread_samples "
+            "(stock_code, expiry_display, strike_price, right, premium, spread, observed_at) "
+            "VALUES ('NIFTY', 'E', 1.0, 'call', 100.0, 1.0, "
+            "datetime('now', '+5 hours', '+30 minutes', ?))",
+            (f"-{int(days_old)} days",),
+        )
+        conn.commit()
+
+
+def _count(path: str) -> int:
+    with sqlite3.connect(path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM scalping_spread_samples").fetchone()[0]
 
 
 def test_uncalibrated_spread_reports_itself_as_a_default(spread_db):
@@ -383,6 +405,37 @@ def test_enough_samples_switch_the_source_to_observed(spread_db):
     assert stats.samples >= spreads.MIN_SAMPLES_FOR_CALIBRATION
     # 1.00 spread on a 100 mid is 1% of premium.
     assert stats.median_spread_pct == pytest.approx(1.0, abs=0.01)
+
+
+def test_samples_past_the_retention_window_are_dropped(spread_db):
+    """`spread_stats` reads every row it finds, so the window is what the median means."""
+    _sample_aged(spread_db, spreads._RETENTION_DAYS + 10)
+    _sample_aged(spread_db, 1)
+    assert spreads.prune_old_samples() == 1
+    assert _count(spread_db) == 1
+
+
+def test_the_write_path_runs_retention_once_a_day(spread_db):
+    quote = ("NIFTY", "10-Sep-2026", 24_000.0, "call", 100.0, 101.0)
+    _sample_aged(spread_db, spreads._RETENTION_DAYS + 10)
+
+    assert spreads.record_spread_sample(*quote) is True
+    assert _count(spread_db) == 1, "the stale sample goes with the first write of the day"
+
+    _sample_aged(spread_db, spreads._RETENTION_DAYS + 10)
+    spreads.reset_throttle_for_tests()
+    assert spreads.record_spread_sample(*quote) is True
+    assert _count(spread_db) == 3, "retention does not run again on every quote"
+
+
+def test_a_failed_prune_never_costs_a_sample(spread_db, monkeypatch):
+    """Retention hangs off a trading path; a broken DELETE must not interrupt a bot."""
+    def boom(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(spreads, "prune_old_samples", boom)
+    assert spreads.record_spread_sample("NIFTY", "10-Sep-2026", 24_000.0, "call", 100.0, 101.0) is True
+    assert _count(spread_db) == 1
 
 
 def test_spread_scales_with_premium_and_is_floored_at_a_tick(spread_db):

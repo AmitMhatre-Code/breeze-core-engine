@@ -15,6 +15,7 @@ one (docs/bots-scalping-plan.md section 8).
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import sqlite3
 import time
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core.timezone import now_ist
 
 _logger = logging.getLogger(__name__)
 
@@ -31,10 +33,18 @@ MIN_SAMPLES_FOR_CALIBRATION = 200
 # and storing all of them would be tens of thousands of near-identical rows a session for a
 # statistic that does not move that fast.
 _SAMPLE_INTERVAL_SECONDS = 60.0
+# Samples older than this are deleted. Retention here is not about disk -- a session is
+# hundreds of rows -- but about what the median means: `spread_stats` reads every row it
+# finds, so an unpruned table calibrates today's backtest on a spread regime from months ago.
 _RETENTION_DAYS = 30
 
 # contract key -> last sample monotonic time
 _last_sampled: dict[str, float] = {}
+
+#: Guards retention so it runs once per process per day rather than on every insert, the same
+#: shape the audit trail uses. Startup alone would not do: an instance that stays up for weeks
+#: has to keep dropping the far end of the window, not just trim it once.
+_last_pruned: dict[str, datetime.date] = {}
 
 
 @dataclass(frozen=True)
@@ -99,6 +109,7 @@ def record_spread_sample(
                 (stock_code, expiry_display, float(strike_price), right, premium, a - b),
             )
             conn.commit()
+        _maybe_prune()
         return True
     except Exception:  # noqa: BLE001 -- see docstring
         _logger.debug("scalping: spread sample not recorded", exc_info=True)
@@ -136,7 +147,30 @@ def _median(values: list[float]) -> float:
     return values[mid] if n % 2 else (values[mid - 1] + values[mid]) / 2.0
 
 
+def _maybe_prune() -> None:
+    """Run retention at most once per process per day.
+
+    Never raises: this hangs off a trading path, and a failed DELETE must not cost a sample or
+    interrupt a bot managing a position. The day is stamped before the work so a prune that
+    keeps failing is not retried on every quote.
+    """
+    today = now_ist().date()
+    if _last_pruned.get("day") == today:
+        return
+    _last_pruned["day"] = today
+    try:
+        removed = prune_old_samples()
+    except Exception:  # noqa: BLE001 -- see docstring
+        _logger.debug("scalping: spread sample retention failed", exc_info=True)
+        return
+    if removed:
+        _logger.info(
+            "scalping: pruned %d spread sample(s) older than %d days", removed, _RETENTION_DAYS
+        )
+
+
 def prune_old_samples(*, days: int = _RETENTION_DAYS) -> int:
+    """Delete samples older than `days`. Returns the number removed."""
     with sqlite3.connect(_db_path()) as conn:
         cur = conn.execute(
             "DELETE FROM scalping_spread_samples "

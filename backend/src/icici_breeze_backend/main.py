@@ -268,6 +268,17 @@ def _ensure_app_database() -> None:
             _reaped_bt = _bots_repo.reap_orphaned_backtests()
             if _reaped_bt:
                 _logger.info("Closed %d interrupted backtest(s) from a previous process.", _reaped_bt)
+            # Signal backtests keep their own runs table and share only the job slot, so neither
+            # reaper above can see them; without this a run cut off by a restart reads as still
+            # running for good. Safe here and nowhere else: `ensure_signal_tables` runs on every
+            # connect, so reaping from there would fail the run currently in flight.
+            from icici_breeze_backend.app.services.index_signal import backtest as _signal_bt
+
+            _reaped_sig = _signal_bt.reap_orphaned_runs(db_path=db_path)
+            if _reaped_sig:
+                _logger.info(
+                    "Closed %d interrupted signal backtest(s) from a previous process.", _reaped_sig
+                )
             # Last: every table above must exist before their stamps can be shifted.
             from icici_breeze_backend.app.db.ist_timestamp_backfill import (
                 backfill_ist_timestamps_if_needed,
