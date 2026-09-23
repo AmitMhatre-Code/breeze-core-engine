@@ -62,6 +62,10 @@ def _start(fn):
         return fn()
     except jobs.Busy as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except jobs.OutOfMemory as e:
+        # Not the caller's mistake and not a bug: the app is too full to finish this right now,
+        # and the message says what to do about it (#41).
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

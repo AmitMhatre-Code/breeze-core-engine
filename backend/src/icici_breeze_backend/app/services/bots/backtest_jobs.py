@@ -24,6 +24,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.core import memory
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.services.bots import backtest_service as service
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
@@ -50,8 +51,38 @@ _thread: Optional[threading.Thread] = None
 _store_ready = False
 
 
+#: A backtest is refused, and a running one stopped, once the container holds this much of what
+#: it is allowed.
+#:
+#: The reserve below it is not slack. Past it the kernel kills the biggest process in the cgroup
+#: -- this one -- with `SIGKILL`: no exception to catch, no failed run to show, just a restart
+#: whose startup finds the row and marks it interrupted. That is the failure this replaces with
+#: a sentence saying what to do (docs/design-decisions.md #41). A reading that cannot be taken
+#: at all (no `/proc`, as on a dev machine) is not treated as a refusal.
+MEMORY_CEILING = 0.80
+
+
 class Busy(RuntimeError):
     """Another backtest job is running."""
+
+
+class OutOfMemory(RuntimeError):
+    """Stopped ahead of the kernel's OOM killer, with somewhere to go from here."""
+
+
+def _memory_check(stage: str) -> None:
+    """Raise if going on from `stage` would risk the process being killed outright."""
+    reading = memory.usage()
+    if reading is None:
+        return
+    held, cap = reading
+    if held < cap * MEMORY_CEILING:
+        return
+    raise OutOfMemory(
+        f"Stopped {stage}: the app is holding {memory.describe(held, cap)}, and carrying on "
+        "would have it killed part-way through with nothing to show. Run a shorter period, or "
+        "restart the app and run this again straight after."
+    )
 
 
 def ensure_store() -> None:
@@ -255,6 +286,7 @@ def start_replay(
     user_id: str, bot: str, start: datetime.date, end: datetime.date, *, model: bool
 ) -> dict[str, Any]:
     ensure_store()
+    _memory_check("before starting")
     config = service.saved_config(bot, user_id)
     if bot == "expiry" and not service.expiry_scope(config):
         raise ValueError("No index is enabled in Bot 2's settings, so there is nothing to backtest.")
@@ -368,6 +400,7 @@ def start_bot_backtest(
     with _lock:
         if _thread is not None and _thread.is_alive():
             raise Busy("A backtest is already running. Wait for it, or stop it.")
+    _memory_check("before starting")
 
     run_id = repo.start_run(user_id, bot_type, "backtest")
     period_text = (
@@ -411,6 +444,7 @@ def start_bot_backtest(
     def target() -> None:
         notes: list[str] = []
         calls = 0
+        zip_writer: Optional[bot_audit.BacktestZipWriter] = None
         try:
             # 1. fetch within budget
             remaining = store.calls_remaining(now.date())
@@ -472,12 +506,20 @@ def start_bot_backtest(
                 note(sizing["describe"])
 
             # 3. replay on real prices, once per signal setting
+            #
+            # Each setting's decisions go straight into the zip and are dropped; only its
+            # summary and trades are carried to the end, where the comparison needs them.
             book = OptionBook()
-            readings_cache: dict[str, Any] = {}
-            results: list[tuple[Any, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]] = []
+            readings_cache = service.ReadingsCache()
+            results: list[tuple[Any, dict[str, Any], list[dict[str, Any]]]] = []
+            zip_writer = bot_audit.BacktestZipWriter(user_id, bot_type, run_id)
             for n, combo in enumerate(combos, start=1):
                 if _cancel.is_set():
                     raise RuntimeError("Stopped at your request.")
+                _memory_check(
+                    f"before the first of {len(combos)} signal setting(s)" if n == 1
+                    else f"after {n - 1} of {len(combos)} signal setting(s)"
+                )
                 note(f"Replaying {service.BOT_LABELS[bot]} ({n}/{len(combos)}: {combo.label}), "
                      f"{start} to {end}, on real ICICI prices…")
                 try:
@@ -490,12 +532,18 @@ def start_bot_backtest(
                     raise service.NoCachedData(
                         f"{exc} " + (" ".join(notes) if notes else "")
                     ) from exc
-                results.append((combo, result.summary(), service.trade_rows(result),
-                                list(getattr(result, "decisions", []) or [])))
+                zip_writer.add(
+                    backtest_combos.decisions_member(combo),
+                    list(getattr(result, "decisions", []) or []) or [{"note": "no decisions recorded"}],
+                )
+                results.append((combo, result.summary(), service.trade_rows(result)))
+                # Explicit: `result` is only rebound once the *next* replay returns, so without
+                # this the previous setting's whole result is still live throughout it.
+                del result
             if book.needs:
                 store.add_needs(book.needs)
-            rows = [backtest_combos.comparison_row(c, s_, t) for c, s_, t, _d in results]
-            saved_combo, summary, trades, _decisions = next(
+            rows = [backtest_combos.comparison_row(c, s_, t) for c, s_, t in results]
+            saved_combo, summary, trades = next(
                 (r for r in results if r[0].is_saved), results[0]
             )
             summary = dict(summary)
@@ -505,20 +553,21 @@ def start_bot_backtest(
             summary["calls_spent"] = calls
             summary["notes"] = notes
             run.update(status="completed", summary=summary, trades=trades,
-                       combos=[{**row, "trades_list": t} for row, (_c, _s, t, _d) in zip(rows, results)])
+                       combos=[{**row, "trades_list": t} for row, (_c, _s, t) in zip(rows, results)])
             store.save_run(run)
 
             # 4. record
             for trade in trades:
                 trail.append({"event": "trade", **trade})
             trail.append({"event": "backtest_finished", "at": now_ist().isoformat(timespec="seconds"), "summary": summary})
-            bot_audit.write_backtest_zip(
-                user_id, bot_type, run_id,
+            zip_writer.add_all(
                 backtest_combos.zip_members(
                     {**run, "summary": {k: v for k, v in summary.items() if k != "comparison"}},
                     results, rows, trail,
-                ),
+                )
             )
+            zip_writer.close()
+            zip_writer = None
 
             waiting = int(summary.get("days_awaiting_data") or 0)
             reason_text = backtest_combos.headline(period_text, rows)
@@ -538,6 +587,8 @@ def start_bot_backtest(
             store.enforce_cache_cap()
             _finish("completed", message=reason_text, run_id=run_id, calls=calls)
         except Exception as exc:
+            if zip_writer is not None:
+                zip_writer.abandon()
             run.update(status="failed", error=str(exc))
             store.save_run(run)
             trail.append({"event": "backtest_failed", "at": now_ist().isoformat(timespec="seconds"), "error": str(exc)})

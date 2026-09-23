@@ -360,49 +360,132 @@ def write_backtest_audit(
     return name
 
 
+def backtest_zip_name(user_id: str, bot_type: str, run_id: str) -> str:
+    return backtest_file_name(user_id, bot_type, run_id)[: -len(".jsonl")] + ".zip"
+
+
+def _csv_text(rows: list[dict[str, Any]]) -> str:
+    """Rows as CSV, columns in first-seen order."""
+    import csv
+
+    columns: dict[str, None] = {}
+    for row in rows:
+        for key in row:
+            columns.setdefault(key, None)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(columns), extrasaction="ignore", restval="")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            k: (json.dumps(v, default=str) if isinstance(v, (dict, list)) else
+                "" if v is None else v)
+            for k, v in row.items()
+        })
+    return buf.getvalue()
+
+
+class BacktestZipWriter:
+    """One backtest run's zip, written a member at a time.
+
+    **Why not one `members` dict.** A month replayed across Bot 3's twelve signal settings
+    produces on the order of a hundred thousand decision rows -- one per minute each setting was
+    flat. Handing them over as a single dict meant every row of every setting had to be live at
+    the moment the zip was written, which is the peak the process did not survive: no exception,
+    no failed run, just a `SIGKILL` and a row the next startup reads as interrupted
+    (docs/design-decisions.md #41). The caller adds a setting's files as that setting finishes
+    and drops the rows, so only one setting's worth is ever held.
+
+    The file is assembled under a `.partial` name and moved into place by `close()`, so a run
+    that dies part-way leaves nothing that looks like a complete result. `_prune_backtests`
+    sweeps partials a dead process left behind, since `abandon()` cannot run after a kill.
+    """
+
+    def __init__(self, user_id: str, bot_type: str, run_id: str) -> None:
+        self.name = backtest_zip_name(user_id, bot_type, run_id)
+        self._path = os.path.join(backtest_dir(), self.name)
+        self._partial = self._path + ".partial"
+        self._zip = zipfile.ZipFile(self._partial, "w", compression=zipfile.ZIP_DEFLATED)
+        self._closed = False
+
+    def add(self, member: str, content: Any) -> None:
+        """Add one member: text as it stands, a list of dict rows as CSV."""
+        self._zip.writestr(member, content if isinstance(content, str) else _csv_text(content))
+
+    def add_all(self, members: dict[str, Any]) -> None:
+        for member, content in members.items():
+            self.add(member, content)
+
+    def close(self) -> str:
+        """Finish the zip and move it into place. Returns the file name."""
+        self._zip.close()
+        self._closed = True
+        # The lock guards the shared directory, not the zip: every run writes its own file, but
+        # the rename and the prune race the live trail's own pruning.
+        with _write_lock:
+            os.replace(self._partial, self._path)
+        _prune_backtests()
+        return self.name
+
+    def abandon(self) -> None:
+        """Drop a half-built zip. Never raises: it runs on the failure path."""
+        try:
+            if not self._closed:
+                self._zip.close()
+                self._closed = True
+        except Exception:  # noqa: BLE001 -- see docstring
+            pass
+        try:
+            os.remove(self._partial)
+        except OSError:
+            pass
+
+
 def write_backtest_zip(
     user_id: str, bot_type: str, run_id: str, members: dict[str, Any]
 ) -> str:
     """Write one backtest run's results as a zip (docs/signals-streamline-plan.md section 8).
 
     `members` maps a path inside the zip to either text or a list of dict rows (written as CSV,
-    columns in first-seen order). Returns the file name, which the Activity row downloads."""
-    import csv
+    columns in first-seen order). Returns the file name, which the Activity row downloads. A run
+    big enough for that dict to matter should use `BacktestZipWriter` directly instead."""
+    writer = BacktestZipWriter(user_id, bot_type, run_id)
+    try:
+        writer.add_all(members)
+    except BaseException:
+        writer.abandon()
+        raise
+    return writer.close()
 
-    name = backtest_file_name(user_id, bot_type, run_id)[: -len(".jsonl")] + ".zip"
-    path = os.path.join(backtest_dir(), name)
-    partial = path + ".partial"
-    with _write_lock:
-        with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for member, content in members.items():
-                if isinstance(content, str):
-                    zf.writestr(member, content)
-                    continue
-                columns: dict[str, None] = {}
-                for row in content:
-                    for key in row:
-                        columns.setdefault(key, None)
-                buf = io.StringIO()
-                writer = csv.DictWriter(buf, fieldnames=list(columns), extrasaction="ignore", restval="")
-                writer.writeheader()
-                for row in content:
-                    writer.writerow({
-                        k: (json.dumps(v, default=str) if isinstance(v, (dict, list)) else
-                            "" if v is None else v)
-                        for k, v in row.items()
-                    })
-                zf.writestr(member, buf.getvalue())
-        os.replace(partial, path)
-    _prune_backtests()
-    return name
+
+#: A `.partial` zip older than this belonged to a process that was killed mid-run -- one
+#: backtest runs at a time and none takes hours, so nothing legitimate is this old.
+_PARTIAL_STALE_SECONDS = 6 * 3600
+
+
+def _sweep_partials(root: str, now: float) -> None:
+    """Remove zips a killed process left half-written. Best effort; never raises."""
+    try:
+        names = [n for n in os.listdir(root) if n.endswith(".partial")]
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(root, name)
+        try:
+            if now - os.path.getmtime(path) > _PARTIAL_STALE_SECONDS:
+                os.remove(path)
+        except OSError:
+            continue
 
 
 def _prune_backtests(keep: int = BACKTEST_KEEP) -> int:
+    import time
+
     try:
         root = backtest_dir()
         names = [n for n in os.listdir(root) if n.endswith((".jsonl", ".zip"))]
     except OSError:
         return 0
+    _sweep_partials(root, time.time())
     if len(names) <= keep:
         return 0
     names.sort(key=lambda n: os.path.getmtime(os.path.join(root, n)), reverse=True)

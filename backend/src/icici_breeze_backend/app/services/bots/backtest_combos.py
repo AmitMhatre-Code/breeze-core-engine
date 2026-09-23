@@ -203,13 +203,25 @@ here are the calls in a signal backtest's calls.csv for the same series.
 """
 
 
+def decisions_member(combo: Combo) -> str:
+    """Where one setting's minute-by-minute decisions go in the zip.
+
+    Written by the caller as each setting finishes rather than returned from `zip_members`:
+    decisions are by far the biggest thing a run produces, and holding every setting's until the
+    end is what used to exhaust the container (docs/design-decisions.md #41)."""
+    return f"{combo.id}/decisions.csv"
+
+
 def zip_members(
     run: dict[str, Any],
-    results: list[tuple[Combo, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]],
+    results: list[tuple[Combo, dict[str, Any], list[dict[str, Any]]]],
     rows: list[dict[str, Any]],
     trail: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """{path in zip: rows (CSV) or text} for `bot_audit.write_backtest_zip`."""
+    """{path in zip: rows (CSV) or text} for the run's zip, `decisions.csv` excepted.
+
+    Each setting's `decisions.csv` is added separately, as that setting finishes -- see
+    `decisions_member`."""
     import json
 
     members: dict[str, Any] = {
@@ -223,8 +235,7 @@ def zip_members(
         ],
         "audit.jsonl": "\n".join(json.dumps(r, default=str, separators=(",", ":")) for r in trail) + "\n",
     }
-    for combo, _summary, trades, decisions in results:
+    for combo, _summary, trades in results:
         members[f"{combo.id}/trades.csv"] = trades or [{"note": "no trades"}]
         members[f"{combo.id}/daily.csv"] = daily_rows(trades) or [{"note": "no trades"}]
-        members[f"{combo.id}/decisions.csv"] = decisions or [{"note": "no decisions recorded"}]
     return members

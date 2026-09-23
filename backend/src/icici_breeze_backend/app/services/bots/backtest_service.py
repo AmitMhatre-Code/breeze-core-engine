@@ -18,7 +18,7 @@ import datetime
 import io
 import json
 import logging
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -239,11 +239,12 @@ def replay(
     scopes: Optional[Sequence[Scope]] = None,
     holidays_: Optional[set[datetime.date]] = None,
     path: Optional[str] = None,
-    readings_cache: Optional[dict[str, Any]] = None,
+    readings_cache: Optional[ReadingsCache] = None,
     record_decisions: bool = False,
 ) -> Any:
     """Replay one bot over a range. `readings_cache` (series id -> readings) lets a run that
-    compares signal settings build each series' readings once, whichever combinations share it."""
+    compares signal settings build each series' readings once, whichever combinations share it.
+    It holds only the last `KEEP_SERIES`, which the combo order makes free -- see `ReadingsCache`."""
     hol = holidays() if holidays_ is None else holidays_
     charges, spread = load_charges(), spread_stats()
     vix = store.load_vix(path=path)
@@ -316,7 +317,7 @@ def replay(
 
 def _replay_cas(
     config: Any, *, start: datetime.date, end: datetime.date, pricer: Any, hol: set[datetime.date],
-    path: Optional[str], charges: Any, spread: Any, readings_cache: Optional[dict[str, Any]],
+    path: Optional[str], charges: Any, spread: Any, readings_cache: Optional[ReadingsCache],
     record_decisions: bool,
 ) -> Any:
     """CAS Bingo over each enabled index's expiry days, merged into one result."""
@@ -360,13 +361,78 @@ def _series_key(choice: Any, index: str) -> Any:
     return SeriesKey(choice.mechanism, int(choice.duration), index)
 
 
+#: How many signal series a run's readings cache holds at once.
+#:
+#: Two is not a guess, and not a safety margin either -- it is the widest any bot's replay
+#: reaches. A backtest replays its settings in `backtest_combos` order, which loops direction
+#: innermost, and direction is *not* part of a `SeriesKey`, so the two settings sharing a series
+#: (follow and fade) always run back to back. Bot 3 and the fly therefore need one series live
+#: at a time; **CAS Bingo needs two**, because one of its replays walks both enabled indices and
+#: asks for that setting's series once per index. At two, every bot rebuilds nothing at all.
+#:
+#: Holding all six instead was the run's largest term by far once a period got long: a series is
+#: roughly 80 MB over nine months, so six is ~490 MB carried to the end where two is ~160 MB
+#: (docs/design-decisions.md #41). `rebuilt` is the tripwire if this reasoning ever stops
+#: holding.
+KEEP_SERIES = 2
+
+
+class ReadingsCache:
+    """The signal series a run has built, bounded to the last `keep`.
+
+    Deliberately a mapping with the three operations `_series_readings` already used on the
+    plain dict it replaces, so the caching logic stayed where it was. Reading a series marks it
+    most recent; building one past the bound drops the oldest.
+    """
+
+    def __init__(self, keep: int = KEEP_SERIES) -> None:
+        self.keep = max(1, int(keep))
+        self._series: "OrderedDict[str, dict[datetime.datetime, dict[str, Any]]]" = OrderedDict()
+        #: Series ids ever built, so a rebuild can be told from a first build.
+        self._built: set[str] = set()
+        #: Series dropped and then built again. The adjacency above should keep this at zero; it
+        #: is here so a bot whose combo order stops being adjacent says so rather than quietly
+        #: paying for it.
+        self.rebuilt = 0
+
+    def __contains__(self, key_id: object) -> bool:
+        return key_id in self._series
+
+    def reserve(self) -> None:
+        """Drop what has to go to make room for a series about to be built.
+
+        Called *before* the build rather than leaving it to `__setitem__` afterwards. A series
+        is built whole before it can be stored, so evicting after the fact means `keep` + 1 are
+        live at exactly the moment the run is at its fullest -- which at nine months is another
+        ~85 MB at the only instant it matters.
+        """
+        while len(self._series) >= self.keep:
+            self._series.popitem(last=False)
+
+    def __getitem__(self, key_id: str) -> dict[datetime.datetime, dict[str, Any]]:
+        self._series.move_to_end(key_id)
+        return self._series[key_id]
+
+    def __setitem__(self, key_id: str, readings: dict[datetime.datetime, dict[str, Any]]) -> None:
+        if key_id in self._built:
+            self.rebuilt += 1
+        self._built.add(key_id)
+        self._series[key_id] = readings
+        self._series.move_to_end(key_id)
+        while len(self._series) > self.keep:
+            self._series.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._series)
+
+
 def _series_readings(
     key: Any,
     start: datetime.date,
     end: datetime.date,
     hol: set[datetime.date],
     path: Optional[str],
-    cache: Optional[dict[str, Any]] = None,
+    cache: Optional[ReadingsCache] = None,
 ) -> dict[datetime.datetime, dict[str, Any]]:
     from icici_breeze_backend.app.services.bots.scalping.backtest_common import series_readings
     from icici_breeze_backend.app.services.index_signal.mechanisms import STOCK_CODES
@@ -375,6 +441,8 @@ def _series_readings(
     if cache is not None and key.id in cache:
         return cache[key.id]
     warm_from = start - datetime.timedelta(days=_SIGNAL_WARMUP_DAYS)
+    if cache is not None:
+        cache.reserve()
     bars = store.load_candles(stock_code=STOCK_CODES[key.index], from_date=warm_from, to_date=end, path=path)
     readings = series_readings(bars, key, rollover_days=rollover_days(warm_from, end, hol))
     if cache is not None:
@@ -429,7 +497,8 @@ def backfill(
     """
     path = fetcher.path
     variants = list(configs) if configs else [config]
-    cache: dict[str, Any] = {}
+    # Bounded for the same reason the replay's is: this loop runs every setting too.
+    cache = ReadingsCache()
     for round_no in range(1, max_rounds + 1):
         book = OptionBook(path)
         waiting = 0

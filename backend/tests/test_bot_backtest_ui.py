@@ -20,6 +20,7 @@ from icici_breeze_backend.app.api.v1.route_bots_backtest import router
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
 from icici_breeze_backend.app.domain.bots import (
+    CasBingoConfig,
     ExpiryIndexWriterConfig,
     IndexWriterLeg,
     IronFlyScalperConfig,
@@ -156,6 +157,16 @@ def _cache_trending(cache, day=D(2026, 3, 9)):
 
 
 MOMENTUM_1M = {"mechanism": "momentum", "duration": 1, "direction": "follow"}
+
+
+@pytest.fixture
+def audit(tmp_path, monkeypatch):
+    from icici_breeze_backend.audit import bot_audit
+
+    root = tmp_path / "bots-audit"
+    root.mkdir()
+    monkeypatch.setattr(bot_audit, "audit_dir", lambda: str(root))
+    return bot_audit
 
 
 def _wait_for_job():
@@ -486,15 +497,6 @@ class TestBudgetAndCap:
 
 
 class TestOneClickBacktest:
-    @pytest.fixture
-    def audit(self, tmp_path, monkeypatch):
-        from icici_breeze_backend.audit import bot_audit
-
-        root = tmp_path / "bots-audit"
-        root.mkdir()
-        monkeypatch.setattr(bot_audit, "audit_dir", lambda: str(root))
-        return bot_audit
-
     def test_a_run_on_cached_data_records_an_activity_row_and_its_own_trail(self, env, audit, monkeypatch):
         _cache_trending(env["cache"])
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
@@ -552,7 +554,213 @@ class TestOneClickBacktest:
         (row,) = [r for r in repo.list_runs("u1") if r.id == run_id]
         assert row.status == "failed" and row.reason_code == "backtest_interrupted"
 
+    def test_a_setting_is_written_to_the_zip_as_it_finishes_not_held_to_the_end(
+        self, env, audit, monkeypatch
+    ):
+        """#41: decisions are the biggest thing a run makes, so they leave memory as they are made.
+
+        Pinned by watching the zip grow: every setting's decisions.csv is in the file before the
+        run's own members (README, summary, audit) are written at the end.
+        """
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+
+        written: list[str] = []
+        add = audit.BacktestZipWriter.add
+        monkeypatch.setattr(
+            audit.BacktestZipWriter, "add",
+            lambda self, member, content: (written.append(member), add(self, member, content))[1],
+        )
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed"
+
+        decisions = [m for m in written if m.endswith("/decisions.csv")]
+        assert len(decisions) == 12, written
+        assert written.index(decisions[-1]) < written.index("summary.csv")
+
+    def test_a_run_that_fails_leaves_no_zip_behind(self, env, audit, monkeypatch):
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+        monkeypatch.setattr(
+            jobs.service, "trade_rows",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "failed"
+
+        (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
+        assert row.status == "failed"
+        left = os.listdir(audit.backtest_dir())
+        assert not [n for n in left if n.endswith((".zip", ".partial"))], left
+
+
     def test_the_fly_still_needs_the_broker_for_todays_margin(self, env, monkeypatch):
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
         with pytest.raises(ValueError, match="margin"):
             jobs.start_bot_backtest("u1", "fly", "last_week")
+
+
+class TestTheReadingsCacheIsBounded:
+    """#41: a run holds the last few signal series, not all six.
+
+    The bound is only free because of an ordering fact -- the settings that share a series run
+    back to back -- so these pin the fact as hard as they pin the cache.
+    """
+
+    def test_it_keeps_the_last_series_and_drops_the_oldest(self):
+        cache = service.ReadingsCache(keep=2)
+        for n, name in enumerate(("a", "b", "c")):
+            cache[name] = {n: name}
+        assert len(cache) == 2
+        assert "a" not in cache and "b" in cache and "c" in cache
+
+    def test_reading_a_series_keeps_it(self):
+        cache = service.ReadingsCache(keep=2)
+        cache["a"], cache["b"] = {1: "a"}, {2: "b"}
+        assert cache["a"] == {1: "a"}   # "a" is now the most recent, so "b" is the one to go
+        cache["c"] = {3: "c"}
+        assert "a" in cache and "c" in cache and "b" not in cache
+
+    def test_a_series_built_twice_is_counted(self):
+        cache = service.ReadingsCache(keep=1)
+        cache["a"], cache["b"] = {}, {}
+        assert cache.rebuilt == 0
+        cache["a"] = {}                 # dropped by "b", and now paid for again
+        assert cache.rebuilt == 1
+
+    def test_room_is_made_before_a_build_not_after(self):
+        """The peak is while the new series is being built, so the old one goes first."""
+        cache = service.ReadingsCache(keep=2)
+        cache["a"], cache["b"] = {}, {}
+        cache.reserve()
+        assert len(cache) == 1 and "a" not in cache, "the oldest goes, and only the oldest"
+        cache["c"] = {}
+        assert len(cache) == 2 and cache.rebuilt == 0
+
+    @pytest.mark.parametrize(
+        "bot, config",
+        [
+            ("momentum", MomentumLongScalperConfig()),
+            ("cas", CasBingoConfig()),
+            ("fly", IronFlyScalperConfig()),
+        ],
+    )
+    def test_no_bot_ever_rebuilds_a_series_it_already_built(self, bot, config):
+        """The claim KEEP_SERIES rests on, replayed against the real combo order.
+
+        CAS Bingo is the one that needs two: a single replay of it walks both enabled indices
+        and asks for that setting's series once per index.
+        """
+        from icici_breeze_backend.app.services.bots import backtest_combos
+        from icici_breeze_backend.app.services.bots.cas_bingo.market import SIGNAL_LABEL
+
+        def asked_for(combo):
+            """The series ids one replay of `combo` requests, in order."""
+            if bot == "momentum":
+                return [service._series_key(combo.config.signal, "nifty").id]
+            if bot == "cas":
+                return [service._series_key(combo.config.signal, SIGNAL_LABEL[i]).id
+                        for i in combo.config.enabled_indices()]
+            entry = combo.config.entry_filter
+            return ([service._series_key(entry.signal, "nifty").id]
+                    if entry.kind == "signal_quiet" else [])
+
+        cache = service.ReadingsCache()
+        seen = set()
+        for combo in backtest_combos.combos_for(bot, config):
+            for key_id in asked_for(combo):
+                # Exactly what `_series_readings` does, `reserve()` included -- the eviction
+                # before the build is part of what has to stay rebuild-free.
+                if key_id not in cache:
+                    cache.reserve()
+                    cache[key_id] = {"series": key_id}
+                seen.add(key_id)
+
+        assert cache.rebuilt == 0, f"{bot}: the combo order no longer suits KEEP_SERIES"
+        assert len(seen) > len(cache), f"{bot}: nothing was bounded, so this proves nothing"
+
+    def test_a_real_run_builds_each_series_once(self, env, audit, monkeypatch):
+        """End to end: twelve settings, six series, six builds."""
+        from icici_breeze_backend.app.services.bots.scalping import backtest_common
+
+        built: list[str] = []
+        real = backtest_common.series_readings
+        monkeypatch.setattr(
+            backtest_common, "series_readings",
+            lambda bars, key, **kw: (built.append(key.id), real(bars, key, **kw))[1],
+        )
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed"
+        assert len(built) == 6 and len(set(built)) == 6, built
+
+
+class TestTheMemoryCeiling:
+    """#41: a backtest stops itself rather than being killed part-way with nothing to show."""
+
+    @staticmethod
+    def _usage(*readings):
+        """Successive `memory.usage()` answers; the last one repeats."""
+        seen = iter(readings)
+        last = [readings[-1]]
+
+        def usage():
+            try:
+                last[0] = next(seen)
+            except StopIteration:
+                pass
+            return last[0]
+
+        return usage
+
+    def test_a_reading_that_cannot_be_taken_is_not_a_refusal(self, monkeypatch):
+        monkeypatch.setattr(jobs.memory, "usage", lambda: None)
+        jobs._memory_check("anywhere")  # a dev machine has no cgroup, and still runs backtests
+
+    def test_room_to_spare_is_not_a_refusal(self, monkeypatch):
+        monkeypatch.setattr(jobs.memory, "usage", lambda: (100_000_000, 1_000_000_000))
+        jobs._memory_check("anywhere")
+
+    def test_the_ceiling_stops_a_run_before_it_starts(self, env, monkeypatch):
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs.memory, "usage", lambda: (900_000_000, 1_000_000_000))
+        with pytest.raises(jobs.OutOfMemory, match="shorter period"):
+            jobs.start_bot_backtest("u1", "momentum", "last_day")
+        # Refused before the row was opened, so nothing is left looking like a run that died.
+        assert [r for r in repo.list_runs("u1") if r.trigger == "backtest"] == []
+
+    def test_the_ceiling_stops_a_run_part_way_and_says_where(self, env, audit, monkeypatch):
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+        # Room at the pre-flight and at the first setting; none at the second.
+        monkeypatch.setattr(
+            jobs.memory, "usage",
+            self._usage((100_000_000, 1_000_000_000), (100_000_000, 1_000_000_000), (900_000_000, 1_000_000_000)),
+        )
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        state = _wait_for_job()
+        assert state["status"] == "failed"
+        assert "after 1 of 12 signal setting(s)" in state["error"]
+
+        (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
+        assert row.status == "failed" and row.reason_code == "backtest_failed"
+        assert "0.90 GB of the 1.00 GB" in row.reason_text
+        # The half-built zip goes with it; the trail it got as far as is still written.
+        left = os.listdir(audit.backtest_dir())
+        assert not [n for n in left if n.endswith((".zip", ".partial"))], left
+        assert [n for n in left if n.endswith(".jsonl")]
+
+    def test_the_route_calls_it_a_refusal_not_a_crash(self, env, client, monkeypatch):
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs.memory, "usage", lambda: (900_000_000, 1_000_000_000))
+        r = client.post("/bots/backtest/start", json={"bot": "momentum", "period": "last_day"})
+        assert r.status_code == 503 and "restart the app" in r.json()["detail"]

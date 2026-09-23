@@ -14,6 +14,7 @@ model, because a total built from both would be evidence of neither.
 """
 from __future__ import annotations
 
+import collections
 import datetime
 from typing import Optional
 
@@ -41,6 +42,17 @@ SESSION_CLOSE = datetime.time(15, 30)
 # continues on 1-minute bars.
 SECOND_WINDOW = datetime.timedelta(minutes=15)
 
+#: How many replay days' option bars `OptionBook` keeps at once.
+#:
+#: A replay walks its days in order and never looks back, so one day is all any run reads; two
+#: leaves room for a bot whose exit reaches past midnight without making every bar a second
+#: read. Holding the lot instead -- which is what an unbounded book did -- costs every contract
+#: every day touched, ~375 bars a strike, for the whole job: a month replayed across Bot 3's
+#: twelve signal settings grew until the kernel killed the process (docs/design-decisions.md
+#: #41). Re-reading an evicted day is an indexed SQLite query against a local file, which is
+#: the cheap half of that trade.
+CACHED_DAYS = 2
+
 
 def session_bounds(day: datetime.date) -> tuple[datetime.datetime, datetime.datetime]:
     return (
@@ -63,27 +75,48 @@ def theoretical_price(spot: float, strike: float, right: str, t: float, sigma: f
 
 
 class OptionBook:
-    """Cached reads of option bars, recording every window it was asked for and lacked."""
+    """Cached reads of option bars, recording every window it was asked for and lacked.
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    The cache holds the last `cached_days` days only (see `CACHED_DAYS`). `needs` is not part of
+    that bound and never evicts: it is the run's output, one entry per window the cache lacked,
+    and it is what the next fetch goes and gets.
+    """
+
+    def __init__(self, path: Optional[str] = None, *, cached_days: int = CACHED_DAYS) -> None:
         self.path = path
         self.needs: set[Need] = set()
-        self._minute: dict[tuple[OptionKey, datetime.date], tuple[str, dict[datetime.datetime, HistCandle]]] = {}
+        self.cached_days = max(1, int(cached_days))
+        #: day -> contract -> (status, bars), least recently read day first.
+        self._days: "collections.OrderedDict[datetime.date, dict[OptionKey, tuple[str, dict[datetime.datetime, HistCandle]]]]" = (
+            collections.OrderedDict()
+        )
+        #: Days dropped to stay inside the bound, so a run can say what it re-read.
+        self.evicted_days = 0
 
     def minute_bars(
         self, key: OptionKey, day: datetime.date
     ) -> tuple[str, dict[datetime.datetime, HistCandle]]:
-        cached = self._minute.get((key, day))
-        if cached is not None:
-            return cached
+        bucket = self._days.get(day)
+        if bucket is not None:
+            self._days.move_to_end(day)
+            cached = bucket.get(key)
+            if cached is not None:
+                return cached
         start, end = session_bounds(day)
         need = Need(key, store.INTERVAL_MINUTE, start, end)
         if not store.fetched(need, path=self.path):
+            # Not cached: a need is re-checked on every ask anyway, and caching the miss would
+            # keep a day alive that holds nothing worth keeping.
             self.needs.add(need)
             return MISSING, {}
         bars = store.load_option_bars(key, store.INTERVAL_MINUTE, start, end, path=self.path)
         out = (OK if bars else NO_DATA, {b.ts: b for b in bars})
-        self._minute[(key, day)] = out
+        if bucket is None:
+            bucket = self._days[day] = {}
+            while len(self._days) > self.cached_days:
+                self._days.popitem(last=False)
+                self.evicted_days += 1
+        bucket[key] = out
         return out
 
     def second_bars(

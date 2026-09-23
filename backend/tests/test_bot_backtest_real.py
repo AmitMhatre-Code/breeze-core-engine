@@ -46,10 +46,12 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
 )
 from icici_breeze_backend.app.services.bots.scalping.backtest_fly import run_fly_backtest
 from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
+    CACHED_DAYS,
     NO_DATA,
     OK,
     OptionBook,
     RealPricer,
+    session_bounds,
 )
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import HistCandle, Need, OptionKey
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
@@ -397,6 +399,112 @@ def _fill_need_from(fake, need, cache):
     ]
     store.store_option_candles(rows, need.key, need.interval, path=cache)
     store.record_fetch(need, len(rows), path=cache)
+
+
+def _cache_option_day(cache, key, day, *, price=40.0, minutes=5):
+    """Put one contract's bars for one day in the cache, and mark the window fetched."""
+    base = DT.combine(day, datetime.time(9, 15))
+    rows = [
+        {"datetime": (base + i * MIN).strftime(_TS), "open": price, "high": price,
+         "low": price, "close": price, "volume": 100}
+        for i in range(minutes)
+    ]
+    store.store_option_candles(rows, key, store.INTERVAL_MINUTE, path=cache)
+    start, end = session_bounds(day)
+    store.record_fetch(Need(key, store.INTERVAL_MINUTE, start, end), len(rows), path=cache)
+
+
+class TestTheOptionBookHoldsARollingWindow:
+    """The book keeps the last few days, not the whole run (docs/design-decisions.md #41).
+
+    An unbounded book held every contract of every day for the length of a job, which for a
+    month replayed across twelve signal settings grew until the kernel killed the process. What
+    matters here is that the bound is real *and* costs nothing but re-reads: a dropped day must
+    come back identical.
+    """
+
+    @pytest.fixture
+    def counted(self, monkeypatch):
+        reads: list[tuple] = []
+        real = store.load_option_bars
+
+        def counting(key, interval, start, end, **kw):
+            reads.append((key, start.date()))
+            return real(key, interval, start, end, **kw)
+
+        monkeypatch.setattr(store, "load_option_bars", counting)
+        return reads
+
+    def test_the_default_book_is_bounded(self, cache):
+        assert OptionBook(cache).cached_days == CACHED_DAYS >= 1
+
+    def test_a_held_day_is_read_once_however_often_it_is_asked_for(self, cache, counted):
+        _cache_option_day(cache, KEY, MON)
+        book = OptionBook(cache, cached_days=1)
+        first = book.minute_bars(KEY, MON)
+        assert first[0] == OK
+        assert book.minute_bars(KEY, MON) == first
+        assert len(counted) == 1 and book.evicted_days == 0
+
+    def test_a_day_past_the_window_is_dropped_and_read_again_identically(self, cache, counted):
+        tue = D(2026, 3, 10)
+        for day in (MON, tue):
+            _cache_option_day(cache, KEY, day)
+        book = OptionBook(cache, cached_days=1)
+
+        first = book.minute_bars(KEY, MON)
+        book.minute_bars(KEY, tue)          # one-day window: Monday drops out
+        again = book.minute_bars(KEY, MON)  # and comes back off SQLite
+
+        assert len(counted) == 3 and book.evicted_days == 2
+        assert again == first, "dropping a day may cost a read, never a bar"
+
+    def test_a_long_run_holds_the_window_and_nothing_more(self, cache, counted):
+        days = [D(2026, 3, 9) + datetime.timedelta(days=i) for i in range(20)]
+        for day in days:
+            _cache_option_day(cache, KEY, day)
+        book = OptionBook(cache, cached_days=2)
+        for day in days:
+            assert book.minute_bars(KEY, day)[0] == OK
+        assert len(counted) == 20
+        # Twenty days walked, two ever held: everything before the window was let go.
+        assert book.evicted_days == 18
+
+    def test_every_contract_of_a_held_day_is_kept(self, cache, counted):
+        put = replace(KEY, right="put")
+        for key in (KEY, put):
+            _cache_option_day(cache, key, MON)
+        book = OptionBook(cache, cached_days=1)
+        book.minute_bars(KEY, MON)
+        book.minute_bars(put, MON)
+        book.minute_bars(KEY, MON)
+        # Two contracts, one day, one read each: the bound is on days, not on contracts.
+        assert len(counted) == 2 and book.evicted_days == 0
+
+    def test_a_window_never_fetched_is_still_a_need(self, cache, counted):
+        book = OptionBook(cache, cached_days=1)
+        status, bars = book.minute_bars(KEY, MON)
+        assert (status, bars) == ("missing", {})
+        assert len(book.needs) == 1 and counted == []
+
+
+def test_a_bounded_book_replays_exactly_as_an_unbounded_one_would(cache):
+    """The bound is a memory decision, never a pricing one."""
+    underlying = _trending()
+    fake = FakeBook(underlying)
+    for _ in range(10):
+        book = OptionBook(cache, cached_days=99)
+        result = _momentum(underlying, RealPricer(book))
+        if not book.needs:
+            break
+        for need in book.needs:
+            _fill_need_from(fake, need, cache)
+    else:
+        pytest.fail("backfill did not converge")
+
+    bounded = _momentum(underlying, RealPricer(OptionBook(cache, cached_days=1)))
+    assert bounded.cycles and [c.net_pnl for c in bounded.cycles] == [c.net_pnl for c in result.cycles]
+    assert bounded.summary() == result.summary()
 
 
 def test_backfill_rounds_converge_on_the_answer_full_data_gives(cache):
