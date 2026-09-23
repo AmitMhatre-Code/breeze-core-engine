@@ -39,6 +39,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_compare import (
     render,
 )
 from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
+    AllowanceSpent,
     BudgetExhausted,
     Fetcher,
     market_hours_refusal,
@@ -399,6 +400,63 @@ def _fill_need_from(fake, need, cache):
     ]
     store.store_option_candles(rows, need.key, need.interval, path=cache)
     store.record_fetch(need, len(rows), path=cache)
+
+
+SHED_RESPONSE = {
+    "Status": 429,
+    "Error": (
+        "Skipped a non-essential broker refresh to protect your remaining daily API calls "
+        "for placing and cancelling orders. This display may be slightly out of date."
+    ),
+    "icici_throttled": False,
+    "advisory_shed": True,
+}
+
+
+class TestASpentAllowanceStopsTheFetch:
+    """#42: the app holding its own calls back is a fact about the day, not about a window.
+
+    Pinned from a real run: 1,631 identical refusals, 34 minutes of spacing sleep and 1,631
+    units of the run's own budget, every one of them after the first had already given the
+    answer.
+    """
+
+    def test_the_first_shed_stops_everything(self, cache):
+        sdk = FakeSdk(lambda p: SHED_RESPONSE)
+        fetcher, _logs = _fetcher(sdk, cache)
+        with pytest.raises(AllowanceSpent, match="after IST midnight"):
+            fetcher.fetch_needs([Need(KEY, store.INTERVAL_MINUTE, *session_bounds(MON))])
+        assert len(sdk.calls) == 1, "one refusal is the whole answer"
+        assert fetcher.calls == 1, "and it costs the run one call, not one per window"
+
+    def test_it_stops_a_whole_batch_at_the_first_one(self, cache):
+        days = [D(2026, 3, 9) + datetime.timedelta(days=i) for i in range(20)]
+        needs = [Need(KEY, store.INTERVAL_MINUTE, *session_bounds(d)) for d in days]
+        rows = [{"datetime": "2026-03-09 09:15:00", "open": 1, "high": 1, "low": 1,
+                 "close": 1, "volume": 1}]
+        answers = [{"Status": 200, "Success": rows, "Error": None}] * 3
+        sdk = FakeSdk(lambda p: answers.pop(0) if answers else SHED_RESPONSE)
+        fetcher, _logs = _fetcher(sdk, cache)
+        with pytest.raises(AllowanceSpent):
+            fetcher.fetch_needs(needs)
+        assert len(sdk.calls) == 4, "three served, then the fourth ends it"
+
+    def test_a_shed_is_not_reported_as_a_broker_throttle(self, cache):
+        """ICICI was never asked, so nobody should be sent looking at ICICI."""
+        sdk = FakeSdk(lambda p: SHED_RESPONSE)
+        fetcher, _logs = _fetcher(sdk, cache)
+        with pytest.raises(AllowanceSpent) as caught:
+            fetcher.call(interval=store.INTERVAL_MINUTE, stock_code="NIFTY")
+        assert "throttl" not in str(caught.value).lower()
+        assert "this deployment has used" in str(caught.value)
+
+    def test_an_ordinary_429_is_still_just_this_window_failing(self, cache):
+        """Only the app's own refusal is terminal; a real throttle is retried as before."""
+        sdk = FakeSdk(lambda p: {"Status": 429, "Error": "You have been throttled by ICICI.",
+                                 "icici_throttled": True})
+        fetcher, _logs = _fetcher(sdk, cache)
+        rows, error = fetcher.call(interval=store.INTERVAL_MINUTE, stock_code="NIFTY")
+        assert rows == [] and "throttled" in error
 
 
 def _cache_option_day(cache, key, day, *, price=40.0, minutes=5):

@@ -345,6 +345,19 @@ def advisory_budget_exhausted(user_id: str) -> bool:
     return get_today_count(user_id) >= AMBER_MAX
 
 
+def advisory_headroom(user_id: str) -> int:
+    """How many advisory calls are still available today before the reserve line.
+
+    The counterpart to `advisory_budget_exhausted` for anything that plans a batch of calls
+    rather than making one. A long backtest fetch budgets thousands of calls from its own
+    counter (`backtest_budget`), which knows nothing about what the rest of the deployment has
+    already spent -- so without this it plans for calls that will be shed on arrival, and
+    spends its own budget discovering that one refusal at a time
+    (docs/design-decisions.md #42).
+    """
+    return max(0, AMBER_MAX - get_today_count(user_id))
+
+
 def get_usage_warning(user_id: str) -> str | None:
     """Return a proactive warning when the user is in the final 1000-call band."""
     count = get_today_count(user_id)

@@ -169,6 +169,40 @@ def audit(tmp_path, monkeypatch):
     return bot_audit
 
 
+class _StubFetcher:
+    """Stands in for `jobs._fetcher`: records the budget it was handed, fetches nothing."""
+
+    def __init__(self, planned, *, on_underlying=None):
+        self.calls = 0
+        self.path = None
+        self.holidays = set()
+        self._planned = planned
+        self._on_underlying = on_underlying
+        self.log = lambda line: None
+
+    @property
+    def max_calls(self):
+        return self._planned.get("max_calls")
+
+    @max_calls.setter
+    def max_calls(self, value):
+        self._planned["max_calls"] = value
+
+    def fetch_futures(self, *a, **kw):
+        if self._on_underlying:
+            self._on_underlying()
+
+    def fetch_spot(self, *a, **kw):
+        if self._on_underlying:
+            self._on_underlying()
+
+    def fetch_vix(self, *a, **kw):
+        pass
+
+    def fetch_needs(self, needs):
+        return {"fetched": 0, "bars": 0, "empty": 0, "errors": 0}
+
+
 def _wait_for_job():
     if jobs._thread is not None:
         jobs._thread.join(timeout=30)
@@ -602,6 +636,74 @@ class TestOneClickBacktest:
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
         with pytest.raises(ValueError, match="margin"):
             jobs.start_bot_backtest("u1", "fly", "last_week")
+
+
+class TestTheTwoBudgets:
+    """#42: a fetch is planned against the smaller of its own budget and the day's headroom.
+
+    The run this came from was told it had 3,998 calls when the deployment had ~1,470 left
+    before the reserve, so it planned a fetch that the app itself refused most of the way
+    through.
+    """
+
+    @pytest.fixture
+    def live(self, env, monkeypatch):
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs, "broker_live", lambda: True)
+        monkeypatch.setattr(jobs, "market_hours_reason", lambda now=None: None)
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+        return env
+
+    def _notes(self):
+        (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
+        return " ".join(row.detail["summary"]["notes"])
+
+    def test_the_smaller_budget_is_the_one_planned_against(self, live, monkeypatch):
+        planned = {}
+        monkeypatch.setattr(jobs.store, "calls_remaining", lambda d: 3998)
+        monkeypatch.setattr(jobs.api_usage, "advisory_headroom", lambda uid: 1470)
+        monkeypatch.setattr(jobs, "_fetcher", lambda uid: _StubFetcher(planned))
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed"
+        assert planned["max_calls"] == 1470, "the day's headroom, not the backtest budget"
+        assert "leaves room for 1470" in self._notes()
+
+    def test_the_backtest_budget_still_binds_when_it_is_smaller(self, live, monkeypatch):
+        planned = {}
+        monkeypatch.setattr(jobs.store, "calls_remaining", lambda d: 200)
+        monkeypatch.setattr(jobs.api_usage, "advisory_headroom", lambda uid: 1470)
+        monkeypatch.setattr(jobs, "_fetcher", lambda uid: _StubFetcher(planned))
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed"
+        assert planned["max_calls"] == 200
+        assert "leaves room for" not in self._notes(), "nothing to explain; its own budget binds"
+
+    def test_no_headroom_says_so_instead_of_blaming_the_backtest_budget(self, live, monkeypatch):
+        monkeypatch.setattr(jobs.store, "calls_remaining", lambda d: 3998)
+        monkeypatch.setattr(jobs.api_usage, "advisory_headroom", lambda uid: 0)
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed"
+        notes = self._notes()
+        assert "holding the rest back" in notes
+        assert "Raising the backtest budget will not help" in notes
+
+    def test_a_spent_allowance_mid_fetch_is_its_own_note(self, live, monkeypatch):
+        monkeypatch.setattr(jobs.store, "calls_remaining", lambda d: 3998)
+        monkeypatch.setattr(jobs.api_usage, "advisory_headroom", lambda uid: 1470)
+
+        def blow_up(*a, **kw):
+            raise jobs.AllowanceSpent("this deployment has used 4500 of its 5000 ICICI calls.")
+
+        monkeypatch.setattr(jobs, "_fetcher", lambda uid: _StubFetcher({}, on_underlying=blow_up))
+
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert _wait_for_job()["status"] == "completed", "a spent allowance is a gap, not a failure"
+        notes = self._notes()
+        assert "Fetch stopped early: this deployment has used 4500" in notes
+        assert "Replayed on what was cached" not in notes, "not dressed up as a generic stop"
 
 
 class TestTheReadingsCacheIsBounded:

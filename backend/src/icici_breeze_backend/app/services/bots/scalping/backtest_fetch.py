@@ -50,6 +50,27 @@ class BudgetExhausted(Stopped):
     """The run's call budget is spent."""
 
 
+class AllowanceSpent(Stopped):
+    """The deployment's shared ICICI allowance for today is down to its reserve.
+
+    A sibling of `BudgetExhausted`, not the same thing: that one is this run's own budget and
+    is raised by the run's own counter, while this is the whole deployment's day and is decided
+    by `api_usage.advisory_budget_exhausted`. They have different remedies -- raise the backtest
+    budget, versus wait for IST midnight -- so they are never reported as one
+    (docs/design-decisions.md #42).
+    """
+
+
+def shed_refusal(response: Any) -> bool:
+    """True when the app held this call back itself rather than asking ICICI.
+
+    `icici_api_pacing.build_shed_error` marks these; they carry HTTP 429 but never left the
+    process, so reading one as a broker throttle sends an operator to look for a problem at
+    ICICI's end that does not exist.
+    """
+    return isinstance(response, dict) and bool(response.get("advisory_shed"))
+
+
 def market_hours_refusal(now: datetime.datetime, *, trading_day: bool) -> Optional[str]:
     start, end = MARKET_HOURS_BLOCK
     if trading_day and start <= now.time() < end:
@@ -158,6 +179,23 @@ class Fetcher:
             response = self.sdk.get_historical_data_v2(**params)
         except Exception as exc:  # noqa: BLE001 -- reported to the operator, never swallowed
             return [], f"request failed: {exc}"
+        if shed_refusal(response):
+            # Terminal, and not a property of this window: the allowance is a fact about the
+            # day, so the next request cannot succeed either. Returning it as a per-window
+            # error instead cost a 9-month fetch 1,631 refusals, 34 minutes of spacing sleep
+            # and 1,631 units of its own budget, all of it after the answer was already known
+            # (2026-09-23; docs/design-decisions.md #42).
+            from icici_breeze_backend.app.services.api_usage import (
+                API_CALLS_LIMIT_PER_DAY,
+                AMBER_MAX,
+            )
+
+            raise AllowanceSpent(
+                f"this deployment has used {AMBER_MAX} of its {API_CALLS_LIMIT_PER_DAY} ICICI "
+                f"calls for today, so the app is holding the rest back for placing and "
+                f"cancelling orders and will not spend any more on a backtest. Everything "
+                f"fetched so far is kept; fetch again after IST midnight to carry on."
+            )
         rows, error = parse_response(response)
         if not error and len(rows) >= self.max_bars():
             self.log(

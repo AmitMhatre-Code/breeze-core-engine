@@ -26,10 +26,12 @@ from typing import Any, Callable, Optional
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core import memory
 from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.services import api_usage
 from icici_breeze_backend.app.services.bots import backtest_service as service
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
     DEFAULT_MAX_CALLS,
+    AllowanceSpent,
     BudgetExhausted,
     Fetcher,
     Stopped,
@@ -447,7 +449,15 @@ def start_bot_backtest(
         zip_writer: Optional[bot_audit.BacktestZipWriter] = None
         try:
             # 1. fetch within budget
-            remaining = store.calls_remaining(now.date())
+            #
+            # Two budgets, and the fetch is planned against the smaller. `calls_remaining` is
+            # this feature's own daily counter; `advisory_headroom` is what is left of the
+            # deployment's shared ICICI allowance before the app starts holding calls back for
+            # orders. A plan made on the first alone is a plan for calls that get shed on
+            # arrival (#42).
+            budget_left = store.calls_remaining(now.date())
+            headroom = api_usage.advisory_headroom(user_id)
+            remaining = min(budget_left, headroom)
             block = market_hours_reason()
             indices = service.indices_for(bot, config)
             if not broker_live():
@@ -457,14 +467,29 @@ def start_bot_backtest(
                 )
             elif block:
                 notes.append(f"Nothing fetched: {block} Replayed on cached data only.")
-            elif remaining <= 0:
+            elif budget_left <= 0:
                 notes.append(
                     f"Nothing fetched: today's backtest budget of {store.daily_call_budget()} "
                     "ICICI calls is already spent, so this ran on cached data only and any gap "
                     "below is unchanged. The budget resets at IST midnight; to raise it for "
                     "today, go to Settings \u2192 API Usage \u2192 Backtest call budget."
                 )
+            elif headroom <= 0:
+                notes.append(
+                    f"Nothing fetched: this deployment has used {api_usage.AMBER_MAX} of its "
+                    f"{api_usage.API_CALLS_LIMIT_PER_DAY} ICICI calls today, so the app is "
+                    "holding the rest back for placing and cancelling orders. Raising the "
+                    "backtest budget will not help; the allowance resets at IST midnight."
+                )
             else:
+                if remaining < budget_left:
+                    # `notes`, not `note`: this is a finding about the run that belongs in the
+                    # Activity row's summary beside the gap it explains, not just in the trail.
+                    notes.append(
+                        f"Today's shared ICICI allowance leaves room for {remaining} more "
+                        f"advisory calls, below this backtest's budget of {budget_left}, so the "
+                        "fetch was planned for the smaller of the two."
+                    )
                 note(f"Fetching missing data, up to {remaining} calls…")
                 with _broker_scope(user_id):
                     fetcher = _fetcher(user_id)
@@ -481,6 +506,10 @@ def start_bot_backtest(
                             configs=[c.config for c in combos],
                         )
                         notes.append(outcome["message"])
+                    except AllowanceSpent as exc:
+                        # Checked before BudgetExhausted only because both are `Stopped`; the
+                        # two have different remedies and are never merged into one note.
+                        notes.append(f"Fetch stopped early: {exc}")
                     except BudgetExhausted as exc:
                         # Its own message already says what to do about it, so it is not
                         # dressed up as a generic early stop.

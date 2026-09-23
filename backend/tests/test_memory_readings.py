@@ -92,3 +92,34 @@ class TestUsage:
 
     def test_it_reads_as_gigabytes_a_person_can_act_on(self):
         assert memory.describe(1_240_000_000, 1_468_006_400) == "1.24 GB of the 1.47 GB this app is allowed"
+
+
+class TestAdvisoryHeadroom:
+    """#42: what `advisory_budget_exhausted` says, as a number a batch can be planned against."""
+
+    @pytest.fixture
+    def counted(self, monkeypatch):
+        from icici_breeze_backend.app.services import api_usage
+
+        def at(n):
+            monkeypatch.setattr(api_usage, "get_today_count", lambda uid: n)
+
+        return api_usage, at
+
+    def test_it_is_what_is_left_before_the_reserve(self, counted):
+        api_usage, at = counted
+        at(3030)
+        assert api_usage.advisory_headroom("u1") == api_usage.AMBER_MAX - 3030 == 1470
+
+    def test_it_never_goes_negative(self, counted):
+        api_usage, at = counted
+        at(4900)
+        assert api_usage.advisory_headroom("u1") == 0
+        assert api_usage.advisory_budget_exhausted("u1") is True
+
+    def test_it_agrees_with_the_gate_it_is_planned_against(self, counted):
+        """Headroom hits zero exactly where single calls start being shed, never after."""
+        api_usage, at = counted
+        for n in (api_usage.AMBER_MAX - 1, api_usage.AMBER_MAX, api_usage.AMBER_MAX + 1):
+            at(n)
+            assert (api_usage.advisory_headroom("u1") == 0) is api_usage.advisory_budget_exhausted("u1")
