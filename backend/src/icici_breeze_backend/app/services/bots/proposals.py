@@ -472,7 +472,9 @@ def _approve_holdings(
     run_id = repo.start_run(user_id, BOT_HOLDINGS_WRITER, trigger)
     repo.finish_run(
         run_id,
-        status="completed" if all_ok else "failed",
+        # Same rule as Bot 2's: some legs on the exchange is a partial success, not a
+        # failure -- the ones that placed are open and holding margin.
+        status="completed" if all_ok else ("partial" if ok_count else "failed"),
         reason_code=ReasonCode.ORDERS_PLACED if all_ok else ReasonCode.ORDER_REJECTED,
         reason_text=f"{ok_count} of {len(results)} leg(s) placed.",
         detail={"legs": [p.model_dump() for p in placed]},
@@ -642,12 +644,19 @@ def _approve_index_plan(
     waiting = [s for s in stops if s.status == "pending"]
     failed_stops = [s for s in stops if s.status == "failed"]
     skipped_stops = [s for s in stops if s.status == "skipped"]
+    # Once anything has reached the exchange the run is `partial`, never `failed`: the
+    # user approved a trade, the trade happened, and what is missing is the protection or
+    # one of the legs -- which the reason code and the text below name. Calling that
+    # "failed" reads as "nothing was placed" on the card and in the Activity log, which is
+    # the opposite of true while a live short sits open.
+    went_out = any(p.order_ids for p in placed)
     if not all_ok:
-        status, reason_code = "failed", ReasonCode.ORDER_REJECTED
+        status = "partial" if went_out else "failed"
+        reason_code = ReasonCode.ORDER_REJECTED
     elif failed_stops:
-        status, reason_code = "failed", ReasonCode.EXIT_ARM_FAILED
+        status, reason_code = "partial", ReasonCode.EXIT_ARM_FAILED
     elif skipped_stops:
-        status, reason_code = "failed", ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
+        status, reason_code = "partial", ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
     elif waiting:
         status, reason_code = "completed", ReasonCode.EXIT_ARM_PENDING
     else:

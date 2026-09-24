@@ -35,7 +35,15 @@ BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session", "bac
 
 # Terminal run states. `proposed` is Bot 1 finishing successfully with something for the
 # user to approve -- distinct from `completed`, which means orders were actually placed.
-BotRunStatus = Literal["running", "completed", "proposed", "skipped", "failed"]
+#
+# `partial` sits between `completed` and `failed`: orders DID reach the exchange and a
+# position is open, but something after that fell short -- a leg rejected, or the stop
+# that protects the position never armed. It exists because reporting those as `failed`
+# told the user nothing had happened while their money was already at risk; the reason
+# code says which half is missing. `failed` now means what it says: nothing went out, and
+# nothing is owed. A `partial` run counts as having acted today exactly as `completed`
+# does, so no bot re-fires on top of a position it already opened.
+BotRunStatus = Literal["running", "completed", "partial", "proposed", "skipped", "failed"]
 
 ProposalStatus = Literal["pending", "approved", "rejected", "expired", "superseded", "placed"]
 

@@ -27,10 +27,13 @@ import {
 
 /** A run's outcome, not its severity. `skipped` is deliberately neutral rather than a
  *  warning colour: a bot correctly declining to trade is a normal day, and colouring it
- *  as a problem trains the user to ignore the log. */
+ *  as a problem trains the user to ignore the log. `partial` is amber rather than rose for
+ *  the same reason from the other side: the trade went on, so it is not a failure — but
+ *  something (usually the stop) still needs the user, so it is not green either. */
 const STATUS_TONE: Record<BotRunStatus, string> = {
   running: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
   completed: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  partial: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   proposed: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
   skipped: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
   failed: "bg-rose-500/10 text-rose-700 dark:text-rose-300",

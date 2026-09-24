@@ -212,8 +212,38 @@ def test_a_position_left_without_a_stop_is_never_a_clean_success(db, monkeypatch
 
     scheduler.tick(FakeProc())
     run = repo.list_runs("u1")[0]
-    assert run.status == "failed"
+    assert run.status == "partial"
     assert "WITHOUT a stop" in run.reason_text
+
+
+def test_a_stop_skipped_for_an_existing_position_is_partial_not_failed(db, monkeypatch):
+    """The screenshot case: the legs the user approved went on, and only the stop was
+    declined (a Strategy Group rule there would have pooled P&L with another position).
+
+    Reporting that as `failed` said the run did nothing, which is the one reading that is
+    definitely wrong -- a live short was open and needed a stop set by hand.
+    """
+    enable_bot()
+    patch_decision(monkeypatch, bot2.TickDecision("fire", None, None, ("NIFTY",)))
+    result = bot2.FireResult(
+        index_code="NIFTY", exchange_code=cfg.NFO, expiry_display="03-Sep-2026",
+        right="put", strike_price=23500.0, lots=2, quantity=150, entry_price=42.0,
+        order_ids=["OID1"], rule_id=None,
+        reason_code=ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION,
+        arm_error="1 other open leg(s) already exist",
+        error="Position is OPEN but no stop was armed: 1 other open leg(s) already exist",
+    )
+    monkeypatch.setattr(bot2, "fire_index", lambda *a, **k: result)
+    monkeypatch.setattr(bot2, "notify_arm_skipped", lambda *a, **k: None)
+
+    scheduler.tick(FakeProc())
+    run = repo.list_runs("u1")[0]
+
+    assert run.status == "partial"
+    assert run.reason_code == ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
+    assert "Sold 2 lot(s) NIFTY" in run.reason_text, "what went on comes first"
+    assert "no stop was armed" in run.reason_text
+    assert run.detail["legs"][0]["order_ids"] == ["OID1"]
 
 
 def test_a_stop_waiting_on_its_fills_is_pending_not_unprotected(db, monkeypatch):
@@ -266,12 +296,14 @@ def test_a_filled_position_whose_stop_failed_is_not_logged_as_a_rejection(db, mo
 
     scheduler.tick(FakeProc())
     run = repo.list_runs("u1")[0]
-    assert run.status == "failed"
+    # `partial`, not `failed`: the leg is filled and holding margin, so the headline has to
+    # say the trade happened -- only the stop is missing, which the reason code carries.
+    assert run.status == "partial"
     assert run.reason_code == ReasonCode.EXIT_ARM_FAILED
     assert run.reason_code != ReasonCode.ORDER_REJECTED
     assert "could not be armed" in run.reason_text
     # The filled legs stay on the record: it is the only place the user can see what is
-    # actually open while the headline says the run failed.
+    # actually open.
     assert run.detail["legs"][0]["order_ids"] == ["OID1"]
 
 
@@ -288,7 +320,7 @@ def test_margin_held_by_a_failed_fire_is_still_passed_to_the_next_bot(
 ):
     """Anything that reached the exchange holds margin, whether or not the run was clean.
 
-    Both shapes here are `failed` runs, and both used to hand the next bot in the sweep a
+    Neither shape here is a clean run, and both used to hand the next bot in the sweep a
     commitment of zero -- so with the Expiry Writer ordered first, the Holdings Writer sized
     against capital a live short was already using.
     """
@@ -314,7 +346,7 @@ def test_margin_held_by_a_failed_fire_is_still_passed_to_the_next_bot(
 
     scheduler.tick(FakeProc())
 
-    assert repo.list_runs("u1")[0].status == "failed"
+    assert repo.list_runs("u1")[0].status == "partial"
     assert handed_on == [250_000.0]
 
 
@@ -379,7 +411,7 @@ def test_one_clean_index_cannot_mask_another_left_without_a_stop(db, monkeypatch
     scheduler.tick(FakeProc())
     run = repo.list_runs("u1")[0]
 
-    assert run.status == "failed"
+    assert run.status == "partial"
     assert run.reason_code == ReasonCode.EXIT_ARM_FAILED
     # Both positions are named in the headline: what is protected and what is not.
     assert "NIFTY 23500 PE" in run.reason_text

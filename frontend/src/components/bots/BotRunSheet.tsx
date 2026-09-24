@@ -46,6 +46,15 @@ function stopText(s: ExitStop): string {
       "Order Book to arm it on what filled."
     );
   }
+  if (s.status === "skipped") {
+    // Final, not a retry — unlike the branch below, nothing will arm this later, so the
+    // text must not promise a retry that is not coming.
+    return (
+      `${name} stop NOT armed: ${s.detail ?? "an existing open position in this group"}. ` +
+      "The legs were placed and the position is open, but it has no automatic exit and " +
+      "none will be armed — set PB/SL yourself in Portfolio if you want it protected."
+    );
+  }
   return (
     `${name} stop NOT armed: ${s.detail ?? "unknown error"}. Retrying every 2 minutes — ` +
     "set PB/SL yourself in Portfolio if you would rather not wait."
@@ -444,7 +453,7 @@ export function BotRunSheet({
                     className={
                       s.status === "armed"
                         ? "text-up"
-                        : s.status === "failed"
+                        : s.status === "failed" || s.status === "skipped"
                           ? "font-semibold text-down"
                           : "font-semibold"
                     }

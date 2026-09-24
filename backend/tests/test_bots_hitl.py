@@ -85,7 +85,7 @@ def test_a_proposal_is_not_a_committed_run(db_path):
     assert repo.has_terminal_run_today("u1", BOT_HOLDINGS_WRITER) is True
 
 
-@pytest.mark.parametrize("status", ["completed", "failed", "skipped"])
+@pytest.mark.parametrize("status", ["completed", "partial", "failed", "skipped"])
 def test_a_resolved_run_is_committed(db_path, status):
     run_id = repo.start_run("u1", BOT_HOLDINGS_WRITER, "schedule")
     repo.finish_run(

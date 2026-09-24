@@ -171,11 +171,25 @@ function nextAction(bot: Bot, mode: BotMode): string {
 
 const RUN_WORD: Record<BotRunStatus, string> = {
   completed: "placed",
+  partial: "partly placed",
   proposed: "proposed",
   skipped: "skipped",
   failed: "failed",
   running: "running",
 };
+
+/** The two ways a run ends with a live position and no stop on it. Both are `partial`
+ *  runs, and both need the same thing said on the card: the trade IS on, go set PB/SL. */
+const NO_STOP_CODES = new Set(["exit_arm_failed", "exit_arm_skipped_existing_position"]);
+
+/** "2 placed · no stop" — a partial run traded, so the card must lead with that. Saying
+ *  "failed" here while a live short sat open was the whole reason this state exists. */
+function partialWord(run: BotRun, wentOut: number, legs: number): string {
+  if (NO_STOP_CODES.has(run.reason_code ?? "")) {
+    return wentOut > 0 ? `${wentOut} placed · no stop` : "placed · no stop";
+  }
+  return legs > 0 ? `${wentOut} of ${legs} placed` : "partly placed";
+}
 
 /** "28 Aug · 4 placed" — what the bot last did, which is the question a card that says
  *  only "Armed" leaves open. */
@@ -187,7 +201,13 @@ function lastRunSummary(run: BotRun | undefined): string {
         month: "short",
       })
     : "—";
-  const legs = Array.isArray(run.detail?.legs) ? (run.detail.legs as unknown[]).length : 0;
+  const legList = Array.isArray(run.detail?.legs)
+    ? (run.detail.legs as Array<{ order_ids?: unknown[] | null }>)
+    : [];
+  const legs = legList.length;
+  // What reached the exchange, not what was planned — on a partial run those differ, and
+  // the count the user needs is the one that is open.
+  const wentOut = legList.filter((leg) => (leg?.order_ids?.length ?? 0) > 0).length;
   // A semi-autonomous bot's `proposed` run is not "it did a thing and stopped" — it is
   // still waiting on the user, and the card is where they will look for the reason their
   // bot has not traded. Say what is actually blocking it.
@@ -200,9 +220,11 @@ function lastRunSummary(run: BotRun | undefined): string {
           ? "you rejected it"
           : run.reason_code === "approval_unreachable"
             ? "could not reach Telegram"
-            : run.status === "completed" && legs > 0
-              ? `${legs} placed`
-              : (RUN_WORD[run.status] ?? run.status);
+            : run.status === "partial"
+              ? partialWord(run, wentOut, legs)
+              : run.status === "completed" && legs > 0
+                ? `${legs} placed`
+                : (RUN_WORD[run.status] ?? run.status);
   return `${when} · ${word}`;
 }
 

@@ -508,7 +508,8 @@ def _evaluate_one(p: _Pending, proc: Any, now: float) -> None:
             p,
             note=f" — {_label(p.stock_code)} stop NEVER armed (market closed first)",
             settle_code=ReasonCode.EXIT_ARM_FAILED,
-            settle_status="failed",
+            # The position filled and is still open -- only its stop is missing.
+            settle_status="partial",
         )
         _notify(
             p.user_id,

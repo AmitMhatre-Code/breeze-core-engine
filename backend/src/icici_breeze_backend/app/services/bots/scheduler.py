@@ -585,7 +585,12 @@ def _fire(
                 for r in results
             ]
         }
-        if not ok:
+        # "Nothing clean" is not the same as "nothing happened". A single index whose orders
+        # filled and whose stop was then refused has `ok` empty -- the arm failure sets the
+        # result's error -- and taking this exit reported an open, unprotected short as a
+        # flat failure, skipped the Telegram warning below, and never named what was sold.
+        # Only a run where nothing reached the exchange belongs here.
+        if not ok and not any(r.order_ids for r in results):
             first = results[0] if results else None
             # A transient pricing miss reads as `skipped`, not `failed`: nothing went wrong,
             # the quotes simply were not there yet, and the run is retried inside the window.
@@ -631,12 +636,22 @@ def _fire(
         ):
             reason_code = ReasonCode.EXIT_ARM_SKIPPED_EXISTING_POSITION
         elif waiting:
+            # Left ahead of ORDER_REJECTED on purpose: `exit_arming` settles a run only
+            # while it still reads EXIT_ARM_PENDING, so a rejected leg must not overwrite it.
             reason_code = ReasonCode.EXIT_ARM_PENDING
+        elif any(not r.ok for r in results):
+            reason_code = ReasonCode.ORDER_REJECTED
         else:
             reason_code = ReasonCode.ORDERS_PLACED
+        # `partial`, not `failed`: every leg named here is filled and holding margin. What
+        # is missing -- the stop, or an index that never traded -- is in the code and text.
         repo.finish_run(
             run_id,
-            status="completed" if not unprotected else "failed",
+            status=(
+                "completed"
+                if not unprotected and all(r.ok for r in results)
+                else "partial"
+            ),
             reason_code=reason_code,
             reason_text="; ".join(lines),
             detail=detail,

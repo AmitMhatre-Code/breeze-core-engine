@@ -222,7 +222,17 @@ export function isScalper(botType: BotType): boolean {
   return SCALPER_BOT_TYPES.includes(botType);
 }
 
-export type BotRunStatus = "running" | "completed" | "proposed" | "skipped" | "failed";
+/** `partial` means orders reached the exchange and a position is open, but something
+ *  after that fell short — a leg rejected, or the stop that protects it never armed. It is
+ *  deliberately not `failed`: the reason code says which half is missing, and the user has
+ *  a live position either way. */
+export type BotRunStatus =
+  | "running"
+  | "completed"
+  | "partial"
+  | "proposed"
+  | "skipped"
+  | "failed";
 
 /** How an unattended run commits. `auto` places straight away; `telegram` sends the priced
  *  proposal to the linked chat and places nothing until the user taps Approve — silence
@@ -805,7 +815,9 @@ export type PlacedLeg = {
 export type ExitStop = {
   stock_code: string;
   expiry_display: string;
-  status: "armed" | "pending" | "failed";
+  /** `skipped` is final, not a retry: the group already held another open position, so
+   *  arming here would have pooled P&L across both and nothing will arm it later. */
+  status: "armed" | "pending" | "failed" | "skipped";
   rule_id: string | null;
   pending_exit_id: string | null;
   detail: string | null;

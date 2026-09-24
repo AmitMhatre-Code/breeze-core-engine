@@ -244,7 +244,12 @@ def fire_autonomous(
         }
         repo.finish_run(
             run_id,
-            status="completed" if len(ok) == len(results) else "failed",
+            # A short leg that placed is open and holding margin, so a run that got some
+            # of them out is `partial`. `failed` is kept for the run where none did --
+            # which is also the only shape that matches `ORDER_REJECTED` below.
+            status=(
+                "completed" if len(ok) == len(results) else ("partial" if ok else "failed")
+            ),
             reason_code=ReasonCode.ORDERS_PLACED if ok else ReasonCode.ORDER_REJECTED,
             reason_text=(
                 f"{len(ok)} of {len(results)} leg(s) placed for "
