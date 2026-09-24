@@ -63,8 +63,8 @@ BOT_TYPES = {
     "cas": BOT_CAS_BINGO,
 }
 BOT_LABELS = {
-    "momentum": "Bot 3 · Momentum scalper",
-    "fly": "Bot 4 · Iron fly",
+    "momentum": "Bot 3 · Long Scalper",
+    "fly": "Bot 4 · Intraday Iron Fly",
     "expiry": "Bot 2 · Expiry-day writer",
     "cas": "Bot 5 · CAS Bingo",
 }

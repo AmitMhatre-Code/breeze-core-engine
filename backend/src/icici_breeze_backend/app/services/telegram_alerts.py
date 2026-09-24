@@ -351,8 +351,8 @@ def notify_bot_needs_login(user_id: str, text: str) -> None:
 _BOT_LABEL = {
     "holdings_writer": "Holdings Option Writer",
     "expiry_index_writer": "Expiry-Day Index Writer",
-    "momentum_long_scalper": "Momentum Long Scalper",
-    "iron_fly_scalper": "Iron Fly Scalper",
+    "momentum_long_scalper": "Long Scalper",
+    "iron_fly_scalper": "Intraday Iron Fly",
 }
 
 

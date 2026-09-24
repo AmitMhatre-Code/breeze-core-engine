@@ -483,11 +483,11 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
     blurb: "Sizes a short index leg against free margin, arms its stop on fill.",
   },
   [BOT_MOMENTUM_LONG_SCALPER]: {
-    title: "Momentum Long Scalper",
+    title: "Long Scalper",
     blurb: "Buys one ATM option on a NIFTY signal of your choice, holds it for the call.",
   },
   [BOT_IRON_FLY_SCALPER]: {
-    title: "Iron Fly Scalper",
+    title: "Intraday Iron Fly",
     blurb: "Sells an ATM fly under a margin ceiling, books it on credit decay.",
   },
   [BOT_CAS_BINGO]: {
