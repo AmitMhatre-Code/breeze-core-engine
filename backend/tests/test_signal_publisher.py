@@ -118,9 +118,10 @@ def test_todays_series_is_the_replay_of_the_warm_up_and_todays_bars(tmp_path):
 class _Feed:
     stock_code, exchange = "NIFTY", "NFO"
 
-    def __init__(self, subscribed: bool, quiet):
+    def __init__(self, subscribed: bool, quiet, last_tick_at=None):
         self.subscribed_today = subscribed
         self.quiet = quiet
+        self.last_tick_at = last_tick_at
         self.ensures = 0
         self.invalidated: list[str] = []
 
@@ -155,6 +156,8 @@ def _serviced(monkeypatch, feeds: dict):
     )
     monkeypatch.setattr(publisher, "_feed_owner", lambda: "u1")
     monkeypatch.setattr(publisher, "_last_feed_attempt", {})
+    monkeypatch.setattr(publisher, "_feed_outage", {})
+    monkeypatch.setattr(publisher, "_feed_outage_alerted", set())
 
 
 def test_a_ticking_feed_is_left_alone(monkeypatch):
@@ -191,3 +194,96 @@ def test_force_resubscribes_every_feed_at_once(monkeypatch):
     publisher._last_feed_attempt.update({"nifty": 999.0, "sensex": 999.0})  # noqa: SLF001
     publisher.service_feeds(1_000.0, force=True)
     assert [f.ensures for f in feeds.values()] == [1, 1]
+
+
+# --- telling the user about an outage a re-subscribe could not heal ---------------------
+
+
+def _alerts(monkeypatch) -> list[tuple]:
+    import icici_breeze_backend.app.services.telegram_alerts as tg
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(tg, "notify_futures_feed_down", lambda *a: sent.append(("down", *a)))
+    monkeypatch.setattr(tg, "notify_futures_feed_restored", lambda *a: sent.append(("back", *a)))
+    return sent
+
+
+def test_an_outage_is_alerted_once_and_its_recovery_closes_the_loop(monkeypatch):
+    """2026-09-24: last NIFTY tick 13:34:19, then silence to the close."""
+    last = at(DAY, 13, 34, 19)
+    feeds = {"nifty": _Feed(True, 65.0, last_tick_at=last), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+    sent = _alerts(monkeypatch)
+
+    publisher.service_feeds(last + 65)  # re-subscribes; the subscribe "works", no ticks come
+    assert feeds["nifty"].ensures == 1 and sent == []
+    publisher.service_feeds(last + publisher.FEED_OUTAGE_ALERT_SECONDS - 1)
+    assert sent == []
+    publisher.service_feeds(last + publisher.FEED_OUTAGE_ALERT_SECONDS)
+    assert sent == [("down", "u1", "NIFTY", "13:34", 3)]
+    publisher.service_feeds(last + 600)
+    assert len(sent) == 1  # one message per outage, not one per pass
+
+    feeds["nifty"].last_tick_at = at(DAY, 13, 52, 5)
+    publisher.service_feeds(at(DAY, 13, 52, 6))
+    assert sent[1] == ("back", "u1", "NIFTY", "13:52", 18)
+    publisher.service_feeds(at(DAY, 13, 53, 0))
+    assert len(sent) == 2
+
+
+def test_a_gap_a_resubscribe_heals_sends_nothing(monkeypatch):
+    last = at(DAY, 11, 15, 16)
+    feeds = {"nifty": _Feed(True, 61.0, last_tick_at=last), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+    sent = _alerts(monkeypatch)
+    publisher.service_feeds(last + 61)
+    feeds["nifty"].last_tick_at = last + 70
+    publisher.service_feeds(last + 71)
+    publisher.service_feeds(last + 400)
+    assert sent == [] and publisher._feed_outage == {}  # noqa: SLF001
+
+
+def test_the_close_ends_an_outage_without_a_recovery_message(monkeypatch):
+    last = at(DAY, 15, 20, 0)
+    feeds = {"nifty": _Feed(True, 65.0, last_tick_at=last), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+    sent = _alerts(monkeypatch)
+    publisher.service_feeds(last + 65)
+    publisher.service_feeds(last + 200)
+    assert [k for k, *_ in sent] == ["down"]
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: False
+    )
+    publisher.service_feeds(last + 700)
+    assert publisher._feed_outage == {} and publisher._feed_outage_alerted == set()  # noqa: SLF001
+    assert len(sent) == 1
+
+
+def test_a_failing_alert_does_not_cost_the_feed_its_resubscribe(monkeypatch):
+    import icici_breeze_backend.app.services.telegram_alerts as tg
+
+    last = at(DAY, 13, 34, 19)
+    feeds = {"nifty": _Feed(True, 65.0, last_tick_at=last), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+
+    def boom(*a):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(tg, "notify_futures_feed_down", boom)
+    publisher.service_feeds(last + 65)
+    feeds["nifty"].quiet = 65.0  # still dead after that re-subscribe
+    publisher.service_feeds(last + 65 + publisher.FEED_RETRY_SECONDS + 100)
+    assert feeds["nifty"].ensures == 2
+
+
+def test_the_down_message_answers_whether_open_positions_are_protected():
+    from icici_breeze_backend.app.services.telegram_alerts import (
+        _format_futures_feed_down_message,
+        _format_futures_feed_restored_message,
+    )
+
+    down = _format_futures_feed_down_message("NIFTY", "13:34", 3)
+    assert "NIFTY futures feed down" in down and "since 13:34 IST" in down
+    assert "will not open new trades" in down and "Open bot positions are unaffected" in down
+    back = _format_futures_feed_restored_message("NIFTY", "13:52", 18)
+    assert "feed back" in back and "13:52 IST after 18 min" in back

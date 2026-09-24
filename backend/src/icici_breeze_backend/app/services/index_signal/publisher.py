@@ -49,6 +49,10 @@ FEED_RETRY_SECONDS = 30.0
 # and re-subscribed. Well inside `series.STALE_SECONDS` (180s), so a recovered feed is back
 # before its readings go stale; a genuinely thin minute costs one idempotent subscribe.
 FEED_QUIET_RESUBSCRIBE_SECONDS = 60.0
+# A feed still silent this long after its last tick, re-subscribes notwithstanding, is an outage
+# worth a Telegram message: it is `series.STALE_SECONDS`, the point every reading on that index
+# goes `unavailable` and the bots stop trading. Shorter gaps heal on a re-subscribe unseen.
+FEED_OUTAGE_ALERT_SECONDS = 180.0
 # A warm-up fetch that found nothing to do, or failed, is retried at most this often.
 WARMUP_RETRY_SECONDS = 600.0
 WARMUP_MAX_ATTEMPTS = 3
@@ -62,6 +66,10 @@ _dirty: set[str] = set()
 _built_for: dict[str, datetime.date] = {}
 _warmup: dict[str, dict[str, Any]] = {}
 _last_feed_attempt: dict[str, float] = {}
+# index -> wall time the current futures outage began (the future's last tick), and whether the
+# user has been told about it. One message per outage going down and one coming back.
+_feed_outage: dict[str, float] = {}
+_feed_outage_alerted: set[str] = set()
 # series id -> (inputs it was computed from, today's replayed readings), see `today_series`.
 _today_memo: dict[str, tuple[Any, list[tuple[Bar, dict[str, Any]]]]] = {}
 
@@ -341,12 +349,16 @@ def service_feeds(now: float, *, force: bool = False) -> None:
         feed = futures_feed.get_feed(index)
         feed.set_quote_observer(_observer(index))
     if not is_market_open():
+        # The close ends any outage: tomorrow starts clean, and "back" is not news at 15:30.
+        _feed_outage.clear()
+        _feed_outage_alerted.clear()
         return
     user_id = _feed_owner()
     if not user_id:
         return
     for index in INDICES:
         feed = futures_feed.get_feed(index)
+        _track_outage(index, feed, now, user_id)
         if feed.subscribed_today:
             quiet = feed.quiet_seconds(now)
             if quiet is None or quiet < FEED_QUIET_RESUBSCRIBE_SECONDS:
@@ -355,6 +367,8 @@ def service_feeds(now: float, *, force: bool = False) -> None:
                 "signals: %s futures feed silent for %.0fs; re-subscribing", index, quiet
             )
             feed.invalidate_subscription(f"No futures ticks for {quiet:.0f}s; re-subscribing.")
+            last = feed.last_tick_at
+            _feed_outage.setdefault(index, last if last is not None else now - quiet)
         if not force and now - _last_feed_attempt.get(index, 0.0) < FEED_RETRY_SECONDS:
             continue
         _last_feed_attempt[index] = now
@@ -367,6 +381,47 @@ def service_feeds(now: float, *, force: bool = False) -> None:
             feed.ensure_subscribed(proc, user_id, expiries)
         except Exception:  # noqa: BLE001 -- a dead feed must not stop publication
             _logger.warning("signals: %s futures subscribe failed", index, exc_info=True)
+
+
+def _hhmm(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts, IST).strftime("%H:%M")
+
+
+def _track_outage(index: str, feed: Any, now: float, user_id: str) -> None:
+    """Tell the user when a re-subscribe could not bring a future back, and when it returns.
+
+    Judged on the future's own last tick, not `quiet_seconds`: every re-subscribe restarts that
+    clock, so a feed that "subscribes" fine every minute and never ticks would never look old.
+    Never raises -- an alert must not cost the feed its re-subscribe.
+    """
+    started = _feed_outage.get(index)
+    if started is None:
+        return
+    try:
+        from icici_breeze_backend.app.services import telegram_alerts
+
+        label = index.upper()
+        last = feed.last_tick_at
+        if last is not None and last > started:
+            _feed_outage.pop(index, None)
+            if index in _feed_outage_alerted:
+                _feed_outage_alerted.discard(index)
+                _logger.warning("signals: %s futures feed back after %.0fs", index, last - started)
+                telegram_alerts.notify_futures_feed_restored(
+                    user_id, label, _hhmm(last), max(1, round((last - started) / 60))
+                )
+            return
+        if index not in _feed_outage_alerted and now - started >= FEED_OUTAGE_ALERT_SECONDS:
+            _feed_outage_alerted.add(index)
+            _logger.warning(
+                "signals: %s futures feed silent for %.0fs after re-subscribing; alerting",
+                index, now - started,
+            )
+            telegram_alerts.notify_futures_feed_down(
+                user_id, label, _hhmm(started), int((now - started) // 60)
+            )
+    except Exception:  # noqa: BLE001
+        _logger.warning("signals: %s futures outage alert failed", index, exc_info=True)
 
 
 # --------------------------------------------------------------------------------------
@@ -476,4 +531,6 @@ def reset_state_for_tests() -> None:
         _built_for.clear()
         _warmup.clear()
         _last_feed_attempt.clear()
+        _feed_outage.clear()
+        _feed_outage_alerted.clear()
         _today_memo.clear()

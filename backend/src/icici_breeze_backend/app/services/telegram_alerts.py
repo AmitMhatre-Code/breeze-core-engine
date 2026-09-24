@@ -295,6 +295,55 @@ def notify_protection_resumed(user_id: str, rules: list[Any]) -> None:
     _notify(user_id, _format_protection_resumed_message(rules), kind="protection resumed")
 
 
+def _format_futures_feed_down_message(index_label: str, silent_since: str, minutes: int) -> str:
+    """The signal's input is gone, not the bot's stops -- said in that order, because the
+    worry a trader has on reading "feed down" is whether an open position is unprotected."""
+    return "\n".join(
+        [
+            f"⚠️ *{index_label} futures feed down*",
+            "",
+            f"No {index_label} futures ticks for {minutes} min (since {silent_since} IST), "
+            "and re-subscribing has not brought them back.",
+            "",
+            f"Signals built on {index_label} read *unavailable* until it recovers, so bots "
+            "using them will not open new trades. Open bot positions are unaffected: their "
+            "stops watch option prices, not this feed.",
+            "",
+            "The app keeps re-subscribing; you'll get a message here when it's back.",
+        ]
+    )
+
+
+def _format_futures_feed_restored_message(index_label: str, resumed_at: str, minutes: int) -> str:
+    return "\n".join(
+        [
+            f"✅ *{index_label} futures feed back*",
+            "",
+            f"Ticks resumed at {resumed_at} IST after {minutes} min of silence. Signals "
+            "recover as fresh candles close.",
+        ]
+    )
+
+
+def notify_futures_feed_down(user_id: str, index_label: str, silent_since: str, minutes: int) -> None:
+    """Once per outage, and only one a re-subscribe could not heal (2026-09-24: NIFTY sat
+    silent from 13:34 to the close and the only trace was a run log read after the fact)."""
+    _notify(
+        user_id,
+        _format_futures_feed_down_message(index_label, silent_since, minutes),
+        kind="futures feed down",
+    )
+
+
+def notify_futures_feed_restored(user_id: str, index_label: str, resumed_at: str, minutes: int) -> None:
+    """Closes the loop on `notify_futures_feed_down`; never sent without one before it."""
+    _notify(
+        user_id,
+        _format_futures_feed_restored_message(index_label, resumed_at, minutes),
+        kind="futures feed restored",
+    )
+
+
 def _notify(user_id: str, text: str, *, kind: str) -> None:
     try:
         status = get_status(user_id)
