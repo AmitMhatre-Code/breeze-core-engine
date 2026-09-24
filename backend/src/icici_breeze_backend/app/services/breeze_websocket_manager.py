@@ -647,6 +647,15 @@ def reconnect_ws() -> bool:
         tokens = sorted(_sub_meta.keys())
     tokens_ok = force_resubscribe_tokens(tokens) if tokens else True
     spot_ok = sync_index_spot_subscriptions(processor(), user_id, force=True)
+    # The index futures feeds subscribe outside `_sub_meta` and latch per day, so without this
+    # the rebuilt socket leaves them silent until the close -- NIFTY from 13:34 on 2026-09-24,
+    # with every signal reading `stale`.
+    try:
+        from icici_breeze_backend.app.services.index_signal import publisher
+
+        publisher.service_feeds(time.time(), force=True)
+    except Exception:  # noqa: BLE001 -- the chain and spot replay above must still count
+        _logger.warning("WS reconnect: futures feed re-subscribe failed", exc_info=True)
     _logger.info(
         "WS reconnect: rebuilt for user_id=%s tokens=%s tokens_ok=%s index_spot_ok=%s",
         user_id,

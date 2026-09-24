@@ -45,6 +45,10 @@ _logger = logging.getLogger(__name__)
 _VALIDITY_MULTIPLE = 3.0
 _MIN_VALIDITY_SECONDS = 10.0
 FEED_RETRY_SECONDS = 30.0
+# A subscribed future that has not ticked for this long in market hours is treated as dropped
+# and re-subscribed. Well inside `series.STALE_SECONDS` (180s), so a recovered feed is back
+# before its readings go stale; a genuinely thin minute costs one idempotent subscribe.
+FEED_QUIET_RESUBSCRIBE_SECONDS = 60.0
 # A warm-up fetch that found nothing to do, or failed, is retried at most this often.
 WARMUP_RETRY_SECONDS = 600.0
 WARMUP_MAX_ATTEMPTS = 3
@@ -319,11 +323,20 @@ def _maybe_warm(index: str, today: datetime.date, now_m: float) -> None:
 # --------------------------------------------------------------------------------------
 
 
-def service_feeds(now: float) -> None:
-    """Keep both futures feeds subscribed during the session and our observer attached."""
+def service_feeds(now: float, *, force: bool = False) -> None:
+    """Keep both futures feeds subscribed during the session and our observer attached.
+
+    `subscribed_today` alone is not proof of a live feed. A socket rebuilt by
+    `breeze_websocket_manager.reconnect_ws` loses the futures rooms while the latch stays set,
+    which on 2026-09-24 left the NIFTY future silent from 13:34 to the close with every
+    signal reading `stale`. So a feed quiet for FEED_QUIET_RESUBSCRIBE_SECONDS in market hours
+    is re-subscribed; `force` (the rebuild path) drops every latch and re-subscribes at once.
+    """
     from icici_breeze_backend.app.services.bots.scalping import futures_feed
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
+    if force:
+        futures_feed.invalidate_all("WS socket rebuilt; re-subscribing.")
     for index in INDICES:
         feed = futures_feed.get_feed(index)
         feed.set_quote_observer(_observer(index))
@@ -335,8 +348,14 @@ def service_feeds(now: float) -> None:
     for index in INDICES:
         feed = futures_feed.get_feed(index)
         if feed.subscribed_today:
-            continue
-        if now - _last_feed_attempt.get(index, 0.0) < FEED_RETRY_SECONDS:
+            quiet = feed.quiet_seconds(now)
+            if quiet is None or quiet < FEED_QUIET_RESUBSCRIBE_SECONDS:
+                continue
+            _logger.warning(
+                "signals: %s futures feed silent for %.0fs; re-subscribing", index, quiet
+            )
+            feed.invalidate_subscription(f"No futures ticks for {quiet:.0f}s; re-subscribing.")
+        if not force and now - _last_feed_attempt.get(index, 0.0) < FEED_RETRY_SECONDS:
             continue
         _last_feed_attempt[index] = now
         try:
@@ -434,6 +453,7 @@ def status() -> dict[str, Any]:
                 "contract": feed.contract.expiry_display if feed.contract else None,
                 "subscribed_today": feed.subscribed_today,
                 "last_tick_at": feed.last_tick_at,
+                "quiet_seconds": feed.quiet_seconds(time.time()),
                 "bars_today": len(todays),
                 "last_bar_ts": todays[-1].ts if todays else None,
                 "built_for": _built_for[index].isoformat() if index in _built_for else None,

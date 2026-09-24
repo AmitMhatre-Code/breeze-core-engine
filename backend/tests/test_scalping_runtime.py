@@ -574,13 +574,31 @@ def test_the_detail_distinguishes_a_live_feed_from_an_unsubscribed_one(db_path, 
         lambda bot_type, cfg: FeedHealth(
             warm=False, stale=False, stale_seconds=2.0,
             detail=_feed_detail(ticks_seen=812, candles=6, token_symbol="4.1!35001",
-                                contract="24-Sep-2026"),
+                                contract="24-Sep-2026", subscribed_today=True,
+                                quiet_seconds=0.84, resubscribes=0),
         ),
     )
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
     feed = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["feed"]
     assert feed["subscribed"] is True and feed["ticks_seen"] == 812
     assert feed["candles"] == 6 and feed["candles_required"] == 20
+    assert feed["futures_quiet_seconds"] == 0.8 and feed["resubscribes"] == 0
+
+
+def test_subscribed_means_live_today_not_merely_a_known_token(db_path, stubbed, monkeypatch):
+    """A dropped subscription keeps its token. Reporting `subscribed: true` off the token is
+    what made 2026-09-24's dead afternoon feed look healthy in the run log."""
+    monkeypatch.setattr(
+        runtime, "_feed_health",
+        lambda bot_type, cfg: FeedHealth(
+            warm=True, stale=False, stale_seconds=0.0,
+            detail=_feed_detail(ticks_seen=19760, token_symbol="4.1!68407",
+                                subscribed_today=False, quiet_seconds=None, resubscribes=1),
+        ),
+    )
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, MomentumLongScalperConfig())
+    feed = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["feed"]
+    assert feed["subscribed"] is False and feed["resubscribes"] == 1
 
 
 def test_an_unchanged_verdict_is_republished_on_a_cadence_not_every_pass(db_path, stubbed, monkeypatch):

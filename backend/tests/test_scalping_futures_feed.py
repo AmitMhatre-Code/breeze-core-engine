@@ -132,3 +132,81 @@ def test_token_resolution_returns_none_when_no_format_resolves():
             raise RuntimeError("no such contract")
 
     assert NiftyFuturesFeed()._resolve_token(Sdk(), contract) is None
+
+
+# --- a dropped subscription must be noticed and re-issued (2026-09-24) -------------------
+
+
+def _subscribed_feed(monkeypatch, today=datetime.date(2026, 9, 24)):
+    """A NIFTY feed that has really been through `ensure_subscribed`, against a fake SDK."""
+    from icici_breeze_backend.app.services import breeze_websocket_manager as bwm
+    from icici_breeze_backend.app.services import ws_tick_pipeline
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed
+
+    class Sdk:
+        interval = ""
+
+        def __init__(self):
+            self.subscribes = 0
+
+        def get_stock_token_value(self, **kwargs):
+            return "4.1!68407", False
+
+        def subscribe_feeds(self, **kwargs):
+            self.subscribes += 1
+            return {"message": "Stock 4.1!68407 subscribed successfully"}
+
+    sdk = Sdk()
+    monkeypatch.setattr(bwm, "_ensure_ws", lambda proc, user_id: sdk)
+    monkeypatch.setattr(ws_tick_pipeline, "register_raw_tick_listener", lambda fn: None)
+    monkeypatch.setattr(
+        futures_feed, "now_ist",
+        lambda: datetime.datetime.combine(today, datetime.time(13, 0)),
+    )
+    feed = NiftyFuturesFeed()
+    assert feed.ensure_subscribed(object(), "u1", _EXPIRIES) is True
+    return feed, sdk
+
+
+def test_quiet_seconds_is_none_without_a_subscription():
+    assert NiftyFuturesFeed().quiet_seconds(1_000.0) is None
+
+
+def test_quiet_clock_runs_from_the_subscribe_until_the_first_tick(monkeypatch):
+    """A subscribe that never delivers a tick is exactly as dead as one that stopped."""
+    feed, _sdk = _subscribed_feed(monkeypatch)
+    feed._subscribed_at = 1_000.0  # noqa: SLF001
+    assert feed.quiet_seconds(1_075.0) == 75.0
+
+
+def test_quiet_clock_is_the_futures_own_ticks(monkeypatch):
+    feed, _sdk = _subscribed_feed(monkeypatch)
+    feed._subscribed_at = 1_000.0  # noqa: SLF001
+    monkeypatch.setattr("time.time", lambda: 1_050.0)
+    feed._on_raw_tick({"symbol": "4.1!68407", "last": 23170.0, "ttq": 1.0})  # noqa: SLF001
+    feed._on_raw_tick({"symbol": "4.1!99999", "last": 1.0})  # another contract: not ours
+    assert feed.quiet_seconds(1_062.0) == 12.0
+
+
+def test_invalidation_drops_the_latch_and_the_next_ensure_resubscribes(monkeypatch):
+    """The latch is what kept 13:34-15:30 dead: `ensure_subscribed` returned True on sight."""
+    feed, sdk = _subscribed_feed(monkeypatch)
+    assert feed.ensure_subscribed(object(), "u1", _EXPIRIES) is True
+    assert sdk.subscribes == 1  # idempotent while the latch holds
+
+    feed.invalidate_subscription("No futures ticks for 65s; re-subscribing.")
+    assert feed.subscribed_today is False
+    status = feed.status(ema_period=9, volume_ma_period=20)
+    assert status["resubscribes"] == 1 and status["last_error"].startswith("No futures ticks")
+    # The contract did not change, so the token stays and a returning tick is still counted.
+    assert status["token_symbol"] == "4.1!68407"
+
+    assert feed.ensure_subscribed(object(), "u1", _EXPIRIES) is True
+    assert sdk.subscribes == 2
+    assert feed.subscribed_today is True and feed.status(ema_period=9, volume_ma_period=20)["last_error"] is None
+
+
+def test_invalidating_an_unsubscribed_feed_is_not_counted_as_a_resubscribe():
+    feed = NiftyFuturesFeed()
+    feed.invalidate_subscription("WS socket rebuilt; re-subscribing.")
+    assert feed.status(ema_period=9, volume_ma_period=20)["resubscribes"] == 0

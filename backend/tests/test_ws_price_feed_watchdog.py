@@ -387,6 +387,25 @@ class TestReconnectWs:
         assert bwm.reconnect_ws() is True
         sdk.ws_connect.assert_called_once()
 
+    def test_rearms_the_index_futures_feeds(self, wired, monkeypatch):
+        """They subscribe outside `_sub_meta` and latch per day; on 2026-09-24 a rebuild left
+        the NIFTY future silent from 13:34 to the close."""
+        from icici_breeze_backend.app.services.index_signal import publisher
+
+        calls = []
+        monkeypatch.setattr(publisher, "service_feeds", lambda now, force=False: calls.append(force))
+        assert bwm.reconnect_ws() is True
+        assert calls == [True]
+
+    def test_a_failing_futures_rearm_does_not_fail_the_rebuild(self, wired, monkeypatch):
+        from icici_breeze_backend.app.services.index_signal import publisher
+
+        def boom(now, force=False):
+            raise RuntimeError("scrip master cold")
+
+        monkeypatch.setattr(publisher, "service_feeds", boom)
+        assert bwm.reconnect_ws() is True
+
     def test_returns_false_with_nothing_connected(self, monkeypatch):
         monkeypatch.setattr(bwm, "_sdk", None)
         monkeypatch.setattr(bwm, "_sdk_user_id", None)

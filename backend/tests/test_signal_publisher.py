@@ -110,3 +110,84 @@ def test_todays_series_is_the_replay_of_the_warm_up_and_todays_bars(tmp_path):
     assert len(got) == 40
     # Cached until a new bar arrives: the same answer, without replaying again.
     assert publisher.today_series(key, now=now, cache_path=cache) == got
+
+
+# --- keeping the futures feeds alive (2026-09-24) ---------------------------------------
+
+
+class _Feed:
+    stock_code, exchange = "NIFTY", "NFO"
+
+    def __init__(self, subscribed: bool, quiet):
+        self.subscribed_today = subscribed
+        self.quiet = quiet
+        self.ensures = 0
+        self.invalidated: list[str] = []
+
+    def set_quote_observer(self, observer):
+        pass
+
+    def quiet_seconds(self, now):
+        return self.quiet if self.subscribed_today else None
+
+    def invalidate_subscription(self, reason):
+        self.invalidated.append(reason)
+        self.subscribed_today = False
+
+    def ensure_subscribed(self, proc, user_id, expiries):
+        self.ensures += 1
+        self.subscribed_today, self.quiet = True, 0.0
+        return True
+
+
+def _serviced(monkeypatch, feeds: dict):
+    from icici_breeze_backend.app.services.bots.scalping import futures_feed, momentum_bot
+
+    monkeypatch.setattr(futures_feed, "get_feed", lambda index="nifty": feeds[index])
+    monkeypatch.setattr(
+        futures_feed, "invalidate_all",
+        lambda reason: [f.invalidate_subscription(reason) for f in feeds.values()],
+    )
+    monkeypatch.setattr(momentum_bot, "option_expiries", lambda *a, **k: [])
+    monkeypatch.setattr("icici_breeze_backend.app.services.processor.processor", lambda: object())
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: True
+    )
+    monkeypatch.setattr(publisher, "_feed_owner", lambda: "u1")
+    monkeypatch.setattr(publisher, "_last_feed_attempt", {})
+
+
+def test_a_ticking_feed_is_left_alone(monkeypatch):
+    feeds = {"nifty": _Feed(True, 2.0), "sensex": _Feed(True, 5.0)}
+    _serviced(monkeypatch, feeds)
+    publisher.service_feeds(1_000.0)
+    assert [f.ensures for f in feeds.values()] == [0, 0]
+
+
+def test_a_subscribed_but_silent_feed_is_resubscribed(monkeypatch):
+    """The latch said subscribed while NIFTY sat dead from 13:34 to the close."""
+    feeds = {"nifty": _Feed(True, publisher.FEED_QUIET_RESUBSCRIBE_SECONDS + 5), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+    publisher.service_feeds(1_000.0)
+    assert feeds["nifty"].ensures == 1 and feeds["nifty"].invalidated
+    assert feeds["sensex"].ensures == 0
+
+
+def test_resubscribes_are_paced(monkeypatch):
+    feeds = {"nifty": _Feed(True, 600.0), "sensex": _Feed(True, 1.0)}
+    _serviced(monkeypatch, feeds)
+    publisher._last_feed_attempt["nifty"] = 995.0  # noqa: SLF001 -- attempted 5s ago
+    publisher.service_feeds(1_000.0)
+    assert feeds["nifty"].ensures == 0 and feeds["nifty"].subscribed_today is False
+    publisher.service_feeds(1_000.0 + publisher.FEED_RETRY_SECONDS)
+    assert feeds["nifty"].ensures == 1
+
+
+def test_force_resubscribes_every_feed_at_once(monkeypatch):
+    """The socket-rebuild path: every room is gone, and waiting out the pacing or the quiet
+    threshold would leave the signal blind for a minute it does not need to be."""
+    feeds = {"nifty": _Feed(True, 0.5), "sensex": _Feed(True, 0.5)}
+    _serviced(monkeypatch, feeds)
+    publisher._last_feed_attempt.update({"nifty": 999.0, "sensex": 999.0})  # noqa: SLF001
+    publisher.service_feeds(1_000.0, force=True)
+    assert [f.ensures for f in feeds.values()] == [1, 1]

@@ -44,6 +44,7 @@ from __future__ import annotations
 import datetime
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -155,6 +156,11 @@ class FuturesFeed:
         self._expiry_format: Optional[str] = None
         self._listener_registered = False
         self._subscribed_date: Optional[datetime.date] = None
+        # Wall-clock time of the last successful subscribe: the quiet clock's origin until the
+        # first tick arrives, so a subscribe that never delivers is caught too.
+        self._subscribed_at: Optional[float] = None
+        # How many times today's subscription was found dead and dropped for a re-subscribe.
+        self._resubscribes = 0
         self._last_error: Optional[str] = None
         self._ticks_seen = 0
 
@@ -287,6 +293,7 @@ class FuturesFeed:
             self._contract = contract
             self._token_symbol = self._format_symbol(token)
             self._subscribed_date = today
+            self._subscribed_at = time.time()
             self._last_error = None
             if not self._listener_registered:
                 ws_tick_pipeline.register_raw_tick_listener(self._on_raw_tick)
@@ -318,8 +325,6 @@ class FuturesFeed:
             symbol = str(payload.get("symbol") or "").strip()
             if symbol != wanted:
                 return
-            import time
-
             now = time.time()
             with self._lock:
                 self._ticks_seen += 1
@@ -336,6 +341,36 @@ class FuturesFeed:
                 observer(payload, now)
         except Exception:  # noqa: BLE001
             _logger.debug("futures feed: raw tick handling failed", exc_info=True)
+
+    def invalidate_subscription(self, reason: str) -> None:
+        """Forget that today's subscribe succeeded, so the next `ensure_subscribed` re-issues it.
+
+        `subscribed_today` is a latch, and a rebuilt socket (`breeze_websocket_manager.
+        reconnect_ws`) does not carry this contract's room across: on 2026-09-24 the NIFTY
+        future went silent at 13:34 while the latch stayed set, and nothing re-subscribed it
+        before the close. The token and candles are kept -- the contract has not changed, only
+        whether ICICI is still feeding it.
+        """
+        with self._lock:
+            if self._subscribed_date is not None:
+                self._resubscribes += 1
+            self._subscribed_date = None
+            self._last_error = reason
+
+    def quiet_seconds(self, now: float) -> Optional[float]:
+        """Seconds since this contract last ticked (or was subscribed, if it never has).
+
+        None when there is no subscription today to judge. Deliberately this feed's own clock,
+        not `ws_tick_pipeline.last_tick_age_seconds`: option-chain ticks keep that one fresh
+        while the future is dead.
+        """
+        with self._lock:
+            if not self.subscribed_today:
+                return None
+            marks = [t for t in (self._last_tick_at, self._subscribed_at) if t is not None]
+            if not marks:
+                return None
+            return max(0.0, now - max(marks))
 
     def set_quote_observer(self, observer: Any) -> None:
         """Hand every quote tick of the traded contract to `observer(payload, ts)` as well."""
@@ -387,6 +422,9 @@ class FuturesFeed:
                     "token_symbol": self._token_symbol,
                     "expiry_format": self._expiry_format,
                     "ticks_seen": self._ticks_seen,
+                    "subscribed_today": self.subscribed_today,
+                    "quiet_seconds": self.quiet_seconds(time.time()),
+                    "resubscribes": self._resubscribes,
                     "last_error": self._last_error,
                 }
             )
@@ -414,6 +452,14 @@ def get_feed(index: str = "nifty") -> FuturesFeed:
             feed = FuturesFeed(stock_code, exchange)
             _feeds[index] = feed
         return feed
+
+
+def invalidate_all(reason: str) -> None:
+    """Drop every feed's subscription latch -- the socket they were subscribed on is gone."""
+    with _feed_lock:
+        feeds = list(_feeds.values())
+    for feed in feeds:
+        feed.invalidate_subscription(reason)
 
 
 def reset_feed_for_tests() -> None:

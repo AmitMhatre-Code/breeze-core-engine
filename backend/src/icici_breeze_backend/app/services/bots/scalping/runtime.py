@@ -359,10 +359,17 @@ def _audit_detail(snapshot: Snapshot, decision: Decision) -> dict[str, Any]:
             "stale_seconds": (
                 None if stale_seconds == float("inf") else round(float(stale_seconds), 1)
             ),
-            "subscribed": bool(feed.get("token_symbol")),
+            "subscribed": bool(feed.get("subscribed_today")),
             "contract": feed.get("contract"),
             "token_symbol": feed.get("token_symbol"),
             "ticks_seen": feed.get("ticks_seen"),
+            # The future's own silence. `stale`/`stale_seconds` above are the whole socket's,
+            # which option-chain ticks keep fresh while the future is dead (2026-09-24).
+            "futures_quiet_seconds": (
+                None if feed.get("quiet_seconds") is None
+                else round(float(feed["quiet_seconds"]), 1)
+            ),
+            "resubscribes": feed.get("resubscribes"),
             "candles": feed.get("candles"),
             "candles_required": feed.get("candles_required"),
             # Both travel with the verdict for the same reason `ticks_seen` does: a session
