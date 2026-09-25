@@ -49,7 +49,10 @@ _INDEX_SCRIPS: tuple[tuple[str, str, str, str, str], ...] = (
 _INDEX_SPOT_TTL_SECONDS = 15
 
 _symbol_to_label: dict[str, str] = {}
-_previous_close: dict[str, float] = {}
+# label -> (IST date, that day's previous close). Keyed by date like `_day_open`: the process
+# outlives a trading day, and a bare label->value map kept the first close it ever saw, so the
+# navbar measured the day's change against a close several sessions old.
+_previous_close: dict[str, tuple[date, float]] = {}
 _subscribed_date: date | None = None
 _listener_registered = False
 
@@ -89,7 +92,7 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
     with _lock:
         label = _symbol_to_label.get(symbol)
         underlying = _underlying_targets.get(symbol)
-        prev_close = _previous_close.get(label) if label else None
+        prev_close = _today_previous_close(label) if label else None
     if label is None and underlying is None:
         return
     ltp = _extract_ltp(raw)
@@ -109,7 +112,8 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
             if tick_close > 0:
                 prev_close = tick_close
                 with _lock:
-                    _previous_close.setdefault(label, tick_close)
+                    if _today_previous_close(label) is None:
+                        _previous_close[label] = (datetime.now(IST).date(), tick_close)
         _remember_day_open(label, raw.get("open"))
         change = ltp - prev_close if prev_close else None
         change_pct = (change / prev_close * 100.0) if change is not None and prev_close else None
@@ -169,6 +173,15 @@ def _remember_day_open(label: str, raw_open: Any) -> None:
         held = _day_open.get(label)
         if held is None or held[0] != today:
             _day_open[label] = (today, value)
+
+
+def _today_previous_close(label: str) -> float | None:
+    """Today's previous close for `label`, or None when only an earlier day's is held."""
+    with _lock:
+        held = _previous_close.get(label)
+    if held is None or held[0] != datetime.now(IST).date():
+        return None
+    return held[1]
 
 
 def day_open(label: str) -> float | None:
@@ -328,12 +341,12 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: boo
             # already have today's close, so a forced re-subscribe (which can
             # repeat on the watchdog's throttle) doesn't re-hit `get_quotes`.
             with _lock:
-                have_prev_close = _previous_close.get(label) is not None
+                have_prev_close = _today_previous_close(label) is not None
             if not have_prev_close:
                 prev_close = _fetch_previous_close(sdk, cash_exchange, cash_stock_code)
                 if prev_close is not None:
                     with _lock:
-                        _previous_close[label] = prev_close
+                        _previous_close[label] = (today, prev_close)
         except Exception:
             subscribe_failed = True
             _logger.warning("index spot subscribe failed for %s", label, exc_info=True)
