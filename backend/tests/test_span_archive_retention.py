@@ -81,6 +81,22 @@ class SpanArchiveRetention(unittest.TestCase):
         nb.retain_span_archive(b"x", source_date="20260909", archive_name="nsccl.20260909.i1.zip")
         self.assertEqual(sorted(os.listdir(day_dir)), ["BSERISK20260908-00.ZIP", "nsccl.20260908.i5.zip"])
 
+    def test_standalone_purge_cleans_an_upgraded_volume_without_a_new_download(self):
+        # Startup runs the purge on its own; the next SPAN download may be a trading day away.
+        for day in ("20260921", "20260922", "20260924"):
+            day_dir = os.path.join(nb.span_archive_dir(), day)
+            os.makedirs(day_dir)
+            for i, name in enumerate((f"nsccl.{day}.i1.zip", f"nsccl.{day}.i2.zip", f"BSERISK{day}-00.ZIP", f"BSERISK{day}-01.ZIP")):
+                path = os.path.join(day_dir, name)
+                open(path, "wb").close()
+                os.utime(path, (1_000_000 + i, 1_000_000 + i))
+        nb.purge_span_archives()
+        self.assertEqual(sorted(os.listdir(nb.span_archive_dir())), ["20260922", "20260924"])
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(nb.span_archive_dir(), "20260924"))),
+            ["BSERISK20260924-01.ZIP", "nsccl.20260924.i2.zip"],
+        )
+
     def test_retention_failure_never_raises(self):
         self.assertIsNone(nb.retain_span_archive(b"", source_date="20260909", archive_name="a.zip"))
         self.assertIsNone(nb.retain_span_archive(b"x", source_date="", archive_name="a.zip"))

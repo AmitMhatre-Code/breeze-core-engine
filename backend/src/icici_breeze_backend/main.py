@@ -484,6 +484,10 @@ def start_application():
         reset_active_chains_registry()
         bootstrap_reference_data_on_startup()
 
+        from icici_breeze_backend.app.services.nsccl_baseline import purge_span_archives
+
+        await asyncio.to_thread(purge_span_archives)
+
         # Drives Bot 2 (docs/bots-mvp-plan.md section 4). A daemon thread here rather than a
         # separate process: it needs the broker session cache, the WS feed and the P&L
         # engine, all of which live in this process.

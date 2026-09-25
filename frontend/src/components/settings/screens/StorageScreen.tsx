@@ -43,6 +43,27 @@ function DiskIcon() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 const GROUP_ORDER = ["Backtest history", "Backtest results", "Logs", "Kept by the app"];
 
 const GROUP_NOTES: Record<string, string> = {
@@ -326,12 +347,13 @@ function ElementRow({
         {el.deletable ? (
           <button
             type="button"
-            className="app-btn-outline rounded-[9px] px-3 py-1.5 text-xs"
+            className="app-btn-outline rounded-[9px] p-1.5 text-muted hover:border-down hover:bg-down-tint hover:text-down-on-tint"
             disabled={disabled || !el.from}
-            title={!el.from ? "Nothing to delete" : disabled ? "A cleanup is running" : undefined}
+            aria-label={`Delete ${el.label}…`}
+            title={!el.from ? "Nothing to delete" : disabled ? "A cleanup is running" : `Delete ${el.label}…`}
             onClick={onDelete}
           >
-            Delete…
+            <TrashIcon />
           </button>
         ) : null}
       </div>

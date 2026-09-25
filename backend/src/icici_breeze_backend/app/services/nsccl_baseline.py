@@ -336,7 +336,12 @@ def find_span_archive(source_date: str, archive_name: str | None = None) -> tupl
     return os.path.join(day_dir, names[0]), False
 
 
-def _purge_span_archives(keep_dates: int = SPAN_ARCHIVE_RETAIN_DATES) -> None:
+def purge_span_archives(keep_dates: int = SPAN_ARCHIVE_RETAIN_DATES) -> None:
+    """Apply the retention rule to whatever is on disk.
+
+    Runs after every retained download and once at startup: a deployment upgraded from the
+    keep-every-revision rule otherwise carries dozens of stale archives until the next SPAN
+    download, which may be the next trading day."""
     root = span_archive_dir()
     if not os.path.isdir(root):
         return
@@ -399,7 +404,7 @@ def retain_span_archive(payload: bytes, *, source_date: str, archive_name: str) 
         for other in os.listdir(day_dir):
             if other != name and _archive_family(other) == family:
                 os.remove(os.path.join(day_dir, other))
-        _purge_span_archives()
+        purge_span_archives()
         return path
     except OSError as exc:
         _logger.warning("Could not retain SPAN archive %s: %s", name, exc)
