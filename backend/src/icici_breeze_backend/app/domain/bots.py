@@ -137,6 +137,9 @@ class ReasonCode:
     # Autonomous spread entry -- distinct from SIGNAL_NO_TRADE, which means the signal is
     # trusted and simply has not triggered.
     SIGNAL_NOT_READY = "signal_not_ready"
+    # The chosen series has no reading (warming, feed down, or past 15:14 when readings stop).
+    # Split from SIGNAL_NO_TRADE so a day's closing verdict can skip it for the real "why".
+    SIGNAL_UNAVAILABLE = "signal_unavailable"
     DAY_OPEN_UNAVAILABLE = "day_open_unavailable"
     MARGIN_INSUFFICIENT = "margin_insufficient"
     # Liquidation ran (or would have) and still could not cover the shortfall. The buy-backs

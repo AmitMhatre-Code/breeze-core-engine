@@ -42,9 +42,16 @@ _stop = threading.Event()
 _thread: Optional[threading.Thread] = None
 # (user_id, index_code) -> (IST date, reason_code, reason_text): a genuine "no" for the day.
 _resolved: dict[tuple[str, str], tuple[datetime.date, str, str]] = {}
-_retry_after: dict[tuple[str, str], float] = {}
+# (user_id, index_code) -> (retry at, reason_code, reason_text): the miss that stood it down.
+_retry_after: dict[tuple[str, str], tuple[float, str, str]] = {}
 _last_published: dict[str, tuple[str, float]] = {}
 _finalised: dict[str, datetime.date] = {}
+# (user_id, index_code) -> (IST date, reason_code, reason_text): the day's last word -- the
+# latest verdict that says why nothing fired. The session's closing verdict is built from it,
+# so a no-entry day reads "Bearish flip at 14:52; held 1.4 of 3.0 minutes", not "the windows
+# have closed" or the signal going quiet at 15:14 (readings stop there; see LAST_WORD_SKIPS).
+_last_word: dict[tuple[str, str], tuple[datetime.date, str, str]] = {}
+_seeded: dict[str, datetime.date] = {}
 
 
 # --------------------------------------------------------------------------------------
@@ -195,6 +202,7 @@ def evaluate_trigger(
             None,
             f"{config.signal.label()} on {market.INDEX_LABEL[index_code]} is unavailable "
             f"({reason or 'no reading'}).",
+            signal_unavailable=True,
         )
     rows = _today_rows(config, index_code, now)
     if config.strategy == "debit_spread":
@@ -238,8 +246,10 @@ def _entry_for_index(
         if now.strftime("%H:%M") < first:
             return ReasonCode.OUTSIDE_SESSION_WINDOW, f"{label}: waiting for the {first} window."
         return ReasonCode.OUTSIDE_SESSION_WINDOW, f"{label}: the entry windows have closed."
-    if time.monotonic() < _retry_after.get(key, 0.0):
-        return ReasonCode.CHAIN_NOT_READY, f"{label}: retrying shortly."
+    held_miss = _retry_after.get(key)
+    if held_miss is not None and time.monotonic() < held_miss[0]:
+        # Restate the miss itself: "retrying shortly" alone would bury what went wrong.
+        return held_miss[1], f"{held_miss[2]} Retrying shortly."
     if sg_conflict(user_id, index_code, expiry):
         return ReasonCode.SG_RULE_CONFLICT, (
             f"{label}: a PB/SL rule is armed on {expiry}; it would absorb this bot's legs, so "
@@ -259,7 +269,8 @@ def _entry_for_index(
 
     verdict = evaluate_trigger(config, index_code, now)
     if verdict.trigger is None:
-        return ReasonCode.SIGNAL_NO_TRADE, f"{label}: {verdict.reason}"
+        code = ReasonCode.SIGNAL_UNAVAILABLE if verdict.signal_unavailable else ReasonCode.SIGNAL_NO_TRADE
+        return code, f"{label}: {verdict.reason}"
 
     structure = structure_for(config.strategy, verdict.trigger.right)
     plan, problem = build_plan(
@@ -272,7 +283,7 @@ def _entry_for_index(
         if code in (ReasonCode.OUTLAY_BELOW_ONE_LOT, ReasonCode.MARGIN_CAP_TOO_SMALL):
             _resolved[key] = (today, code, f"{label}: {text}")
         else:
-            _retry_after[key] = time.monotonic() + RETRY_SECONDS
+            _retry_after[key] = (time.monotonic() + RETRY_SECONDS, code, f"{label}: {text}")
         return code, f"{label}: {text}"
 
     from icici_breeze_backend.app.services.bots.charges import load_charges
@@ -285,7 +296,9 @@ def _entry_for_index(
         if outcome.terminal:
             _resolved[key] = (today, outcome.reason_code, f"{label}: {outcome.reason_text}")
         else:
-            _retry_after[key] = time.monotonic() + RETRY_SECONDS
+            _retry_after[key] = (
+                time.monotonic() + RETRY_SECONDS, outcome.reason_code, f"{label}: {outcome.reason_text}"
+            )
     return outcome.reason_code, f"{label}: {outcome.reason_text}"
 
 
@@ -324,7 +337,53 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
             _logger.exception("cas bingo: managing cycle %s failed", cycle.id)
 
 
-def _publish(user_id: str, run_id: str, verdicts: dict[str, tuple[str, str]]) -> None:
+# Verdicts that never become the day's last word: outside the windows nothing was asked, and a
+# signal with no reading has nothing to say about why it did not fire -- which is every debit
+# or credit spread's state from 15:14, when readings stop. One stands only while it is all the
+# day has (a feed down for the whole window).
+LAST_WORD_SKIPS = frozenset({ReasonCode.OUTSIDE_SESSION_WINDOW, ReasonCode.SIGNAL_UNAVAILABLE})
+
+
+def _seed_last_word(user_id: str, run_id: str, today: datetime.date) -> None:
+    """After a restart, pick the day's last words back up from the session run's detail."""
+    if _seeded.get(user_id) == today:
+        return
+    _seeded[user_id] = today
+    try:
+        run = repo.get_run(run_id) or {}
+    except Exception:  # noqa: BLE001 -- a missed seed costs only the pre-restart words
+        return
+    for code, word in (((run.get("detail") or {}).get("last_word")) or {}).items():
+        key = (user_id, code)
+        if key not in _last_word and isinstance(word, dict) and word.get("reason_text"):
+            _last_word[key] = (today, str(word.get("reason_code") or ""), str(word["reason_text"]))
+
+
+def _note_last_word(user_id: str, verdicts: dict[str, tuple[str, str]], today: datetime.date) -> None:
+    for code, (reason_code, text) in verdicts.items():
+        if reason_code == ReasonCode.OUTSIDE_SESSION_WINDOW:
+            continue
+        held = _last_word.get((user_id, code))
+        if (
+            reason_code in LAST_WORD_SKIPS
+            and held is not None and held[0] == today and held[1] not in LAST_WORD_SKIPS
+        ):
+            continue
+        _last_word[(user_id, code)] = (today, reason_code, text)
+
+
+def _day_last_words(user_id: str, today: datetime.date) -> dict[str, tuple[str, str]]:
+    return {
+        code: (reason_code, text)
+        for (uid, code), (day, reason_code, text) in _last_word.items()
+        if uid == user_id and day == today
+    }
+
+
+def _publish(
+    user_id: str, run_id: str, verdicts: dict[str, tuple[str, str]],
+    last_words: Optional[dict[str, tuple[str, str]]] = None,
+) -> None:
     """Write the day's verdict on the session run -- on change, and once a minute regardless
     so a quiet window leaves a timeline (the scalpers' rule)."""
     if not verdicts:
@@ -340,7 +399,12 @@ def _publish(user_id: str, run_id: str, verdicts: dict[str, tuple[str, str]]) ->
     try:
         repo.update_run_reason(
             run_id, reason_code=code, reason_text=text,
-            detail={"indices": {k: {"reason_code": c, "reason_text": t} for k, (c, t) in verdicts.items()}},
+            detail={
+                "indices": {k: {"reason_code": c, "reason_text": t} for k, (c, t) in verdicts.items()},
+                "last_word": {
+                    k: {"reason_code": c, "reason_text": t} for k, (c, t) in (last_words or {}).items()
+                },
+            },
         )
     except Exception:  # noqa: BLE001
         _logger.exception("cas bingo: could not record the verdict")
@@ -386,21 +450,39 @@ def tick_user(user_id: str, config: CasBingoConfig, *, armed: bool, proc: Any = 
             except Exception:  # noqa: BLE001
                 _logger.exception("cas bingo: entry pass failed for %s", code)
                 verdicts[code] = (ReasonCode.INTERNAL_ERROR, f"{market.INDEX_LABEL[code]}: the entry pass failed.")
-    _publish(user_id, run_id, verdicts)
+        _seed_last_word(user_id, run_id, now.date())
+        _note_last_word(user_id, verdicts, now.date())
+    _publish(user_id, run_id, verdicts, _day_last_words(user_id, now.date()))
     _finalise_if_done(user_id, run_id, now)
     return verdicts
 
 
 def _finalise_if_done(user_id: str, run_id: str, now: datetime.datetime) -> None:
     """Close the day's session once everything has settled, so the reaper never mistakes an
-    ordinary expiry day for an interrupted one."""
+    ordinary expiry day for an interrupted one.
+
+    A day that entered nothing closes on its last word per index -- the reason the run log
+    exists to give. A generic "the day is done" there is what made a bot that never fired
+    look the same as one that had nothing to do."""
     if now.strftime("%H:%M") < SETTLE_AFTER_IST or repo.open_cycles(user_id, BOT_CAS_BINGO):
         return
     if _finalised.get(user_id) == now.date():
         return
     _finalised[user_id] = now.date()
+    run = repo.get_run(run_id)
+    if run is not None and run.get("status") != "running":
+        return  # closed before a restart; re-finalising would overwrite its verdict
     from icici_breeze_backend.app.services.bots.scalping import guards
 
+    words = _day_last_words(user_id, now.date())
+    if words and not repo.scalper_day_totals(user_id, BOT_CAS_BINGO).cycles:
+        guards.finalise_session(
+            user_id, BOT_CAS_BINGO, run_id,
+            reason_code=next(iter(words.values()))[0],
+            reason_text="No entry. " + " · ".join(t for _c, t in words.values()),
+            extra_detail={"last_word": {k: {"reason_code": c, "reason_text": t} for k, (c, t) in words.items()}},
+        )
+        return
     guards.finalise_session(
         user_id, BOT_CAS_BINGO, run_id,
         reason_code="session_complete", reason_text="The expiry day is done and every position has closed.",
@@ -499,3 +581,5 @@ def reset_state_for_tests() -> None:
     _retry_after.clear()
     _last_published.clear()
     _finalised.clear()
+    _last_word.clear()
+    _seeded.clear()

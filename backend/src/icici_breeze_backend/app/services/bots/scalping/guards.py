@@ -320,7 +320,13 @@ def session_is_over(config: Any, now: Any) -> bool:
 
 
 def finalise_session(
-    user_id: str, bot_type: str, run_id: str, *, reason_code: str, reason_text: str
+    user_id: str,
+    bot_type: str,
+    run_id: str,
+    *,
+    reason_code: str,
+    reason_text: str,
+    extra_detail: Optional[dict[str, Any]] = None,
 ) -> None:
     """Close the day's run with a summary of what it actually did."""
     from icici_breeze_backend.app.repositories import bots as repo
@@ -332,6 +338,7 @@ def finalise_session(
         reason_code=reason_code,
         reason_text=reason_text,
         detail={
+            **(extra_detail or {}),
             "cycles": totals.cycles,
             "net_pnl": totals.realized_net_pnl,
             "friction": totals.friction,

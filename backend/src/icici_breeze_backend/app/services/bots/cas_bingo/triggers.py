@@ -51,6 +51,8 @@ class Verdict:
 
     trigger: Optional[Trigger]
     reason: str
+    # True when the signal had no reading to judge, as opposed to a reading that said no.
+    signal_unavailable: bool = False
 
 
 def _f(raw: Any) -> Optional[float]:

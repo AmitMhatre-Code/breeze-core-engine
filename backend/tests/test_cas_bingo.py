@@ -560,3 +560,94 @@ def test_day_open_is_captured_from_the_tick_once_per_day():
     index_spot_feed._remember_day_open("nifty", "24100")  # later ticks restate, never replace
     assert index_spot_feed.day_open("nifty") == 24012.5
     assert index_spot_feed.day_open("sensex") is None
+
+
+# --------------------------------------------------------------------------------------
+# The day's closing verdict
+# --------------------------------------------------------------------------------------
+
+
+def _open_gate(monkeypatch):
+    from icici_breeze_backend.app.services.bots import signal_gate
+
+    monkeypatch.setattr(signal_gate, "refusal", lambda bot_type, config: None)
+    monkeypatch.setattr(runtime, "sg_conflict", lambda *a: False)
+
+
+def test_a_signal_with_no_reading_is_its_own_reason(db, monkeypatch):
+    _open_gate(monkeypatch)
+    monkeypatch.setattr(runtime, "_signal", lambda *a: ("unavailable", None, "no bars"))
+    now = datetime.datetime(2026, 9, 15, 15, 20, tzinfo=IST)
+    code, text = runtime._entry_for_index(
+        FakeProc(), USER, CasBingoConfig(strategy="debit_spread"), "r", "NIFTY", EXPIRY, now
+    )
+    assert code == ReasonCode.SIGNAL_UNAVAILABLE and "unavailable" in text
+
+
+def test_a_pricing_miss_is_restated_while_it_waits_to_retry(db, monkeypatch):
+    _open_gate(monkeypatch)
+    monkeypatch.setattr(runtime, "evaluate_trigger", lambda *a: triggers.Verdict(
+        triggers.Trigger(right="call", text="flip"), ""))
+    monkeypatch.setattr(runtime, "build_plan", lambda *a, **k: (
+        None, (ReasonCode.QUOTE_UNAVAILABLE, "No quote for the 24100 CE.")))
+    monkeypatch.setattr(runtime, "day_open", lambda code: 24000.0)
+    now = datetime.datetime(2026, 9, 15, 15, 0, tzinfo=IST)
+    cfg_ = CasBingoConfig(strategy="debit_spread")
+    runtime._entry_for_index(FakeProc(), USER, cfg_, "r", "NIFTY", EXPIRY, now)
+    code, text = runtime._entry_for_index(FakeProc(), USER, cfg_, "r", "NIFTY", EXPIRY, now)
+    assert code == ReasonCode.QUOTE_UNAVAILABLE
+    assert "24100 CE" in text and "Retrying shortly" in text
+
+
+def _close_the_day(run_id):
+    runtime._finalise_if_done(USER, run_id, datetime.datetime(2026, 9, 15, 15, 41, tzinfo=IST))
+    return repo.get_run(run_id)
+
+
+def test_a_day_without_an_entry_closes_on_why_not_the_signal_going_quiet(db):
+    """Readings stop at 15:14, so every spread's final verdicts are "unavailable" and then
+    "the windows have closed". Neither is why the bot did not fire."""
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    flip = "NIFTY: Bearish flip at 14:52; held 1.4 of 3.0 minutes."
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.SIGNAL_NO_TRADE, flip)}, DAY)
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.SIGNAL_UNAVAILABLE, "NIFTY: unavailable.")}, DAY)
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.OUTSIDE_SESSION_WINDOW, "NIFTY: closed.")}, DAY)
+    run = _close_the_day(run_id)
+    assert run["status"] == "completed"
+    assert run["reason_code"] == ReasonCode.SIGNAL_NO_TRADE
+    assert run["reason_text"] == f"No entry. {flip}"
+    assert run["detail"]["last_word"]["NIFTY"]["reason_text"] == flip
+
+
+def test_a_signal_down_all_window_says_so(db):
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.SIGNAL_UNAVAILABLE, "NIFTY: unavailable.")}, DAY)
+    run = _close_the_day(run_id)
+    assert run["reason_code"] == ReasonCode.SIGNAL_UNAVAILABLE
+    assert run["reason_text"] == "No entry. NIFTY: unavailable."
+
+
+def test_a_day_that_never_reached_its_windows_keeps_the_generic_close(db):
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.OUTSIDE_SESSION_WINDOW, "NIFTY: closed.")}, DAY)
+    run = _close_the_day(run_id)
+    assert run["reason_code"] == "session_complete"
+
+
+def test_last_words_survive_a_restart_through_the_run_detail(db):
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    flip = "NIFTY: No signal flip today yet."
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.SIGNAL_NO_TRADE, flip)}, DAY)
+    runtime._publish(USER, run_id, {"NIFTY": (ReasonCode.SIGNAL_NO_TRADE, flip)},
+                     runtime._day_last_words(USER, DAY))
+    runtime.reset_state_for_tests()  # the process restarts
+    runtime._seed_last_word(USER, run_id, DAY)
+    assert _close_the_day(run_id)["reason_text"] == f"No entry. {flip}"
+
+
+def test_a_session_already_closed_is_not_closed_again(db):
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    runtime._note_last_word(USER, {"NIFTY": (ReasonCode.SIGNAL_NO_TRADE, "NIFTY: why.")}, DAY)
+    _close_the_day(run_id)
+    runtime.reset_state_for_tests()
+    assert _close_the_day(run_id)["reason_text"] == "No entry. NIFTY: why."
