@@ -27,6 +27,18 @@ def _isolate_log_sink(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _roomy_data_volume(monkeypatch):
+    """Report the data volume as 10% full, so no backtest test is halted or refused because the
+    machine running the suite happens to have a full disk. Storage tests set their own reading."""
+    import collections
+
+    from icici_breeze_backend.app.services.storage import usage
+
+    reading = collections.namedtuple("usage", "total used free")(100 * 1024**3, 10 * 1024**3, 90 * 1024**3)
+    monkeypatch.setattr(usage.shutil, "disk_usage", lambda _path: reading)
+
+
+@pytest.fixture(autouse=True)
 def _clear_order_book_cache():
     """The SG order-book cache is process-global, so without this a test that reads the
     book would silently satisfy the next test's read and any assertion counting broker

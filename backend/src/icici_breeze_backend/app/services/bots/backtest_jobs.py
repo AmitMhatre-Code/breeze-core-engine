@@ -188,9 +188,23 @@ def _start(kind: str, target: Callable[[], None], **info: Any) -> dict[str, Any]
 
 
 def _stop_reason() -> Optional[str]:
+    """Checked before every ICICI history call. The storage check sits here so a fetch that
+    pushes the volume past its threshold stops at the next call (#44)."""
+    from icici_breeze_backend.app.services.storage import usage
+
     if _cancel.is_set():
         return "Stopped at your request."
-    return market_hours_reason()
+    return usage.halt_reason() or market_hours_reason()
+
+
+def refuse_if_storage_blocked() -> None:
+    """Refuse a new backtest while the data volume is past its threshold, or while a storage
+    cleanup is rewriting the cache it would write to."""
+    from icici_breeze_backend.app.services.storage import cleanup, usage
+
+    usage.refuse_if_full()
+    if cleanup.touches_cache():
+        raise Busy("Storage cleanup is compacting the backtest cache. Try again when it finishes.")
 
 
 def _guard_broker() -> None:
@@ -240,6 +254,7 @@ def _broker_scope(user_id: str):
 
 def start_probe(user_id: str) -> dict[str, Any]:
     _guard_broker()
+    refuse_if_storage_blocked()
     ensure_store()
 
     def target() -> None:
@@ -259,6 +274,7 @@ def start_probe(user_id: str) -> dict[str, Any]:
 
 def start_fetch(user_id: str, bot: str, start: datetime.date, end: datetime.date) -> dict[str, Any]:
     _guard_broker()
+    refuse_if_storage_blocked()
     ensure_store()
     config = service.saved_config(bot, user_id)
     indices = service.indices_for(bot, config)
@@ -289,6 +305,7 @@ def start_replay(
 ) -> dict[str, Any]:
     ensure_store()
     _memory_check("before starting")
+    refuse_if_storage_blocked()
     config = service.saved_config(bot, user_id)
     if bot == "expiry" and not service.expiry_scope(config):
         raise ValueError("No index is enabled in Bot 2's settings, so there is nothing to backtest.")
@@ -403,6 +420,7 @@ def start_bot_backtest(
         if _thread is not None and _thread.is_alive():
             raise Busy("A backtest is already running. Wait for it, or stop it.")
     _memory_check("before starting")
+    refuse_if_storage_blocked()
 
     run_id = repo.start_run(user_id, bot_type, "backtest")
     period_text = (

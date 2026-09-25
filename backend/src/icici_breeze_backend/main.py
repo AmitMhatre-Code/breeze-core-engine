@@ -227,6 +227,9 @@ def _ensure_app_database() -> None:
             )
 
             ensure_backtest_budget_table(db_path)
+            from icici_breeze_backend.app.services.storage.usage import ensure_storage_settings_table
+
+            ensure_storage_settings_table(db_path)
             from icici_breeze_backend.app.db.squareoff_rules_migrate import (
                 ensure_squareoff_rules_table,
             )

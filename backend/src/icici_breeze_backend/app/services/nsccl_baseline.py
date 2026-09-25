@@ -282,10 +282,12 @@ def open_span_xml_payload(
     return None
 
 
-# How many distinct source dates of raw SPAN archives to keep on disk. The files are only needed
-# to re-run a margin comparison against the exact snapshot a figure came from; they are rebuildable
-# from the exchange, so this is disposable state on the same volume as the databases.
-SPAN_ARCHIVE_RETAIN_DATES = 5
+# How many distinct source dates of raw SPAN archives to keep on disk, and within each date only the
+# latest revision per exchange (a new revision replaces the one before it). The files are only
+# needed to re-run a margin comparison against the snapshot a figure came from; they are
+# rebuildable from the exchange, so this is disposable state on the same volume as the databases.
+# Keeping every revision of five dates cost ~400 MB of a 16 GiB volume (decided 2026-09-25).
+SPAN_ARCHIVE_RETAIN_DATES = 2
 
 
 def span_archive_dir() -> str:
@@ -344,6 +346,35 @@ def _purge_span_archives(keep_dates: int = SPAN_ARCHIVE_RETAIN_DATES) -> None:
         return
     for stale in dates[keep_dates:]:
         shutil.rmtree(os.path.join(root, stale), ignore_errors=True)
+    for kept in dates[:keep_dates]:
+        _keep_latest_revision_per_exchange(os.path.join(root, kept))
+
+
+def _keep_latest_revision_per_exchange(day_dir: str) -> None:
+    """Delete every archive in `day_dir` but the most recently retained one of each exchange.
+
+    Most recently *retained*, not the highest-named: that is the snapshot the live baseline was
+    built from, and a revision name's ordering is the exchange's convention, not ours."""
+    try:
+        names = [n for n in os.listdir(day_dir) if os.path.isfile(os.path.join(day_dir, n))]
+    except OSError:
+        return
+    newest: dict[str, tuple[float, str]] = {}
+    for name in names:
+        try:
+            mtime = os.path.getmtime(os.path.join(day_dir, name))
+        except OSError:
+            continue
+        family = _archive_family(name)
+        if family not in newest or (mtime, name) > newest[family]:
+            newest[family] = (mtime, name)
+    keep = {name for _mtime, name in newest.values()}
+    for name in names:
+        if name not in keep:
+            try:
+                os.remove(os.path.join(day_dir, name))
+            except OSError:
+                _logger.warning("Could not remove superseded SPAN archive %s", name)
 
 
 def retain_span_archive(payload: bytes, *, source_date: str, archive_name: str) -> str | None:
@@ -364,6 +395,10 @@ def retain_span_archive(payload: bytes, *, source_date: str, archive_name: str) 
         with open(tmp, "wb") as fh:
             fh.write(payload)
         os.replace(tmp, path)
+        family = _archive_family(name)
+        for other in os.listdir(day_dir):
+            if other != name and _archive_family(other) == family:
+                os.remove(os.path.join(day_dir, other))
         _purge_span_archives()
         return path
     except OSError as exc:

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, type ComponentType, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { AdvancedPnlEngineScreen } from "./screens/AdvancedPnlEngineScreen";
@@ -14,6 +14,7 @@ import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
 import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
 import { QuantityLimitsScreen } from "./screens/QuantityLimitsScreen";
 import { ReferenceDataLoadsScreen } from "./screens/ReferenceDataLoadsScreen";
+import { StorageScreen } from "./screens/StorageScreen";
 import { TelegramAlertsScreen } from "./screens/TelegramAlertsScreen";
 import { TradingCostsScreen } from "./screens/TradingCostsScreen";
 
@@ -29,6 +30,7 @@ type ScreenKey =
   | "audit-logs"
   | "bot-audit-logs"
   | "application-logs"
+  | "storage"
   | "api-playground"
   | "delete-account";
 
@@ -56,6 +58,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   "audit-logs": AuditLogsScreen,
   "bot-audit-logs": BotAuditLogsScreen,
   "application-logs": ApplicationLogsScreen,
+  storage: StorageScreen,
   "api-playground": ApiPlaygroundScreen,
   "delete-account": DeleteAccountScreen,
 };
@@ -93,6 +96,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "audit-logs", label: "Audit Logs", icon: DocIcon },
       { key: "bot-audit-logs", label: "Bot Audit Logs", icon: DocIcon },
       { key: "application-logs", label: "Application Logs", icon: DocIcon },
+      { key: "storage", label: "Storage", icon: DiskIcon },
     ],
   },
   {
@@ -143,6 +147,14 @@ function SettingsShellInner() {
   const initialActive: ScreenKey =
     tabParam && SCREEN_KEYS.has(tabParam as ScreenKey) ? (tabParam as ScreenKey) : "credentials";
   const [active, setActive] = useState<ScreenKey>(initialActive);
+  // The storage banner links to `?tab=storage` from every page, Settings included, where the
+  // screen is already mounted and the initial state above would ignore the new tab.
+  useEffect(() => {
+    if (tabParam && SCREEN_KEYS.has(tabParam as ScreenKey)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the URL's tab when it changes
+      setActive(tabParam as ScreenKey);
+    }
+  }, [tabParam]);
   const ActiveScreen = SCREENS[active];
 
   return (
@@ -300,6 +312,16 @@ function DatabaseIcon() {
       <ellipse cx="12" cy="5" rx="8" ry="3" />
       <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
       <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </IconBase>
+  );
+}
+
+function DiskIcon() {
+  return (
+    <IconBase>
+      <path d="M22 12H2" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      <path d="M6 16h.01M10 16h.01" />
     </IconBase>
   );
 }

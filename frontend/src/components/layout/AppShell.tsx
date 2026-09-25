@@ -20,6 +20,7 @@ import { LogoutConfirmDialog } from "@/components/layout/LogoutConfirmDialog";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import { LicenseStatusBanner } from "@/components/license/LicenseStatusBanner";
 import { ContraOrphanBanner } from "@/components/portfolio/ContraOrphanBanner";
+import { StorageFullBanner } from "@/components/storage/StorageFullBanner";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { Modal } from "@/components/ui/Modal";
 import breezeMark from "@/app/android-chrome-192x192.png";
@@ -433,8 +434,9 @@ export function AppShell({
           status={licenseStatus}
           contactSalesMailto={contactSalesMailto}
         />
+        <StorageFullBanner />
         <ApiLimitExhaustedBanner blocked={apiUsageBlocked} />
-        {/* Scoped to one Strategy Group rather than deployment-wide like the two above —
+        {/* Scoped to one Strategy Group rather than deployment-wide like the three above —
             a deliberate exception, because a resting contra order can put on risk the
             user never asked for and doesn't care which page they're on. Tier 3 only. */}
         <ContraOrphanBanner />

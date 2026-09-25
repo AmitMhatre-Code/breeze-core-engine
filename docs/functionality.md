@@ -50,6 +50,7 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
 | `/settings/strategy-audit-logs` | Browse recorded strategy-builder evaluation/audit entries. |
 | `/settings?tab=application-logs` | Download this deployment's rotating application logs as a zip (`/diagnostics/logs/*`). Deployment-wide, not per-user; authenticated but not admin-only. |
+| `/settings?tab=storage` | Data-volume usage, read live, and what occupies it (backtest history, backtest results, logs, and the app's own files), each with its size and the dates it covers; delete any deletable element for a date range, with the backtest cache compacted afterwards. Also sets the single threshold that shows the app-wide "free up space" banner and halts backtests that write data (design-decisions #44). |
 | `/settings/delete-account` | Account deletion entry. |
 
 The UI uses **React Query** for server state and **Chart.js** where charts are shown.
@@ -92,7 +93,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Settings API
 
-- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), and the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)).
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)), and storage (`/storage/status` polled by the banner, `/storage` inventory, `/storage/threshold`, `/storage/delete` + `/storage/job`).
 
 ### Signals and bots
 

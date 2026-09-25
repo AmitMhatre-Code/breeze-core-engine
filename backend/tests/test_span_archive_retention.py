@@ -63,6 +63,24 @@ class SpanArchiveRetention(unittest.TestCase):
         self.assertEqual(kept[-1], "20260909")
         self.assertNotIn("20260901", kept)
 
+    def test_new_revision_replaces_the_previous_one_of_the_same_exchange(self):
+        nb.retain_span_archive(b"x", source_date="20260909", archive_name="nsccl.20260909.i3.zip")
+        nb.retain_span_archive(b"x", source_date="20260909", archive_name="BSERISK20260909-02.ZIP")
+        nb.retain_span_archive(b"x", source_date="20260909", archive_name="nsccl.20260909.i4.zip")
+        names = sorted(os.listdir(os.path.join(nb.span_archive_dir(), "20260909")))
+        self.assertEqual(names, ["BSERISK20260909-02.ZIP", "nsccl.20260909.i4.zip"])
+
+    def test_purge_collapses_older_dates_to_their_latest_revision(self):
+        # A deployment upgraded from the keep-everything rule still has every revision on disk.
+        day_dir = os.path.join(nb.span_archive_dir(), "20260908")
+        os.makedirs(day_dir)
+        for i, name in enumerate(("nsccl.20260908.i1.zip", "nsccl.20260908.i5.zip", "BSERISK20260908-00.ZIP")):
+            path = os.path.join(day_dir, name)
+            open(path, "wb").close()
+            os.utime(path, (1_000_000 + i, 1_000_000 + i))
+        nb.retain_span_archive(b"x", source_date="20260909", archive_name="nsccl.20260909.i1.zip")
+        self.assertEqual(sorted(os.listdir(day_dir)), ["BSERISK20260908-00.ZIP", "nsccl.20260908.i5.zip"])
+
     def test_retention_failure_never_raises(self):
         self.assertIsNone(nb.retain_span_archive(b"", source_date="20260909", archive_name="a.zip"))
         self.assertIsNone(nb.retain_span_archive(b"x", source_date="", archive_name="a.zip"))

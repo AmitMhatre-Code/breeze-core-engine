@@ -371,10 +371,15 @@ def run_backtest(
     cache_path: Optional[str] = None,
     out_dir: Optional[str] = None,
     cancelled=lambda: False,
+    halted=lambda: None,
     log=lambda line: None,
 ) -> dict[str, Any]:
     """Replay, score and zip. Returns {"summary": {series_id: summary}, "zip_path": ...}; raises
-    `Cancelled` when asked to stop (the partial zip is removed)."""
+    `Cancelled` when asked to stop, and `StorageFull` when `halted()` gives a reason -- the data
+    volume passed its threshold while the zip was being written (#44). Either way the partial zip
+    is removed."""
+    from icici_breeze_backend.app.services.storage.usage import StorageFull
+
     from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
     from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 
@@ -411,6 +416,9 @@ def run_backtest(
             for key in all_keys():
                 if cancelled():
                     raise Cancelled()
+                reason = halted()
+                if reason:
+                    raise StorageFull(reason)
                 log(f"Replaying {key.name}…")
                 excluded = rollover if key.uses_oi else set()
                 rows = [
@@ -472,11 +480,13 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
     from icici_breeze_backend.app.services.bots import backtest_service as service
     from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
     from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import Stopped
+    from icici_breeze_backend.app.services.storage import usage as storage_usage
 
     if period not in service.PERIODS:
         raise ValueError(f"Unknown period {period!r}.")
     if jobs.is_running():
         raise jobs.Busy("A backtest is already running. Wait for it, or stop it.")
+    jobs.refuse_if_storage_blocked()
     jobs.ensure_store()
     now = now_ist()
     hol = service.holidays()
@@ -517,7 +527,8 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
                 jobs._log(text)  # noqa: SLF001
             result = run_backtest(
                 start_d, end_d, run_id=run_id, period=period, holidays=hol, notes=notes, calls=calls,
-                cancelled=jobs._cancel.is_set, log=jobs._log,  # noqa: SLF001
+                cancelled=jobs._cancel.is_set, halted=storage_usage.halt_reason,
+                log=jobs._log,  # noqa: SLF001
             )
             headline = _headline(result["summary"])
             update_run(run_id, status="completed", finished_at=now_ist().isoformat(timespec="seconds"),
