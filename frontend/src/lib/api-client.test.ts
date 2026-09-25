@@ -52,3 +52,27 @@ describe("apiClient sessionPolicy", () => {
     );
   });
 });
+
+describe("apiClient error messages", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("names the field FastAPI refused instead of blaming the backend", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        headers: { get: (name: string) => (name === "content-type" ? "application/json" : null) },
+        json: async () => ({
+          detail: [{ type: "literal_error", loc: ["body", "bot"], msg: "Input should be 'momentum' or 'fly'" }],
+        }),
+      }),
+    );
+
+    await expect(apiClient.post("/bots/backtest/start", { bot: "cas" })).rejects.toThrow(
+      "Invalid request (bot): Input should be 'momentum' or 'fly'",
+    );
+  });
+});

@@ -29,6 +29,8 @@ from icici_breeze_backend.app.services.bots.scalping import backtest_store as st
 router = APIRouter()
 
 BotKey = Literal["momentum", "fly", "expiry"]
+#: The card's backtest covers every bot with a replay; the retired page's routes never had CAS Bingo.
+StartBotKey = Literal["momentum", "fly", "expiry", "cas"]
 
 
 class RangeRequest(BaseModel):
@@ -44,7 +46,7 @@ class ReplayRequest(RangeRequest):
 class StartRequest(BaseModel):
     """The card's backtest dialog: which bot, and a period. Nothing else is asked (#36)."""
 
-    bot: BotKey
+    bot: StartBotKey
     period: Literal["last_day", "last_week", "last_month", "custom"]
     from_date: Optional[datetime.date] = None
     to_date: Optional[datetime.date] = None

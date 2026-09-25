@@ -421,6 +421,14 @@ def test_a_fly_replay_off_the_live_broker_is_a_400(client, monkeypatch):
     assert r.status_code == 400 and "margin" in r.json()["detail"]
 
 
+def test_every_bot_with_a_replay_can_be_started_from_its_card(client, monkeypatch):
+    # The route once listed only the retired page's bots, so CAS Bingo's card got a bare 422.
+    monkeypatch.setattr(jobs, "start_bot_backtest", lambda user_id, bot, *a: {"bot": bot})
+    for bot in service.BOT_TYPES:
+        r = client.post("/bots/backtest/start", json={"bot": bot, "period": "last_day"})
+        assert r.status_code == 200 and r.json()["bot"] == bot, (bot, r.text)
+
+
 def test_compare_without_simulation_cycles_is_a_404(client):
     assert client.get("/bots/backtest/compare?bot=momentum&date=2026-09-11").status_code == 404
 

@@ -46,6 +46,15 @@ function formatErrorPayload(payload: unknown): string {
     const o = payload as Record<string, unknown>;
     const detail = o.detail;
     if (typeof detail === "string") return detail;
+    // FastAPI's 422: a list of {loc, msg}. Name the field so a request the backend refused
+    // on shape does not read as a backend failure.
+    if (Array.isArray(detail) && detail.length) {
+      const first = detail[0] as Record<string, unknown>;
+      if (typeof first?.msg === "string") {
+        const loc = Array.isArray(first.loc) ? first.loc.filter((p) => p !== "body").join(".") : "";
+        return `Invalid request${loc ? ` (${loc})` : ""}: ${first.msg}`;
+      }
+    }
     if (detail && typeof detail === "object") {
       const d = detail as Record<string, unknown>;
       if (typeof d.message === "string") return d.message;
