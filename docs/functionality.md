@@ -50,7 +50,7 @@ Paths below are relative to the site root (e.g. `http://localhost:3000` in devel
 | `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
 | `/settings/strategy-audit-logs` | Browse recorded strategy-builder evaluation/audit entries. |
 | `/settings?tab=application-logs` | Download this deployment's rotating application logs as a zip (`/diagnostics/logs/*`). Deployment-wide, not per-user; authenticated but not admin-only. |
-| `/settings?tab=storage` | Data-volume usage, read live, and what occupies it (backtest history, backtest results, logs, and the app's own files), each with its size and the dates it covers; delete any deletable element for a date range, with the backtest cache compacted afterwards. Also sets the single threshold that shows the app-wide "free up space" banner and halts backtests that write data (design-decisions #44). |
+| `/settings?tab=storage` | Data-volume usage, read live, and what occupies it (backtest history, backtest results, logs, and the app's own files), each with its size and the dates it covers; delete any deletable element for a date range, with the backtest cache or accounts database compacted afterwards. The request & page-view log in the accounts database is deletable; its order/square-off/bot event rows are not (design-decisions #45). Also sets the single threshold that shows the app-wide "free up space" banner and halts backtests that write data (design-decisions #44). |
 | `/settings/delete-account` | Account deletion entry. |
 
 The UI uses **React Query** for server state and **Chart.js** where charts are shown.

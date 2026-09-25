@@ -130,10 +130,14 @@ class AuditLogger:
                 conn.commit()
             finally:
                 conn.close()
-            return True
         except Exception as e:
             _logger.warning("Audit log write failed: user_id=%s op=%s: %s", user_id, operation_type, e)
             return False
+        # Once a day per process, in the background (docs/design-decisions.md #45).
+        from icici_breeze_backend.app.services.storage import audit_retention
+
+        audit_retention.maybe_prune()
+        return True
     
     def log_login(self, user_id: str, request_id: str = None, 
                  ip_address: str = None) -> bool:

@@ -432,3 +432,169 @@ class TestRoutes:
                           json={"element": "daily_vix", "from_date": "2026-02-01", "to_date": "2026-01-01"})
         assert bad.status_code == 400
         json.dumps(inv)  # the whole inventory is plain JSON
+
+
+# --------------------------------------------------------------------------------------
+# audit_log retention and the request log (#45)
+# --------------------------------------------------------------------------------------
+
+
+#: conftest stubs `_run_daily` suite-wide so no audit write trims a real database; this is the real one.
+from icici_breeze_backend.app.services.storage.audit_retention import _run_daily as _REAL_RUN_DAILY  # noqa: E402
+
+
+def _audit_db() -> str:
+    from icici_breeze_backend.app.services.storage import audit_retention
+
+    path = audit_retention.db_path()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+                operation_type TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT,
+                action_status TEXT NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                request_id TEXT, ip_address TEXT, error_details TEXT, metadata TEXT)"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_log(user_id, timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_operation ON audit_log(operation_type)")
+    return path
+
+
+def _audit(rows: list[tuple[str, str]], per_row: int = 1) -> None:
+    """(operation_type, 'YYYY-MM-DD') pairs, inserted in the order given."""
+    with sqlite3.connect(_audit_db()) as conn:
+        for op, day in rows:
+            for i in range(per_row):
+                conn.execute(
+                    "INSERT INTO audit_log (user_id, operation_type, resource_type, resource_id, "
+                    "action_status, timestamp, request_id) VALUES ('u1', ?, 'Request', ?, 'success', ?, ?)",
+                    (op, "GET /dashboard/ws-health", f"{day} 10:{i % 60:02d}:00", "x" * 36),
+                )
+
+
+def _ops() -> collections.Counter:
+    with sqlite3.connect(_audit_db()) as conn:
+        return collections.Counter(r[0] for r in conn.execute("SELECT operation_type FROM audit_log"))
+
+
+class TestAuditRetention:
+    NOW = datetime.datetime(2026, 9, 25, 12, 0)
+
+    def test_request_rows_keep_14_days_and_events_90(self, data):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+        _audit([
+            ("http_request", "2026-09-10"),     # 15 days old: gone
+            ("portfolio_view", "2026-09-10"),   # gone
+            ("order_view", "2026-09-10"),       # gone
+            ("http_request", "2026-09-11"),     # exactly 14 days: kept
+            ("squareoff_rule_fire_failed", "2026-06-26"),  # 91 days: gone
+            ("order_place", "2026-06-27"),      # 90 days: kept
+            ("order_cancel", "2026-09-10"),     # event, recent: kept
+        ])
+        assert ar.prune(now=self.NOW) == {"noise": 3, "events": 1}
+        assert _ops() == collections.Counter(
+            {"http_request": 1, "order_place": 1, "order_cancel": 1}
+        )
+
+    def test_prune_tolerates_a_database_without_the_table(self, data):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+        assert ar.prune(now=self.NOW) == {"noise": 0, "events": 0}
+
+    def test_maybe_prune_runs_once_a_day(self, data, monkeypatch):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+        runs = []
+        monkeypatch.setattr(ar, "_run_daily", lambda path: runs.append(path))
+        ar.reset_for_tests()
+        ar.maybe_prune()
+        ar.maybe_prune()
+        deadline = time.time() + 2
+        while not runs and time.time() < deadline:
+            time.sleep(0.01)
+        assert runs == [ar.db_path()]
+
+    def test_delete_takes_only_request_rows_in_range(self, data):
+        _audit([
+            ("http_request", "2026-09-01"),
+            ("portfolio_view", "2026-09-02"),
+            ("http_request", "2026-09-03"),
+            ("order_modify", "2026-09-02"),
+            ("bot_orders_placed", "2026-09-01"),
+        ])
+        out = elements.delete("audit_requests", _rng("2026-09-01", "2026-09-02"))
+        assert (out["deleted"], out["unit"]) == (2, "rows")
+        assert _ops() == collections.Counter(
+            {"http_request": 1, "order_modify": 1, "bot_orders_placed": 1}
+        )
+
+    def test_inventory_splits_the_request_log_out_of_the_database(self, data, monkeypatch):
+        _audit([("http_request", "2026-09-01"), ("portfolio_view", "2026-09-20"),
+                ("order_place", "2026-09-05")], per_row=400)
+        _disk(monkeypatch, 40)
+        inv = elements.inventory()
+        by_key = {e["key"]: e for e in inv["elements"]}
+        req = by_key["audit_requests"]
+        assert req["group"] == "Logs" and req["deletable"] is True and req["approx"] is True
+        assert (req["from"], req["to"], req["count"]) == ("2026-09-01", "2026-09-20", 800)
+        assert req["bytes"] > 0
+        users = by_key["users_db"]
+        free = by_key.get("users_free_pages", {}).get("bytes", 0)
+        assert users["bytes"] + req["bytes"] + free == elements._file_bytes(
+            os.path.join(cfg.DATA_PATH, cfg.USERS_DB)
+        )
+        assert sum(e["bytes"] for e in inv["elements"]) == usage.volume()["used_bytes"]
+
+    def test_estimate_never_exceeds_the_file(self, data, monkeypatch):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+        _audit([("http_request", "2026-09-01")], per_row=50)
+        monkeypatch.setattr(ar, "noise_breakdown", lambda _p=None: {
+            "rows": 50, "bytes": 10 * GB, "from": "2026-09-01", "to": "2026-09-01"})
+        _disk(monkeypatch, 40)
+        by_key = {e["key"]: e for e in elements.inventory()["elements"]}
+        assert by_key["users_db"]["bytes"] == 0
+        assert by_key["audit_requests"]["bytes"] <= elements._file_bytes(
+            os.path.join(cfg.DATA_PATH, cfg.USERS_DB)
+        )
+
+    def test_request_log_delete_compacts_the_accounts_database(self, data, monkeypatch):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+        _disk(monkeypatch, 10)
+        _audit([("http_request", f"2026-08-{d:02d}") for d in range(1, 29)], per_row=60)
+        _audit([("order_place", "2026-08-15")])
+        size_before = elements._file_bytes(ar.db_path())
+        cleanup.start("audit_requests", _rng("2026-08-01", "2026-08-31"))
+        job = _wait_for_job()
+        assert job["status"] == "completed", job
+        assert job["compacted"] is True
+        assert ar.free_bytes() == 0
+        assert elements._file_bytes(ar.db_path()) < size_before
+        assert _ops() == collections.Counter({"order_place": 1})
+
+    def test_too_full_to_compact_the_accounts_database_still_deletes(self, data, monkeypatch):
+        total = 16 * GB
+        monkeypatch.setattr(usage.shutil, "disk_usage", lambda _p: _DU(total, total - 10, 10))
+        _audit([("http_request", "2026-08-01")], per_row=200)
+        cleanup.start("audit_requests", _rng("2026-08-01", "2026-08-01"))
+        job = _wait_for_job()
+        assert job["status"] == "completed" and job["compacted"] is False
+        assert "too full to compact the accounts database" in job["message"]
+        assert _ops() == collections.Counter()
+
+    def test_daily_run_compacts_only_when_worth_it(self, data, monkeypatch):
+        from icici_breeze_backend.app.services.storage import audit_retention as ar
+
+
+        _disk(monkeypatch, 10)
+        calls = []
+        monkeypatch.setattr(ar, "compact", lambda path=None: calls.append(path) or (True, None))
+        monkeypatch.setattr(ar, "free_bytes", lambda path=None: 0)
+        _audit([("http_request", "2026-01-01")])
+        _REAL_RUN_DAILY(ar.db_path())
+        assert calls == [] and _ops() == collections.Counter()
+        monkeypatch.setattr(ar, "free_bytes", lambda path=None: ar.AUTO_COMPACT_MIN_FREE_BYTES)
+        _REAL_RUN_DAILY(ar.db_path())
+        assert calls == [ar.db_path()]

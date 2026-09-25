@@ -12,7 +12,8 @@ Deletes are by IST calendar date, inclusive at both ends. What each date means:
 * bars (futures, cash index, option) and VIX -- the bar's own date;
 * bot backtest runs and signal backtest zips -- the day the run was started;
 * bot and Strategy Builder audit logs -- the day the file is named for;
-* application logs -- the day a rotated file was last written.
+* application logs -- the day a rotated file was last written;
+* the request & page-view log -- the day each row was stamped (IST).
 
 Guarded on purpose:
 
@@ -20,7 +21,9 @@ Guarded on purpose:
   (`index_signal.warmup.cached_bars`) -- deleting them only costs ICICI calls to fetch back;
 * the log files the processes are writing to now, and today's bot audit file;
 * a bot backtest run that is still running;
-* signal backtest *rows*: only their zips go, because the 30-day bot gate reads the rows.
+* signal backtest *rows*: only their zips go, because the 30-day bot gate reads the rows;
+* `audit_log`'s event rows (orders, square-off rules, GTT exits, bots): only request and
+  page-view rows are deletable (`audit_retention`).
 """
 from __future__ import annotations
 
@@ -357,7 +360,7 @@ def inventory() -> dict[str, Any]:
     from icici_breeze_backend.app.services.nsccl_baseline import span_archive_dir
     from icici_breeze_backend.app.core import log_sink
     from icici_breeze_backend.audit import bot_audit, strategy_builder_audit
-    from icici_breeze_backend.app.services.storage import usage
+    from icici_breeze_backend.app.services.storage import audit_retention, usage
 
     elements: list[dict[str, Any]] = []
     accounted: set[str] = set()
@@ -478,6 +481,23 @@ def inventory() -> dict[str, Any]:
                     "10 per user are kept automatically.",
     ))
 
+    # --- the request log inside users.sqlite3 (its file is accounted with the database below)
+    users_path = _data(cfg.USERS_DB)
+    users_free = audit_retention.free_bytes(users_path)
+    noise = audit_retention.noise_breakdown(users_path)
+    # An estimate, so capped at what the file holds live: the figures must still add up.
+    noise_bytes = min(noise["bytes"], max(0, _file_bytes(users_path) - users_free))
+    elements.append(_element(
+        "audit_requests", "Request & page-view log", "Logs", bytes_=noise_bytes, approx=True,
+        deletable=True, coverage={"from": noise["from"], "to": noise["to"]}, count=noise["rows"],
+        count_unit="rows",
+        description="One row per API call and page load, inside the accounts database. Nothing in "
+                    "the app reads it; it is the request history for support beyond the application "
+                    f"logs' 7 days. Kept {audit_retention.NOISE_KEEP_DAYS} days automatically.",
+        guard="Only request and page-view rows are deleted. The trail of orders, square-off rules, "
+              "GTT exits and bot actions stays.",
+    ))
+
     # --- read-only
     elements.append(_element(
         "cache_bookkeeping", "Backtest cache bookkeeping", "Kept by the app",
@@ -507,17 +527,28 @@ def inventory() -> dict[str, Any]:
         description="The raw exchange SPAN files the margin comparison re-reads. The app keeps only "
                     "the latest revision per exchange for the two most recent dates.",
     ))
-    for key, label, name, text in (
+    for key, label, name, text, less in (
         ("users_db", "Accounts & settings database", cfg.USERS_DB,
-         "Accounts, broker sessions, orders, bot history and every setting. Never deleted."),
+         "Accounts, broker sessions, orders, bots, every setting, and the trail of orders, "
+         "square-off rules, GTT exits and bot actions (kept "
+         f"{audit_retention.EVENT_KEEP_DAYS} days). Never deleted here.",
+         noise_bytes + users_free),
         ("scrips_db", "Scrip master database", "scrips.sqlite3",
-         "ICICI's security master, rebuilt by the daily reference-data refresh."),
+         "ICICI's security master, rebuilt by the daily reference-data refresh.", 0),
     ):
         path = _data(name)
         for suffix in ("", "-wal", "-journal", "-shm"):
             accounted.add(os.path.abspath(path + suffix))
-        elements.append(_element(key, label, "Kept by the app", bytes_=_file_bytes(path),
-                                 deletable=False, description=text))
+        elements.append(_element(key, label, "Kept by the app", bytes_=max(0, _file_bytes(path) - less),
+                                 approx=bool(less), deletable=False, description=text))
+    if users_free:
+        elements.append(_element(
+            "users_free_pages", "Accounts database: deleted, not yet compacted", "Kept by the app",
+            bytes_=users_free, deletable=False,
+            description="Space inside the accounts database that a delete or the daily trim freed but "
+                        "compaction has not yet handed back. New rows reuse it; the next request-log "
+                        "delete retries compaction.",
+        ))
 
     other = sum(s for p, s, _m in _dir_files(_data()) if os.path.abspath(p) not in accounted)
     elements.append(_element(
@@ -544,6 +575,8 @@ def inventory() -> dict[str, Any]:
 #: Elements whose rows live in the backtest cache: deleting them needs the job slot free (a
 #: running backtest is writing there) and is followed by compaction.
 CACHE_ELEMENTS = frozenset({"futures_bars", "spot_bars", "daily_vix", "option_bars", "bot_backtest_runs"})
+#: Elements whose rows live in `users.sqlite3`: a delete is followed by compacting that file.
+USERS_DB_ELEMENTS = frozenset({"audit_requests"})
 
 
 def _delete_bars(table: str, rng: DateRange, path: str) -> tuple[int, Optional[str]]:
@@ -679,6 +712,11 @@ def delete(key: str, rng: DateRange) -> dict[str, Any]:
             keep=lambda p: _bot_audit_day(os.path.basename(p)) == today,
         )
         unit = "files"
+    elif key == "audit_requests":
+        from icici_breeze_backend.app.services.storage import audit_retention
+
+        n, note = audit_retention.delete_noise(rng.start, rng.end, _data(cfg.USERS_DB)), None
+        unit = "rows"
     elif key == "strategy_audit_logs":
         files = [p for p, _s, _m in _dir_files(strategy_builder_audit.audit_log_dir())]
         n, note = _delete_files(files, lambda p: _strategy_audit_day(os.path.basename(p)), rng)

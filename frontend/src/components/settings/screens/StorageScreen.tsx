@@ -166,9 +166,9 @@ export function StorageScreen() {
 
         {inventory ? (
           <p className="text-xs leading-relaxed text-muted">
-            Sizes marked ≈ share out the backtest cache file by row count, so they are estimates;
-            the volume figures and whole-file sizes are exact. Deleting from the backtest cache
-            compacts it afterwards, which can take a minute on a large cache.
+            Sizes marked ≈ share out a database file by row count, so they are estimates; the
+            volume figures and whole-file sizes are exact. Deleting from a database compacts it
+            afterwards, which can take a minute on a large backtest cache.
           </p>
         ) : null}
       </div>
@@ -339,7 +339,7 @@ function ElementRow({
         <p className="text-xs leading-relaxed text-muted">{el.description}</p>
         {el.guard ? <p className="text-xs leading-relaxed text-faint">{el.guard}</p> : null}
       </div>
-      <div className="flex shrink-0 items-center gap-3 sm:flex-col sm:items-end sm:gap-1.5">
+      <div className="flex shrink-0 items-center gap-2">
         <span className="font-mono text-sm tabular-nums text-foreground">
           {el.approx && el.bytes > 0 ? "≈ " : ""}
           {formatBytes(el.bytes)}
@@ -347,7 +347,7 @@ function ElementRow({
         {el.deletable ? (
           <button
             type="button"
-            className="app-btn-outline rounded-[9px] p-1.5 text-muted hover:border-down hover:bg-down-tint hover:text-down-on-tint"
+            className="rounded-[6px] p-1 text-down transition hover:bg-down-tint hover:text-down-on-tint disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             disabled={disabled || !el.from}
             aria-label={`Delete ${el.label}…`}
             title={!el.from ? "Nothing to delete" : disabled ? "A cleanup is running" : `Delete ${el.label}…`}
@@ -470,7 +470,9 @@ function JobPanel({
         {label}, {range}:{" "}
         {job.running
           ? job.stage === "compacting"
-            ? "compacting the backtest cache…"
+            ? job.element === "audit_requests"
+              ? "compacting the accounts database…"
+              : "compacting the backtest cache…"
             : "deleting…"
           : job.status === "failed"
             ? "delete failed."

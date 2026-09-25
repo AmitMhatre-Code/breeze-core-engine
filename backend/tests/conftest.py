@@ -39,6 +39,16 @@ def _roomy_data_volume(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_audit_retention_thread(monkeypatch):
+    """Every audit write starts the once-a-day `audit_log` trim in a thread, against whatever
+    `DATA_PATH` is at that moment -- often the developer's real users.sqlite3. Storage tests call
+    `audit_retention.prune` / `_run_daily` directly instead."""
+    from icici_breeze_backend.app.services.storage import audit_retention
+
+    monkeypatch.setattr(audit_retention, "_run_daily", lambda _path: None)
+
+
+@pytest.fixture(autouse=True)
 def _clear_order_book_cache():
     """The SG order-book cache is process-global, so without this a test that reads the
     book would silently satisfy the next test's read and any assertion counting broker

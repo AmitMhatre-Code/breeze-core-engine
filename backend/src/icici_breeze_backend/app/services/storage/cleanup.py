@@ -13,6 +13,10 @@ pages while the rewrite lands), so:
   and a backtest cannot start while a cleanup runs;
 * when the volume is too full to compact, the rows are still deleted and the job says so. The
   freed pages are reused by the next backtest, and handed back by the next delete that has room.
+
+A delete of the request log compacts `users.sqlite3` the same way (`audit_retention.compact`).
+That file is live -- every request writes to it -- but after the trim only a few MB are copied, so
+writers wait well under their 5-second timeout and nothing needs refusing.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ import uuid
 from typing import Any, Optional
 
 from icici_breeze_backend.app.core.timezone import now_ist
-from icici_breeze_backend.app.services.storage import elements, usage
+from icici_breeze_backend.app.services.storage import audit_retention, elements, usage
 
 _logger = logging.getLogger(__name__)
 
@@ -133,6 +137,11 @@ def start(key: str, rng: elements.DateRange) -> dict[str, Any]:
                 if key in elements.CACHE_ELEMENTS and (result["deleted"] or elements.cache_free_bytes()):
                     update(stage="compacting", deleted=result["deleted"], unit=result["unit"])
                     compacted, note = compact()
+                    if note:
+                        notes.append(note)
+                elif key in elements.USERS_DB_ELEMENTS and (result["deleted"] or audit_retention.free_bytes()):
+                    update(stage="compacting", deleted=result["deleted"], unit=result["unit"])
+                    compacted, note = audit_retention.compact()
                     if note:
                         notes.append(note)
                 after = usage.volume()
