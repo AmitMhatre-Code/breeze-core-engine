@@ -5,6 +5,7 @@ This folder contains detailed documentation for the application. The repository 
 | Document | What it covers |
 |----------|----------------|
 | [Functionality](./functionality.md) | Feature areas, screens, APIs used by the UI, and behaviour at a user level. |
+| [Signals, bots and backtests](./signals-bots-and-backtests.md) | Plain-language guide for options traders: how direction signals are generated, how each bot trades, and what the backtests have found so far. |
 | [Architecture](./architecture.md) | Technical stack, runtime topology, components, data stores, and integration boundaries. |
 | [Design decisions](./design-decisions.md) | Rationale for major choices (single origin, proxy model, auth, persistence, deployment shape). |
 | [User and system flows](./flows.md) | End-to-end flows with sequence and flow diagrams (login, broker auth, registration, trading data, settings, deployment paths). |
