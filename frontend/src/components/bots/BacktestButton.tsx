@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/Modal";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
 import {
+  BACKTEST_JOB_KEY as JOB_KEY,
   BACKTEST_SLUG,
   cancelBacktestJob,
   fetchBacktestJobStatus,
@@ -33,8 +34,6 @@ function HistoryIcon() {
     </svg>
   );
 }
-
-const JOB_KEY = ["bots", "backtest", "job"] as const;
 
 /**
  * The card's backtest: a clock icon, and a dialog that asks for one thing — the period

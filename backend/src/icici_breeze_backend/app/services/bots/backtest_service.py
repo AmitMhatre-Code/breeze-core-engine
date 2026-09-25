@@ -241,10 +241,13 @@ def replay(
     path: Optional[str] = None,
     readings_cache: Optional[ReadingsCache] = None,
     record_decisions: bool = False,
+    on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> Any:
     """Replay one bot over a range. `readings_cache` (series id -> readings) lets a run that
     compares signal settings build each series' readings once, whichever combinations share it.
-    It holds only the last `KEEP_SERIES`, which the combo order makes free -- see `ReadingsCache`."""
+    It holds only the last `KEEP_SERIES`, which the combo order makes free -- see `ReadingsCache`.
+
+    `on_day` is called as each session starts replaying, so a job can say where it is."""
     hol = holidays() if holidays_ is None else holidays_
     charges, spread = load_charges(), spread_stats()
     vix = store.load_vix(path=path)
@@ -270,6 +273,7 @@ def replay(
                     pricer=pricer,
                     lots={s: scope.lots.get(s, 1) for s in strategies},
                     vix_by_day=vix,
+                    on_day=on_day,
                 )
             )
         merged = merge_expiry_results(results, price_source=pricer.source, spread_source=spread.describe())
@@ -279,7 +283,7 @@ def replay(
     if bot == "cas":
         return _replay_cas(config, start=start, end=end, pricer=pricer, hol=hol, path=path,
                            charges=charges, spread=spread, readings_cache=readings_cache,
-                           record_decisions=record_decisions)
+                           record_decisions=record_decisions, on_day=on_day)
     futures = store.load_candles(from_date=start, to_date=end, path=path)
     if not futures:
         raise NoCachedData(f"No NIFTY futures bars are cached for {start} to {end}. Fetch data first.")
@@ -305,20 +309,20 @@ def replay(
             futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
             spot_bars=spot, pricer=pricer, lots=lots or DEFAULT_LOTS, holidays=hol,
             filter_readings=filter_readings, vix_series=vix_series,
-            record_decisions=record_decisions,
+            record_decisions=record_decisions, on_day=on_day,
         )
     readings = _series_readings(_series_key(config.signal, "nifty"), start, end, hol, path, readings_cache)
     return run_backtest(
         futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
         spot_bars=spot, pricer=pricer, holidays=hol, readings=readings,
-        record_decisions=record_decisions,
+        record_decisions=record_decisions, on_day=on_day,
     )
 
 
 def _replay_cas(
     config: Any, *, start: datetime.date, end: datetime.date, pricer: Any, hol: set[datetime.date],
     path: Optional[str], charges: Any, spread: Any, readings_cache: Optional[ReadingsCache],
-    record_decisions: bool,
+    record_decisions: bool, on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> Any:
     """CAS Bingo over each enabled index's expiry days, merged into one result."""
     from icici_breeze_backend.app.services.bots.cas_bingo.backtest import CasResult, run_cas_backtest
@@ -341,7 +345,7 @@ def _replay_cas(
                                           table="spot_candles", path=path),
             futures_bars=store.load_candles(stock_code=index, from_date=start, to_date=end, path=path),
             readings=readings, charges=charges, spread=spread, pricer=pricer,
-            record_decisions=record_decisions,
+            record_decisions=record_decisions, on_day=on_day,
         )
         merged.cycles.extend(one.cycles)
         merged.decisions.extend(one.decisions)

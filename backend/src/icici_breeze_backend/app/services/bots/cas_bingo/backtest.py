@@ -29,7 +29,7 @@ import datetime
 import math
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST
@@ -179,6 +179,7 @@ def run_cas_backtest(
     spread: SpreadStats,
     pricer: Any,
     record_decisions: bool = False,
+    on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> CasResult:
     """One index's expiry days. `readings` is the bot's signal series for this index as
     published (`backtest_common.series_readings`); `index_bars` the cash index, `futures_bars`
@@ -191,6 +192,8 @@ def run_cas_backtest(
     for b in futures_bars:
         fut_by_day.setdefault(b.ts.date(), []).append(b)
     for day in days:
+        if on_day is not None:
+            on_day(day)
         result.days += 1
         cash = sorted(cash_by_day.get(day) or [], key=lambda b: b.ts)
         if not cash:

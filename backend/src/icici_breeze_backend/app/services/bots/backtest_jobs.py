@@ -20,6 +20,7 @@ import collections
 import datetime
 import logging
 import threading
+import time
 import uuid
 from typing import Any, Callable, Optional
 
@@ -51,6 +52,14 @@ _cancel = threading.Event()
 _job: Optional[dict[str, Any]] = None
 _thread: Optional[threading.Thread] = None
 _store_ready = False
+#: Monotonic clock readings: when the job started, and when it last showed any sign of progress
+#: (a log line, a call, a new phase or replay day). Monotonic so the ages the page shows are
+#: unaffected by the wall clock or by the browser's.
+_began = 0.0
+_touched = 0.0
+#: Card backtests between opening their Activity row and their thread starting. The row is
+#: `running` before the job is, so the idle reaper must leave it alone for that moment.
+_opening = 0
 
 
 #: A backtest is refused, and a running one stopped, once the container holds this much of what
@@ -115,12 +124,33 @@ def state() -> Optional[dict[str, Any]]:
         out = dict(_job)
         out["log"] = list(_job["log"])
         out["running"] = _thread is not None and _thread.is_alive()
+        # Whether a running job is stuck is the question these answer: a job whose thread is
+        # alive but has said nothing for a long time is the case to look at.
+        now = time.monotonic()
+        out["elapsed_seconds"] = int(now - _began)
+        out["quiet_seconds"] = int(now - _touched)
         return out
 
 
 def is_running() -> bool:
     with _lock:
         return _thread is not None and _thread.is_alive()
+
+
+def reap_orphaned_rows() -> int:
+    """Close Activity rows left `running` by a backtest that is no longer running. Returns the count.
+
+    Startup closes the ones a restart cut off; this catches the rest -- a job thread that ended
+    without closing its row -- whenever the rows are read, so the log corrects itself without
+    anyone opening a backtest. Held under the job lock so a backtest cannot start between the
+    check and the update.
+    """
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    with _lock:
+        if _opening or (_thread is not None and _thread.is_alive()):
+            return 0
+        return repo.reap_orphaned_backtests()
 
 
 def cancel() -> bool:
@@ -132,15 +162,24 @@ def cancel() -> bool:
 
 
 def _log(line: str) -> None:
+    global _touched
     with _lock:
         if _job is not None:
             _job["log"].append(f"{now_ist():%H:%M:%S}  {line}")
+            _touched = time.monotonic()
 
 
 def _update(**fields: Any) -> None:
+    """Change the job's fields -- its progress included (`phase`, `step`/`steps`, `day`)."""
+    global _touched
     with _lock:
         if _job is not None:
             _job.update(fields)
+            _touched = time.monotonic()
+
+
+def _on_day(day: datetime.date) -> None:
+    _update(day=day.isoformat())
 
 
 def _finish(status: str, *, message: Optional[str] = None, error: Optional[str] = None, **extra: Any) -> None:
@@ -157,7 +196,7 @@ def _finish(status: str, *, message: Optional[str] = None, error: Optional[str] 
 
 
 def _start(kind: str, target: Callable[[], None], **info: Any) -> dict[str, Any]:
-    global _job, _thread
+    global _job, _thread, _began, _touched
     with _lock:
         if _thread is not None and _thread.is_alive():
             raise Busy("A backtest job is already running. Wait for it, or stop it.")
@@ -172,8 +211,15 @@ def _start(kind: str, target: Callable[[], None], **info: Any) -> dict[str, Any]
             "error": None,
             "calls": 0,
             "log": collections.deque(maxlen=_LOG_LINES),
+            # Where the job is, for the Activity row's progress panel: `fetching`, `sizing`,
+            # `replaying` (setting `step` of `steps`, at session `day`) or `recording`.
+            "phase": "starting",
+            "step": None,
+            "steps": None,
+            "day": None,
             **info,
         }
+        _began = _touched = time.monotonic()
 
         def run() -> None:
             try:
@@ -345,8 +391,12 @@ def start_replay(
                 lots, scopes = sizing.get("lots"), sizing.get("scopes")
                 _log(sizing["describe"])
             _log(f"Replaying {service.BOT_LABELS[bot]}, {start} to {end}…")
+            _update(phase="replaying")
             pricer = ModelPricer() if model else RealPricer(OptionBook())
-            result = service.replay(bot, start=start, end=end, config=config, pricer=pricer, lots=lots, scopes=scopes)
+            result = service.replay(
+                bot, start=start, end=end, config=config, pricer=pricer, lots=lots, scopes=scopes,
+                on_day=_on_day,
+            )
             summary = result.summary()
             book = getattr(pricer, "book", None)
             if book is not None and book.needs:
@@ -378,6 +428,24 @@ def start_bot_backtest(
     period: str,
     from_date: Optional[datetime.date] = None,
     to_date: Optional[datetime.date] = None,
+) -> dict[str, Any]:
+    """Start a card backtest, keeping `reap_orphaned_rows` off its row until its job is running."""
+    global _opening
+    with _lock:
+        _opening += 1
+    try:
+        return _open_bot_backtest(user_id, bot, period, from_date, to_date)
+    finally:
+        with _lock:
+            _opening -= 1
+
+
+def _open_bot_backtest(
+    user_id: str,
+    bot: str,
+    period: str,
+    from_date: Optional[datetime.date],
+    to_date: Optional[datetime.date],
 ) -> dict[str, Any]:
     """The card's clock: one choice of period, and everything else follows (#35, #36).
 
@@ -508,6 +576,7 @@ def start_bot_backtest(
                         f"advisory calls, below this backtest's budget of {budget_left}, so the "
                         "fetch was planned for the smaller of the two."
                     )
+                _update(phase="fetching")
                 note(f"Fetching missing data, up to {remaining} calls…")
                 with _broker_scope(user_id):
                     fetcher = _fetcher(user_id)
@@ -545,6 +614,7 @@ def start_bot_backtest(
             if bot in ("fly", "expiry"):
                 from icici_breeze_backend.app.services.processor import processor
 
+                _update(phase="sizing")
                 note("Pricing one lot's margin at today's levels…")
                 with _broker_scope(user_id):
                     sizing = service.price_lots(bot, config, user_id, processor())
@@ -567,13 +637,14 @@ def start_bot_backtest(
                     f"before the first of {len(combos)} signal setting(s)" if n == 1
                     else f"after {n - 1} of {len(combos)} signal setting(s)"
                 )
+                _update(phase="replaying", step=n, steps=len(combos), day=None)
                 note(f"Replaying {service.BOT_LABELS[bot]} ({n}/{len(combos)}: {combo.label}), "
                      f"{start} to {end}, on real ICICI prices…")
                 try:
                     result = service.replay(
                         bot, start=start, end=end, config=combo.config, pricer=RealPricer(book),
                         lots=lots, scopes=scopes, holidays_=hol, readings_cache=readings_cache,
-                        record_decisions=True,
+                        record_decisions=True, on_day=_on_day,
                     )
                 except service.NoCachedData as exc:
                     raise service.NoCachedData(
@@ -587,6 +658,7 @@ def start_bot_backtest(
                 # Explicit: `result` is only rebound once the *next* replay returns, so without
                 # this the previous setting's whole result is still live throughout it.
                 del result
+            _update(phase="recording", day=None)
             if book.needs:
                 store.add_needs(book.needs)
             rows = [backtest_combos.comparison_row(c, s_, t) for c, s_, t in results]

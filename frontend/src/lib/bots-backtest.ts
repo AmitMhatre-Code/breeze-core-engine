@@ -73,10 +73,15 @@ export type BacktestStartBody = {
 
 export type BacktestJobStatus = {
   job: BacktestJob | null;
+  /** The container's memory, or null where it cannot be read (a dev machine). */
+  memory?: { held_bytes: number; cap_bytes: number; stop_at: number } | null;
   budget: { daily_calls: number; spent_today: number; remaining_today: number };
   market_hours_block: string | null;
   live: boolean;
 };
+
+/** One key for the single backtest job, shared by the card's dialog and Activity's progress panel. */
+export const BACKTEST_JOB_KEY = ["bots", "backtest", "job"] as const;
 
 export const startBotBacktest = (body: BacktestStartBody) =>
   apiClient.post<BacktestJob>("/bots/backtest/start", body);
@@ -104,7 +109,60 @@ export type BacktestJob = {
   to_date?: string;
   run_id?: string;
   period?: BacktestPeriod;
+  /** Where the job is. Absent from a server older than the progress panel. */
+  phase?: BacktestPhase;
+  step?: number | null;
+  steps?: number | null;
+  /** The session being replayed, `YYYY-MM-DD`; null while a setting loads its prices. */
+  day?: string | null;
+  elapsed_seconds?: number;
+  /** Seconds since the job last showed any sign of progress: a log line, a call, a new day. */
+  quiet_seconds?: number;
 };
+
+export type BacktestPhase = "starting" | "fetching" | "sizing" | "replaying" | "recording";
+
+/** What a running job is doing, in one line. */
+export function describePhase(job: Pick<BacktestJob, "phase" | "step" | "steps" | "day">): string {
+  switch (job.phase) {
+    case "fetching":
+      return "Fetching missing history from ICICI";
+    case "sizing":
+      return "Pricing one lot's margin at today's levels";
+    case "replaying": {
+      const setting =
+        job.step && job.steps && job.steps > 1 ? `Replaying setting ${job.step} of ${job.steps}` : "Replaying";
+      return job.day ? `${setting} · session ${job.day}` : `${setting} · loading prices and signal readings`;
+    }
+    case "recording":
+      return "Writing results and the audit trail";
+    default:
+      return "Starting";
+  }
+}
+
+/** `75` -> `1m 15s`; `3700` -> `1h 1m`. */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** Past this, a job that has said nothing is worth a closer look; not before. */
+export const QUIET_WARN_SECONDS = 180;
+
+/** How the progress panel reads the job's silence. `null` when it has spoken recently. */
+export function quietVerdict(quietSeconds: number, phase: BacktestPhase | undefined): string | null {
+  if (quietSeconds < QUIET_WARN_SECONDS) return null;
+  const quiet = formatDuration(quietSeconds);
+  if (phase === "fetching" || phase === "sizing") {
+    // Every ICICI call waits its turn behind live orders, and a throttle's cooldown runs for
+    // minutes (design-decisions #24), so a long pause here is often the queue, not a hang.
+    return `No update for ${quiet}. ICICI calls queue behind live orders and rate-limit cooldowns, which can last a few minutes.`;
+  }
+  return `No update for ${quiet}. The job is still alive; if this keeps climbing, stop it and run a shorter period.`;
+}
 
 export type BacktestSummary = Record<string, unknown>;
 

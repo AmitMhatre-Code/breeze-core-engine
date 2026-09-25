@@ -584,6 +584,30 @@ class TestOneClickBacktest:
         assert repo.has_terminal_run_today("u1", bot_type) is False
         assert repo.has_committed_run_today("u1", bot_type) is False
 
+    def test_a_running_backtest_says_where_it_is(self, env, audit, monkeypatch):
+        """The Activity row's progress panel: which setting, which session, and how long since
+        the job last showed any sign of life -- the difference between slow and stuck."""
+        _cache_trending(env["cache"])
+        monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
+        monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
+        seen: list[tuple[object, object, object]] = []
+        on_day = jobs._on_day
+
+        def watch(day):
+            on_day(day)
+            state = jobs.state()
+            seen.append((state["phase"], state["step"], state["day"]))
+
+        monkeypatch.setattr(jobs, "_on_day", watch)
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        state = _wait_for_job()
+        assert state["status"] == "completed", state
+
+        assert seen and all(phase == "replaying" and day == "2026-03-09" for phase, _s, day in seen)
+        assert [step for _p, step, _d in seen] == list(range(1, 13))
+        assert state["steps"] == 12 and state["phase"] == "recording"
+        assert state["elapsed_seconds"] >= state["quiet_seconds"] >= 0
+
     def test_a_trail_belongs_to_its_user_and_rejects_traversal(self, env, audit):
         name = audit.write_backtest_audit("u1", "momentum_long_scalper", "run-1", [{"event": "x"}])
         assert audit.resolve_backtest_file_for_user(name, "u1")
@@ -595,6 +619,32 @@ class TestOneClickBacktest:
         assert repo.reap_orphaned_backtests() == 1
         (row,) = [r for r in repo.list_runs("u1") if r.id == run_id]
         assert row.status == "failed" and row.reason_code == "backtest_interrupted"
+
+    def test_reading_the_log_closes_a_row_no_job_is_running(self, env):
+        """The log corrects itself when it is read, not only when someone opens a backtest."""
+        run_id = repo.start_run("u1", service.BOT_TYPES["momentum"], "backtest")
+        release = threading.Event()
+        jobs._start("test", lambda: release.wait(5))
+        assert jobs.reap_orphaned_rows() == 0, "a running job's row is not an orphan"
+        release.set()
+        _wait_for_job()
+        assert jobs.reap_orphaned_rows() == 1
+        (row,) = [r for r in repo.list_runs("u1") if r.id == run_id]
+        assert row.status == "failed" and row.reason_code == "backtest_interrupted"
+
+    def test_a_backtest_being_opened_is_not_reaped_before_its_job_starts(self, env, monkeypatch):
+        """Its row is `running` a moment before its thread is; a read in between must not close it."""
+        reaped: list[int] = []
+
+        def opening(user_id, bot, *a):
+            repo.start_run(user_id, service.BOT_TYPES[bot], "backtest")
+            reaped.append(jobs.reap_orphaned_rows())
+            return {}
+
+        monkeypatch.setattr(jobs, "_open_bot_backtest", opening)
+        jobs.start_bot_backtest("u1", "momentum", "last_day")
+        assert reaped == [0]
+        assert jobs._opening == 0
 
     def test_a_setting_is_written_to_the_zip_as_it_finishes_not_held_to_the_end(
         self, env, audit, monkeypatch

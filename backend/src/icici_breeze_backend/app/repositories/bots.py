@@ -462,8 +462,9 @@ def reap_orphaned_backtests() -> int:
             "UPDATE bot_runs SET status = 'failed', reason_code = 'backtest_interrupted', "
             "reason_text = ?, finished_at = ? WHERE status = 'running' AND trigger = 'backtest'",
             (
-                "Interrupted before it finished — the app restarted during the replay. Run it "
-                "again; anything it had fetched is kept.",
+                "Interrupted before it finished — the backtest stopped without recording a "
+                "result, usually because the app restarted. Run it again; anything it had "
+                "fetched is kept.",
                 ist_timestamp(),
             ),
         )

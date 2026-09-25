@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from icici_breeze_backend.app.domain.bots import ExpiryIndexWriterConfig
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
@@ -178,6 +178,7 @@ def run_expiry_backtest(
     lots: Union[int, Mapping[str, int]] = DEFAULT_LOTS,
     vix_by_day: Optional[dict[datetime.date, float]] = None,
     default_iv: float = 0.13,
+    on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> ExpiryResult:
     """`lots` is one count for every strategy, or a count per strategy -- the Backtest page
     sizes each from today's margin, so a strangle and a naked put get different counts."""
@@ -187,6 +188,8 @@ def run_expiry_backtest(
     for bar in spot_bars:
         spots_by_day.setdefault(bar.date, {})[bar.ts] = bar
     for day in days:
+        if on_day is not None:
+            on_day(day)
         result.expiry_days += 1
         spots = spots_by_day.get(day) or {}
         vix = (vix_by_day or {}).get(day)

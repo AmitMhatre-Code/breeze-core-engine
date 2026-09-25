@@ -31,7 +31,7 @@ from __future__ import annotations
 import datetime
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, ReasonCode
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
@@ -224,6 +224,7 @@ def run_backtest(
     pricer: Any = None,
     spot_bars: Sequence[HistCandle] = (),
     record_decisions: bool = False,
+    on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> BacktestResult:
     """Replay the bot's signal series, gates and ladder over historical futures bars.
 
@@ -252,6 +253,8 @@ def run_backtest(
     result.days = len(days)
 
     for day, day_bars in sorted(days.items()):
+        if on_day is not None:
+            on_day(day)
         if pricer.real and day not in spot_days:
             result.days_without_spot += 1
             continue

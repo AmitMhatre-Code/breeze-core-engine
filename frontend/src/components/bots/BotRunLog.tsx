@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
+import { BacktestProgress } from "@/components/bots/BacktestProgress";
 import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
 import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
@@ -191,12 +192,15 @@ function ExpandToggle({
  *  the bot, trigger, outcome and day's audit trail, so the member shows only its time and why. */
 function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  // A scalper session has cycles beneath it, and a backtest has the trades it replayed (#35);
-  // the writers resolve in one pass and have nothing to expand into.
+  // A scalper session has cycles beneath it, a finished backtest the trades it replayed (#35),
+  // and a running one its live progress; the writers resolve in one pass and have nothing to
+  // expand into.
   const isBacktest = run.trigger === "backtest";
   const backtestBot = isBacktest ? BACKTEST_SLUG[run.bot_type] : undefined;
+  const runningBacktest = isBacktest && run.status === "running";
   const expandable =
     (isScalper(run.bot_type) && run.trigger === "session") ||
+    runningBacktest ||
     (isBacktest && run.status === "completed" && Boolean(backtestBot));
   const feed = isBacktest ? null : describeFeed(run.detail);
   const title = BOT_META[run.bot_type]?.title ?? run.bot_type;
@@ -215,7 +219,7 @@ function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
         <td className="px-3 py-2 text-xs">
           {expandable ? (
             <ExpandToggle expanded={expanded} onToggle={toggle}>
-              {nested ? (isBacktest ? "Trades" : "Cycles") : title}
+              {nested ? (runningBacktest ? "Progress" : isBacktest ? "Trades" : "Cycles") : title}
             </ExpandToggle>
           ) : nested ? null : (
             title
@@ -234,14 +238,29 @@ function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
         </td>
         <td className="px-3 py-2">{nested ? null : <StatusBadge status={run.status} />}</td>
         <td className="px-3 py-2 text-xs">
-          <RunReason run={run} feed={feed} />
+          {runningBacktest ? (
+            /* A running backtest has no reason yet; what the user wants in its place is whether
+               it is getting anywhere, one click away. */
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={toggle}
+              className="text-[11px] text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              {expanded ? "Hide live progress" : "Show live progress"}
+            </button>
+          ) : (
+            <RunReason run={run} feed={feed} />
+          )}
           {showAudit && run.audit_log && <AuditLink href={run.audit_log} backtest={isBacktest} />}
         </td>
       </tr>
       {expandable && expanded && (
         <tr>
           <td colSpan={5} className="bg-panel2 p-0">
-            {isBacktest && backtestBot ? (
+            {runningBacktest ? (
+              <BacktestProgress runId={run.id} />
+            ) : isBacktest && backtestBot ? (
               <BacktestRunTrades runId={run.id} bot={backtestBot} />
             ) : (
               <CycleTable runId={run.id} />

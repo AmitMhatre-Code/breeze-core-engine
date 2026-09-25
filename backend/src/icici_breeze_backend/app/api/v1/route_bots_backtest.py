@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
+from icici_breeze_backend.app.core import memory
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.services.bots import backtest_jobs as jobs
 from icici_breeze_backend.app.services.bots import backtest_service as service
@@ -105,14 +106,18 @@ def start(req: StartRequest, ctx: RequestContext = Depends(get_request_context))
 def job(ctx: RequestContext = Depends(get_request_context)):
     """The running (or last) job, polled by the card while a backtest runs. Also closes any
     backtest row a restart orphaned, since only a live job may leave one `running`."""
-    from icici_breeze_backend.app.repositories import bots as repo
-
-    if not jobs.is_running():
-        repo.reap_orphaned_backtests()
+    jobs.reap_orphaned_rows()
     jobs.ensure_store()
     today = now_ist().date()
+    # The container's memory beside the job: a backtest that dies of it is killed outright, so
+    # the Activity row's progress panel shows how close it is to the point the job stops itself.
+    reading = memory.usage()
     return {
         "job": jobs.state(),
+        "memory": (
+            {"held_bytes": reading[0], "cap_bytes": reading[1], "stop_at": jobs.MEMORY_CEILING}
+            if reading else None
+        ),
         "budget": {
             "daily_calls": store.daily_call_budget(),
             "spent_today": store.calls_spent(today),

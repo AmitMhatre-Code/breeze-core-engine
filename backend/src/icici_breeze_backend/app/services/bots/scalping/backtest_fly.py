@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.domain.bots import IronFlyScalperConfig
@@ -178,6 +178,7 @@ def run_fly_backtest(
     filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
     vix_series: Optional[Sequence[tuple[float, float]]] = None,
     record_decisions: bool = False,
+    on_day: Optional[Callable[[datetime.date], None]] = None,
 ) -> FlyResult:
     """`filter_readings` / `vix_series` feed the entry filter, when it is switched on: the
     chosen signal series' replayed readings, or India VIX 1-minute bars."""
@@ -193,6 +194,8 @@ def run_fly_backtest(
     days = by_day(futures_bars)
     result.days = len(days)
     for day, day_bars in sorted(days.items()):
+        if on_day is not None:
+            on_day(day)
         if pricer.real and day not in spot_days:
             result.days_without_spot += 1
             continue

@@ -60,7 +60,7 @@ from icici_breeze_backend.app.domain.bots import (
 )
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.charges import load_charges, save_charges
-from icici_breeze_backend.app.services.bots import proposals
+from icici_breeze_backend.app.services.bots import backtest_jobs, proposals
 from icici_breeze_backend.app.services.bots.run_bundles import bundle_audit_log, bundle_runs
 from icici_breeze_backend.audit import bot_audit
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
@@ -207,6 +207,8 @@ async def list_runs(
     _validate_run_range(date_from, date_to)
     _validate_stamp(started_from, "started_from")
     _validate_stamp(started_to, "started_to")
+    # A backtest row is only `running` while its job is; read the log with that true.
+    backtest_jobs.reap_orphaned_rows()
     bounded = date_from is not None or (started_from is not None and started_to is not None)
     runs = repo.list_runs(
         ctx.user_id,
@@ -232,6 +234,7 @@ async def list_run_bundles(
     """The run log over a date range, already bundled. The Activity table uses this for ranges
     longer than a week, where shipping every row to the browser would be tens of thousands."""
     _validate_run_range(date_from, date_to)
+    backtest_jobs.reap_orphaned_rows()
     runs = repo.list_runs(
         ctx.user_id,
         limit=None,

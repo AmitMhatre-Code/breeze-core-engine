@@ -651,6 +651,10 @@ export function useBotRunBundles(range: DateRange | null) {
       }
       return apiClient.get<BotRunBundle[]>(`/bots/runs/bundles?${qs.toString()}`, signal);
     },
+    // While a backtest shows as running, keep checking: its row turns into the outcome --
+    // finished, failed, or interrupted -- on its own, without anyone opening it.
+    refetchInterval: (q) =>
+      q.state.data?.some((b) => b.trigger === "backtest" && b.status === "running") ? 5_000 : false,
   });
 }
 
