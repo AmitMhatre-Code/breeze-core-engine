@@ -282,6 +282,71 @@ class TestInventory:
         assert by_key["users_db"]["deletable"] is False
         assert by_key["span_archives"]["deletable"] is False
 
+    def _options(self, n_days: int = 20) -> None:
+        with sqlite3.connect(store.db_path()) as conn:
+            for d in range(1, n_days + 1):
+                for m in range(30):
+                    conn.execute(
+                        "INSERT INTO option_candles VALUES ('NIFTY','2026-09-29',25000,'call','1minute',?,1,1,1,1,1,1)",
+                        (f"2026-08-{d:02d} 10:{m:02d}:00",),
+                    )
+            conn.execute(
+                "INSERT INTO option_fetches VALUES ('NIFTY','2026-09-29',25000,'call','1minute',"
+                "'2026-08-01 09:15:00','2026-08-20 15:30:00',600,'x')"
+            )
+            conn.execute(  # an empty window is not coverage
+                "INSERT INTO option_fetches VALUES ('NIFTY','2026-09-29',26000,'put','1minute',"
+                "'2026-07-01 09:15:00','2026-07-02 15:30:00',0,'x')"
+            )
+
+    def test_option_candles_are_never_scanned(self, data, monkeypatch):
+        # On a deployment this table is ~2 GB with no index on ts: one scan in the request outlasted
+        # nginx's 60 s timeout. Only a one-row existence probe may touch it.
+        self._options()
+        seen: list[str] = []
+        real_connect = sqlite3.connect
+
+        def traced(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+            conn.set_trace_callback(seen.append)
+            return conn
+
+        monkeypatch.setattr(elements.sqlite3, "connect", traced)
+        elements.invalidate_cache_memo()
+        elements.cache_breakdown()
+        touching = [q for q in seen if "option_candles" in q]
+        assert touching == ["SELECT 1 FROM option_candles LIMIT 1"], touching
+
+    def test_option_candles_take_the_remainder_and_date_from_fetches(self, data):
+        self._options()
+        b = elements.cache_breakdown()
+        est = sum(t["bytes"] for t in b["tables"].values())
+        assert est + b["free_bytes"] == b["file_bytes"]
+        others = sum(t["bytes"] for k, t in b["tables"].items() if k != "option_candles")
+        assert b["tables"]["option_candles"]["bytes"] == b["file_bytes"] - b["free_bytes"] - others > 0
+        cov = b["coverage"]["option_candles"]
+        assert (cov["from"], cov["to"], cov["contracts"]) == ("2026-08-01", "2026-08-20", 1)
+
+    def test_concurrent_requests_share_one_measurement(self, data, monkeypatch):
+        import threading
+
+        calls = []
+        real = elements._cache_coverage
+
+        def slow(conn, present):
+            calls.append(1)
+            time.sleep(0.2)
+            return real(conn, present)
+
+        monkeypatch.setattr(elements, "_cache_coverage", slow)
+        elements.invalidate_cache_memo()
+        threads = [threading.Thread(target=elements.cache_breakdown) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(calls) == 1
+
     def test_cache_estimates_add_up_to_the_file(self, data):
         _bars("futures_candles", "NIFTY", [f"2026-08-{d:02d}" for d in range(1, 29)])
         b = elements.cache_breakdown()

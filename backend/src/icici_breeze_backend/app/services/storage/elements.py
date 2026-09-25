@@ -1,9 +1,10 @@
 """What occupies the data volume, element by element, and how each deletable one is deleted.
 
 Sizes are exact for whole files and directories. Inside `backtest.sqlite3` they are estimates:
-the SQLite this app ships cannot report per-table sizes (no `dbstat`), so the file's used pages
-are shared out by row count x sampled row width, indexes included, and marked approximate. The
-pages a delete freed but compaction has not yet returned are reported on their own line, so the
+the SQLite this app ships cannot report per-table sizes (no `dbstat`), so each small table is
+sized as row count x sampled row width, indexes included, and the option candles -- nearly all of
+the file, and far too big to scan in a request -- as what the file holds beyond them. The pages a
+delete freed but compaction has not yet returned are reported on their own line, so the
 estimates plus that line always add up to the real file size.
 
 Deletes are by IST calendar date, inclusive at both ends. What each date means:
@@ -26,6 +27,7 @@ from __future__ import annotations
 import datetime
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -136,68 +138,89 @@ def _span(days: list[datetime.date]) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 _cache_memo: dict[str, Any] = {}
+#: One measurement at a time: requests that arrive while one runs wait for it and reuse its
+#: answer instead of each starting their own.
+_cache_lock = threading.Lock()
+
+#: The table deliberately never scanned. On a deployment it is nearly all of the file (the cache
+#: trims itself at 2 GB) with no index on `ts`, so one COUNT or MIN/MAX over it on a t4g.small
+#: outlasted nginx's 60-second timeout -- and each abandoned request kept scanning. It is sized as
+#: what the file holds beyond everything else, and dated from the fetch log.
+_BULK_TABLE = "option_candles"
+#: A B-tree page is rarely full, so row bytes understate the pages a small table occupies.
+_PAGE_FILL = 1.25
 
 
-def _table_weights(conn: sqlite3.Connection) -> dict[str, tuple[int, float]]:
-    """table -> (rows, estimated bytes per row including its index entries)."""
-    present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    out: dict[str, tuple[int, float]] = {}
-    for table, indexes in _CACHE_TABLES.items():
-        if table not in present:
-            continue
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
-        rows = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
-        if not rows:
-            out[table] = (0, 0.0)
-            continue
+def _table_rows(conn: sqlite3.Connection, table: str, indexes: list[tuple[str, ...]]) -> tuple[int, float]:
+    """(rows, estimated bytes per row including its index entries) for one small table."""
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    rows = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
+    if not rows:
+        return 0, 0.0
 
-        def width(names: tuple[str, ...] | list[str]) -> float:
-            expr = " + ".join(f'COALESCE(LENGTH("{c}"), 0)' for c in names) or "0"
-            value = conn.execute(
-                f"SELECT AVG({expr}) FROM (SELECT * FROM {table} LIMIT {_SAMPLE_ROWS})"
-            ).fetchone()[0]
-            return float(value or 0.0)
+    def width(names: tuple[str, ...] | list[str]) -> float:
+        expr = " + ".join(f'COALESCE(LENGTH("{c}"), 0)' for c in names) or "0"
+        value = conn.execute(
+            f"SELECT AVG({expr}) FROM (SELECT * FROM {table} LIMIT {_SAMPLE_ROWS})"
+        ).fetchone()[0]
+        return float(value or 0.0)
 
-        per_row = width(cols) + _ROW_OVERHEAD
-        per_row += sum(width(idx) + _INDEX_OVERHEAD for idx in indexes)
-        out[table] = (rows, per_row)
-    return out
+    per_row = width(cols) + _ROW_OVERHEAD
+    per_row += sum(width(idx) + _INDEX_OVERHEAD for idx in indexes)
+    return rows, per_row * _PAGE_FILL
 
 
 def cache_breakdown(path: Optional[str] = None) -> dict[str, Any]:
     """Estimated bytes per table, the free pages, and each table's coverage.
 
-    Memoised on the file's size and mtime: the option-bar coverage is a full scan of the biggest
-    table, and the screen is reopened far more often than the cache changes."""
+    Never reads the option candles row by row (see `_BULK_TABLE`): every query here is bounded
+    by the small tables. Memoised on the file's size and mtime all the same, so reopening the
+    screen costs nothing until the cache changes."""
     path = path or cache_path()
     if not os.path.exists(path):
         return {"file_bytes": 0, "free_bytes": 0, "tables": {}, "coverage": {}}
-    stamp = (path, _file_bytes(path), os.path.getmtime(path))
-    if _cache_memo.get("stamp") == stamp:
-        return _cache_memo["value"]
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30) as conn:
-        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
-        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
-        free_pages = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
-        weights = _table_weights(conn)
-        coverage = _cache_coverage(conn, set(weights))
-    file_bytes = _file_bytes(path)
-    free_bytes = free_pages * page_size
-    used = max(0, file_bytes - free_bytes)
-    total_weight = sum(rows * per_row for rows, per_row in weights.values()) or 1.0
-    tables = {
-        t: {"rows": rows, "bytes": int(used * (rows * per_row) / total_weight)}
-        for t, (rows, per_row) in weights.items()
-    }
-    value = {
-        "file_bytes": file_bytes,
-        "free_bytes": free_bytes,
-        "page_bytes": page_size * page_count,
-        "tables": tables,
-        "coverage": coverage,
-    }
-    _cache_memo.update(stamp=stamp, value=value)
-    return value
+    with _cache_lock:
+        stamp = (path, _file_bytes(path), os.path.getmtime(path))
+        if _cache_memo.get("stamp") == stamp:
+            return _cache_memo["value"]
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30) as conn:
+            page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+            page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+            free_pages = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+            present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            small = {
+                t: _table_rows(conn, t, idx) for t, idx in _CACHE_TABLES.items()
+                if t in present and t != _BULK_TABLE
+            }
+            bulk_has_rows = _BULK_TABLE in present and conn.execute(
+                f"SELECT 1 FROM {_BULK_TABLE} LIMIT 1"
+            ).fetchone() is not None
+            coverage = _cache_coverage(conn, present)
+        file_bytes = _file_bytes(path)
+        free_bytes = free_pages * page_size
+        used = max(0, file_bytes - free_bytes)
+        estimates = {t: rows * per_row for t, (rows, per_row) in small.items()}
+        tables: dict[str, dict[str, int]]
+        if bulk_has_rows:
+            # The small tables' estimates stand; the option candles are what is left. If the
+            # estimates somehow exceed the file, they are scaled down to it rather than going negative.
+            scale = min(1.0, used / (sum(estimates.values()) or 1.0))
+            tables = {t: {"bytes": int(b * scale)} for t, b in estimates.items()}
+            tables[_BULK_TABLE] = {"bytes": used - sum(v["bytes"] for v in tables.values())}
+        else:
+            total = sum(estimates.values()) or 1.0
+            tables = {t: {"bytes": int(used * b / total)} for t, b in estimates.items()}
+            if _BULK_TABLE in present:
+                tables[_BULK_TABLE] = {"bytes": 0}
+        value = {
+            "file_bytes": file_bytes,
+            "free_bytes": free_bytes,
+            "page_bytes": page_size * page_count,
+            "tables": tables,
+            "coverage": coverage,
+        }
+        _cache_memo.update(stamp=stamp, value=value)
+        return value
 
 
 def _cache_coverage(conn: sqlite3.Connection, present: set[str]) -> dict[str, Any]:
@@ -215,18 +238,21 @@ def _cache_coverage(conn: sqlite3.Connection, present: set[str]) -> dict[str, An
     if "daily_vix" in present:
         first, last, days = conn.execute("SELECT MIN(date), MAX(date), COUNT(*) FROM daily_vix").fetchone()
         out["daily_vix"] = {"from": first, "to": last, "days": int(days or 0)}
-    if "option_candles" in present:
-        first, last, days, e_first, e_last = conn.execute(
-            "SELECT MIN(ts), MAX(ts), COUNT(DISTINCT substr(ts, 1, 10)), MIN(expiry), MAX(expiry) "
-            "FROM option_candles"
+    if "option_fetches" in present:
+        # Dated from the fetch log, not the bars (see `_BULK_TABLE`). Windows that came back empty
+        # are left out. A date-range delete removes the fetch records it overlaps, so this can read
+        # a little narrower than the bars left behind -- never wider.
+        first, last, e_first, e_last = conn.execute(
+            "SELECT MIN(start_ts), MAX(end_ts), MIN(expiry), MAX(expiry) FROM option_fetches WHERE rows > 0"
         ).fetchone()
         contracts = conn.execute(
-            'SELECT COUNT(*) FROM (SELECT DISTINCT stock_code, expiry, strike, "right" FROM option_candles)'
+            'SELECT COUNT(*) FROM (SELECT DISTINCT stock_code, expiry, strike, "right" '
+            "FROM option_fetches WHERE rows > 0)"
         ).fetchone()[0]
         out["option_candles"] = {
             "from": str(first)[:10] if first else None,
             "to": str(last)[:10] if last else None,
-            "days": int(days or 0),
+            "days": None,
             "expiry_from": e_first,
             "expiry_to": e_last,
             "contracts": int(contracts or 0),
@@ -377,9 +403,10 @@ def inventory() -> dict[str, Any]:
     elements.append(_element(
         "option_bars", "Option candles", "Backtest history", bytes_=tbytes("option_candles"),
         approx=True, deletable=True, coverage=opt, count=opt.get("contracts"), count_unit="contracts",
-        description="Option contract bars fetched for bot backtests. Deleting a date range also "
-                    "forgets which windows were fetched there, so a later backtest fetches them again. "
-                    "The cache also trims itself, oldest expiry first, past 2 GB.",
+        description="Option contract bars fetched for bot backtests; the dates are those of the "
+                    "windows fetched. Deleting a date range also forgets which windows were fetched "
+                    "there, so a later backtest fetches them again. The cache also trims itself, "
+                    "oldest expiry first, past 2 GB.",
     ))
 
     # --- bot backtest runs: rows in the cache + their audit trails
