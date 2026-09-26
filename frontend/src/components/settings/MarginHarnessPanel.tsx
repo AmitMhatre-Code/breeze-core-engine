@@ -9,6 +9,7 @@ import {
   downloadMarginHarnessRun,
   fetchMarginHarnessRuns,
   startMarginHarnessRun,
+  type MarginHarnessErrorStats,
   type MarginHarnessRun,
 } from "@/lib/settings/margin-harness";
 
@@ -26,6 +27,40 @@ const ELM_METHOD_LABELS: Record<string, string> = {
   exchange_prescribed: "Exchange: 2% / 3.5%",
   exchange_prescribed_no_expiry_waiver: "Exchange, no expiry waiver",
 };
+
+const APP_GROUP_LABELS: Record<string, string> = {
+  nse_index: "NSE index",
+  bse_index: "BSE index",
+  stock: "Stocks",
+  short_calls: "Short calls",
+  short_puts: "Short puts",
+  short_both_sides: "Both sides",
+};
+
+function statsLine(s: MarginHarnessErrorStats | undefined): string {
+  if (!s || !s.cases || s.mean_abs_pct == null) return "—";
+  const bias = s.mean_pct ?? 0;
+  return `${s.mean_abs_pct.toFixed(2)}% mean, ${s.median_abs_pct?.toFixed(2)}% median, bias ${bias > 0 ? "+" : ""}${bias.toFixed(2)}% (n=${s.cases})`;
+}
+
+/** The app's own error (SPAN file + ICICI add-on), with the per-group breakdown as a tooltip. */
+function appCell(run: MarginHarnessRun): { text: string; title: string } {
+  const app = run.summary?.app_method;
+  if (!app) return { text: "—", title: "Run predates app-margin scoring." };
+  const overall = app.overall;
+  if (!overall?.cases || overall.mean_abs_pct == null) {
+    return { text: "—", title: app.unavailable_reasons.join(" ") || "No case could be scored." };
+  }
+  const lines = [
+    `Overall: ${statsLine(overall)}`,
+    ...Object.entries(APP_GROUP_LABELS).map(([k, label]) => `${label}: ${statsLine(app.by_group[k])}`),
+    `Add-on ${app.addon_versions.join(", ")}`,
+  ];
+  return {
+    text: `${overall.mean_abs_pct.toFixed(2)}% / ${overall.median_abs_pct?.toFixed(2)}%`,
+    title: lines.join("\n"),
+  };
+}
 
 function bestLabel(run: MarginHarnessRun): string {
   const best = run.summary?.best_combination;
@@ -79,9 +114,9 @@ export function MarginHarnessPanel() {
       <div>
         <h3 className="text-heading font-bold text-foreground">Margin comparison harness</h3>
         <p className="mt-1 text-table leading-relaxed text-muted">
-          Prices a fixed set of structures with ICICI&apos;s margin calculator, then with every
-          SPAN and exposure-margin method this app contains, and ranks them by how close each
-          lands. Needs live broker calls, so it only works on the production instance whose IP
+          Prices a fixed set of structures with ICICI&apos;s margin calculator, then with what
+          this app charges (SPAN file plus the portal&apos;s ICICI add-on) and with every other
+          SPAN and exposure-margin method it contains, and ranks them by how close each lands. Needs live broker calls, so it only works on the production instance whose IP
           is registered with ICICI. A run costs roughly one broker call per case — about 1% of
           the daily quota — and is classified advisory, so it sheds before order placement does.
         </p>
@@ -139,8 +174,14 @@ export function MarginHarnessPanel() {
                 <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Status</th>
                 <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Cases</th>
                 <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Calls</th>
-                <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Closest method</th>
-                <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Mean err</th>
+                <th
+                  className="px-2.5 py-2 text-right font-semibold whitespace-nowrap"
+                  title="SPAN file + ICICI add-on, as the app charges: mean / median absolute error against ICICI. Hover a row for the breakdown."
+                >
+                  App err (mean / median)
+                </th>
+                <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Closest other method</th>
+                <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Its mean err</th>
                 <th className="px-2.5 py-2 font-semibold whitespace-nowrap">JSON</th>
               </tr>
             </thead>
@@ -176,6 +217,12 @@ export function MarginHarnessPanel() {
                   </td>
                   <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-muted">
                     {run.broker_calls}
+                  </td>
+                  <td
+                    className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-foreground"
+                    title={appCell(run).title}
+                  >
+                    {appCell(run).text}
                   </td>
                   <td className="px-2.5 py-2 text-foreground">{bestLabel(run)}</td>
                   <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-foreground">

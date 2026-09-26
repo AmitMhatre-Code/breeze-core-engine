@@ -22,7 +22,28 @@ export type MarginHarnessMarginism = {
   unavailable_reasons: string[];
 };
 
+export type MarginHarnessErrorStats = {
+  cases: number;
+  mean_abs_pct?: number;
+  median_abs_pct?: number;
+  p90_abs_pct?: number;
+  max_abs_pct?: number;
+  /** Signed mean: negative means the app charges less than ICICI. */
+  mean_pct?: number;
+};
+
+/** What the app itself charges -- SPAN file + ICICI add-on -- against ICICI (schema 2+). */
+export type MarginHarnessAppMethod = {
+  id: string;
+  label: string;
+  addon_versions: string[];
+  overall: MarginHarnessErrorStats;
+  by_group: Record<string, MarginHarnessErrorStats>;
+  unavailable_reasons: string[];
+};
+
 export type MarginHarnessSummary = {
+  app_method?: MarginHarnessAppMethod | null;
   ranking?: MarginHarnessRanking[];
   best_combination?: MarginHarnessRanking | null;
   icici_non_span_seen_non_zero?: boolean;

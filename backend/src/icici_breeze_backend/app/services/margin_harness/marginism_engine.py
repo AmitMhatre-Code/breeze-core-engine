@@ -23,6 +23,7 @@ import threading
 from typing import Any
 
 from icici_breeze_backend.app.services.nsccl_baseline import (
+    BSE_SPAN_PF_CODE_TO_SHORT_NAME,
     find_span_archive,
     open_span_xml_payload,
 )
@@ -94,6 +95,11 @@ def evaluate(case: HarnessCase, *, source_date: str | None, archive_name: str | 
     # The SPAN file names an underlying by its exchange code (BANKNIFTY), the case by ICICI's
     # ShortName (CNXBAN). Hand the parser every spelling the registry knows and let the file pick.
     candidates = tuple(aliases_for(case.stock_code, case.exchange_code))
+    # BSE's file names its option portfolios by pfCode (BSXOPT for SENSEX), which no registry
+    # spelling matches -- without this every SENSEX case came back "none of ... present".
+    candidates += tuple(
+        pf for pf, short in BSE_SPAN_PF_CODE_TO_SHORT_NAME.items() if short == case.stock_code
+    )
     if not candidates:
         return {"available": False, "reason": f"no known aliases for {case.stock_code}"}
 

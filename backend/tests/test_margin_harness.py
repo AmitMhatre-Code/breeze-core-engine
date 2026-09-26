@@ -332,3 +332,118 @@ def test_run_route_reports_a_missing_icici_session_instead_of_starting():
         else:
             raise AssertionError("expected a 503")
     start.assert_not_called()
+
+
+def _addon_rates():
+    from icici_breeze_backend.app.services.margin_addon import parse_rates
+
+    return parse_rates(
+        {
+            "version": "t1",
+            "index_rate": 0.02,
+            "index_deep_otm_rate": 0.03,
+            "index_deep_otm_threshold": 0.10,
+            "stock_rate": 0.039,
+            "stock_deep_otm_rate": 0.055,
+            "stock_deep_otm_threshold": 0.30,
+            "expiry_day_extra_rate": 0.02,
+        }
+    )
+
+
+def _nifty_case(right="Call", action="Sell", strike=23150.0):
+    from icici_breeze_backend.app.services.margin_harness.cases import CaseLeg, HarnessCase
+
+    return HarnessCase(
+        id=f"NIFTY:{right}:{action}",
+        label="t",
+        structure="t",
+        source="generated",
+        stock_code="NIFTY",
+        exchange_code="NFO",
+        expiry_date="29-Sep-2099",
+        is_index=True,
+        is_expiry_day=False,
+        lot_size=65,
+        spot_price=23140.5,
+        spot_source="span_file:test",
+        som_rate=0.0,
+        legs=[
+            CaseLeg(
+                stock_code="NIFTY",
+                exchange_code="NFO",
+                expiry_date="29-Sep-2099",
+                strike_price=strike,
+                right=right,
+                action=action,
+                quantity=65,
+            )
+        ],
+    )
+
+
+def test_app_margin_is_span_file_plus_the_icici_addon():
+    """Harness run 3250adaf: NIFTY 23150 CE short, SPAN 139,876.10 vs ICICI 170,501.85."""
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    span = {"som_floor_minus_nov_file": {"found": True, "span_margin": 139876.10}}
+    out = runner._app_margin(_nifty_case(), span, 170501.85, _addon_rates())
+    assert out["available"] and out["icici_addon"] == pytest.approx(30082.65, abs=0.01)
+    assert out["total"] == pytest.approx(169958.75, abs=0.01)
+    assert out["pct_vs_icici_total"] == pytest.approx(-0.318, abs=0.002)
+    assert out["short_sides"] == "calls" and out["icici_addon_version"] == "t1"
+
+
+def test_app_margin_says_why_when_the_addon_is_missing():
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    span = {"som_floor_minus_nov_file": {"found": True, "span_margin": 1.0}}
+    out = runner._app_margin(_nifty_case(), span, 2.0, None)
+    assert out["available"] is False and "portal" in out["reason"]
+
+
+def test_app_method_summary_skips_long_only_and_splits_by_side():
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    def res(case, pct, sides):
+        return {
+            "case": case.as_dict(),
+            "app_margin": {
+                "available": True,
+                "icici_addon_version": "t1",
+                "pct_vs_icici_total": pct,
+                "short_sides": sides,
+            },
+        }
+
+    results = [
+        res(_nifty_case("Call"), -1.0, "calls"),
+        res(_nifty_case("Put", strike=22000.0), -3.0, "puts"),
+        res(_nifty_case("Call", "Buy"), 0.0, "long_only"),
+    ]
+    s = runner._summarise_app_method(results)
+    assert s["overall"]["cases"] == 2
+    assert s["overall"]["mean_abs_pct"] == 2.0 and s["overall"]["mean_pct"] == -2.0
+    assert s["by_group"]["short_puts"]["mean_abs_pct"] == 3.0
+    assert s["by_group"]["nse_index"]["cases"] == 2 and s["by_group"]["stock"]["cases"] == 0
+    assert s["addon_versions"] == ["t1"]
+
+
+def test_marginism_is_offered_the_bse_pf_code_for_sensex(monkeypatch):
+    """BSE's file names SENSEX options BSXOPT; the registry spellings alone never matched."""
+    from icici_breeze_backend.app.services.margin_harness import marginism_engine as me
+
+    case = _nifty_case()
+    case = case.__class__(**{**case.__dict__, "stock_code": "BSESEN", "exchange_code": "BFO"})
+    seen = {}
+
+    def fake_load(path, name, candidates):
+        seen["candidates"] = candidates
+        raise LookupError("stop here")
+
+    monkeypatch.setattr(me, "find_span_archive", lambda d, a: ("/x/BSERISK20260928-00.ZIP", True))
+    monkeypatch.setattr(me, "aliases_for", lambda code, ex: ["BSESEN", "SENSEX"])
+    monkeypatch.setattr(me, "_load", fake_load)
+    monkeypatch.setattr(me, "_engines", {})
+    me.evaluate(case, source_date="20260928", archive_name="BSERISK20260928-00.ZIP")
+    assert "BSXOPT" in seen["candidates"]

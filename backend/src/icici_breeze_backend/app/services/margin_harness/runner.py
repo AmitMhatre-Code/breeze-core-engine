@@ -39,7 +39,12 @@ _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
 
-HARNESS_SCHEMA_VERSION = 1
+# 2: adds `app_margin` per case and `summary.app_method` -- the SPAN-file figure plus the
+# portal's ICICI add-on, i.e. what the app itself charges (design-decisions #48).
+HARNESS_SCHEMA_VERSION = 2
+
+#: The SPAN method the app's margin paths use (portfolio scan, file NOV, SOM floor).
+APP_SPAN_METHOD = "som_floor_minus_nov_file"
 
 
 def _as_float(raw: Any) -> float | None:
@@ -115,8 +120,81 @@ def _time_years(case: HarnessCase) -> float | None:
     return max(0.0, (expiry - now_ist().date()).days / 365.0)
 
 
-def _evaluate_case(case: HarnessCase, icici: dict[str, Any]) -> dict[str, Any]:
-    """Every SPAN method × ELM method for one case, each scored against ICICI's answer."""
+def _short_sides(case: HarnessCase) -> str:
+    rights = {str(l.right).strip().lower()[:1] for l in case.legs if str(l.action).lower() == "sell"}
+    if not rights:
+        return "long_only"
+    if rights == {"c"}:
+        return "calls"
+    if rights == {"p"}:
+        return "puts"
+    return "both"
+
+
+def _app_margin(
+    case: HarnessCase,
+    span_results: dict[str, Any],
+    reference_total: float | None,
+    addon_rates: Any,
+) -> dict[str, Any]:
+    """What the app charges for this case: SPAN from the file plus the ICICI add-on.
+
+    Priced with the add-on rates the deployment held when the run started, off the SPAN file's
+    own underlying price -- the same inputs margin_addon.addon_for_underlying uses. Not part of
+    `combinations`: the add-on is not an exposure-margin model, and keeping it apart leaves the
+    method ranking comparable with every earlier export.
+    """
+    from icici_breeze_backend.app.services.margin_addon import compute_addon
+
+    if addon_rates is None:
+        return {
+            "available": False,
+            "reason": "No ICICI add-on received from the portal in the last 24 hours; the app is pricing from ICICI.",
+        }
+    span_out = span_results.get(APP_SPAN_METHOD) or {}
+    if not span_out.get("found"):
+        return {"available": False, "reason": "SPAN file could not price this case."}
+    spot = float(case.spot_price or 0.0)
+    if spot <= 0:
+        return {"available": False, "reason": "No underlying price in the SPAN file."}
+    addon = compute_addon(
+        addon_rates,
+        [
+            {
+                "strike_price": l.strike_price,
+                "right": l.right,
+                "action": l.action,
+                "quantity": l.quantity,
+                "expiry_date": l.expiry_date,
+            }
+            for l in case.legs
+        ],
+        spot=spot,
+        is_index=case.is_index,
+    )
+    total = round(span_out["span_margin"] + addon, 2)
+    out: dict[str, Any] = {
+        "available": True,
+        "span_method": APP_SPAN_METHOD,
+        "span_file_margin": span_out["span_margin"],
+        "icici_addon": addon,
+        "icici_addon_version": addon_rates.version,
+        "total": total,
+        "short_sides": _short_sides(case),
+    }
+    if reference_total is not None:
+        diff = total - reference_total
+        out["diff_vs_icici_total"] = round(diff, 2)
+        out["abs_diff_vs_icici_total"] = round(abs(diff), 2)
+        out["pct_vs_icici_total"] = (
+            round(100.0 * diff / reference_total, 3) if reference_total else None
+        )
+    return out
+
+
+def _evaluate_case(case: HarnessCase, icici: dict[str, Any], addon_rates: Any = None) -> dict[str, Any]:
+    """Every SPAN method × ELM method for one case, each scored against ICICI's answer, plus
+    what the app itself charges (`app_margin`)."""
     sheet = get_span_baseline_sheet(
         case.exchange_code, case.stock_code, case.expiry_date, include_risk_arrays=True
     )
@@ -215,6 +293,7 @@ def _evaluate_case(case: HarnessCase, icici: dict[str, Any]) -> dict[str, Any]:
         "elm_methods": elm_results,
         "combinations": combinations,
         "closest_combination": best,
+        "app_margin": _app_margin(case, span_results, reference_total, addon_rates),
     }
 
 
@@ -263,12 +342,75 @@ def _summarise(results: list[dict[str, Any]]) -> dict[str, Any]:
         if r.get("icici", {}).get("ok") and r["icici"].get("non_span_margin_required") is not None
     ]
     return {
+        # The headline: how far what the app charges sits from ICICI (design-decisions #48).
+        "app_method": _summarise_app_method(results),
         "ranking": ranking[:12],
         "best_combination": ranking[0] if ranking else None,
         # The headline question: does ICICI break exposure margin out at all?
         "icici_non_span_seen_non_zero": any(v for v in non_span_values),
         "icici_non_span_sample_count": len(non_span_values),
         "marginism": _summarise_marginism(results),
+    }
+
+
+def _error_stats(pcts: list[float]) -> dict[str, Any]:
+    """Mean/median/p90 of |error| plus signed mean (bias): one outlier must not be the story."""
+    if not pcts:
+        return {"cases": 0}
+    abs_sorted = sorted(abs(p) for p in pcts)
+    n = len(abs_sorted)
+    p90 = abs_sorted[min(n - 1, int(round(0.9 * (n - 1))))]
+    return {
+        "cases": n,
+        "mean_abs_pct": round(sum(abs_sorted) / n, 3),
+        "median_abs_pct": round(
+            abs_sorted[n // 2] if n % 2 else (abs_sorted[n // 2 - 1] + abs_sorted[n // 2]) / 2, 3
+        ),
+        "p90_abs_pct": round(p90, 3),
+        "max_abs_pct": round(abs_sorted[-1], 3),
+        "mean_pct": round(sum(pcts) / n, 3),
+    }
+
+
+def _summarise_app_method(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """SPAN file + ICICI add-on against ICICI, overall and by index/stock, exchange and side.
+
+    Long-only cases are left out: ICICI and the SPAN file both charge 0 there, so they carry
+    no percentage error and would only dilute the average.
+    """
+    rows = []
+    versions: set[str] = set()
+    unavailable: set[str] = set()
+    for res in results:
+        app = res.get("app_margin") or {}
+        if not app.get("available"):
+            if app.get("reason"):
+                unavailable.add(str(app["reason"]))
+            continue
+        versions.add(str(app.get("icici_addon_version")))
+        if app.get("pct_vs_icici_total") is None or app.get("short_sides") == "long_only":
+            continue
+        case = res.get("case") or {}
+        rows.append((case, app["short_sides"], float(app["pct_vs_icici_total"])))
+
+    def group(pred) -> dict[str, Any]:
+        return _error_stats([p for case, sides, p in rows if pred(case, sides)])
+
+    return {
+        "id": "span_file_plus_icici_addon",
+        "label": f"SPAN file ({APP_SPAN_METHOD}) + ICICI add-on",
+        "addon_versions": sorted(versions),
+        "overall": group(lambda c, s: True),
+        "by_group": {
+            "index": group(lambda c, s: c.get("is_index")),
+            "stock": group(lambda c, s: not c.get("is_index")),
+            "nse_index": group(lambda c, s: c.get("is_index") and c.get("exchange_code") == cfg.NFO),
+            "bse_index": group(lambda c, s: c.get("is_index") and c.get("exchange_code") == cfg.BFO),
+            "short_calls": group(lambda c, s: s == "calls"),
+            "short_puts": group(lambda c, s: s == "puts"),
+            "short_both_sides": group(lambda c, s: s == "both"),
+        },
+        "unavailable_reasons": sorted(unavailable),
     }
 
 
@@ -378,6 +520,12 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
             ),
         }
 
+    # The add-on the app is using right now; recorded so the export says which rates were scored.
+    from icici_breeze_backend.app.services import margin_addon
+
+    addon_rates = margin_addon.get_active_rates()
+    addon_status = margin_addon.status()
+
     store.create_run(run_id, user_id, started_at, len(cases))
     results: list[dict[str, Any]] = []
     priced = failed = 0
@@ -402,7 +550,7 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
                 priced += 1
             else:
                 failed += 1
-            results.append(_evaluate_case(case, icici))
+            results.append(_evaluate_case(case, icici, addon_rates))
             store.update_progress(
                 run_id, priced_count=priced, failed_count=failed, broker_calls=broker_calls
             )
@@ -434,6 +582,7 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
         "broker_calls": broker_calls,
         # Embedded so an exported file stays interpretable after the code has moved on.
         "method_catalog": method_catalog(),
+        "icici_addon": addon_status,
         "summary": summary,
         "results": results,
     }
