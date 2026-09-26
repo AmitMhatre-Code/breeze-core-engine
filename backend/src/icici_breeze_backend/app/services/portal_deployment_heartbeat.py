@@ -256,6 +256,12 @@ async def post_heartbeat() -> dict | None:
                 record_portal_verify_failure()
                 return None
             update_from_verified_policy(policy, source="heartbeat")
+            try:
+                from icici_breeze_backend.app.services.margin_addon import record_from_policy
+
+                record_from_policy(policy)
+            except Exception:  # noqa: BLE001 -- margin rates must never fail a heartbeat
+                logger.warning("portal heartbeat: margin add-on not recorded", exc_info=True)
             return policy
     except httpx.HTTPError as exc:
         logger.warning("portal heartbeat request failed: %s", exc)

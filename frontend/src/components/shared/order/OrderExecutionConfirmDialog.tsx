@@ -27,6 +27,7 @@ import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   MarginApiResponse,
+  MarginScope,
   OptionRight,
   OrderSide,
   QuoteMeta,
@@ -84,6 +85,8 @@ export type OrderExecutionConfirmDialogProps = {
   /** Use host page chunk state instead of internal defaults (Strategy Builder). */
   controlledChunk?: ControlledChunkProps;
   quoteMeta?: QuoteMeta | null;
+  /** Which "use the SPAN file" setting governs the margin shown. Defaults to "app". */
+  marginScope?: MarginScope;
 };
 
 function parseNum(v: unknown): number {
@@ -116,6 +119,7 @@ export function OrderExecutionConfirmDialog({
   productType = "Options",
   controlledChunk,
   quoteMeta = null,
+  marginScope = "app",
 }: OrderExecutionConfirmDialogProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -295,9 +299,11 @@ export function OrderExecutionConfirmDialog({
       exchangeCode,
       expiryDisplay,
       marginLegKey,
+      marginScope,
     ],
     queryFn: () =>
       apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
+        margin_scope: marginScope,
         legs: pricedLegs.map((p) => ({
           stock_code: stockCode,
           exchange_code: exchangeCode,

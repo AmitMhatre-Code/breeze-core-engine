@@ -610,17 +610,18 @@ class processor():
         return result
 
     def get_strategy_builder_margin_source(self, user_id: str) -> str:
+        """Effective source for the Strategy Builder page (see margin_source_prefs)."""
+        return self.get_margin_source(user_id, "strategy_builder")
+
+    def get_margin_source(self, user_id: str, scope: str) -> str:
+        """Effective margin source for one scope: the user's choice when the portal's ICICI
+        add-on is current, else ICICI's margin_calculator (design-decisions #48)."""
+        from icici_breeze_backend.app.services.margin_source_prefs import effective_margin_source
+
         try:
-            with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-                row = conn.execute(
-                    "SELECT strategy_builder_margin_source FROM user_account WHERE user_id = ?",
-                    (user_id,),
-                ).fetchone()
-            source = str(row[0]).strip().lower() if row and row[0] else MARGIN_SOURCE_BREEZE
-            if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
-                return MARGIN_SOURCE_BREEZE
-            return source
+            return effective_margin_source(user_id, scope)
         except Exception:
+            _logger.warning("margin source unreadable for %s/%s; using ICICI", user_id, scope, exc_info=True)
             return MARGIN_SOURCE_BREEZE
 
     def _portfolio_baseline_span_margin(
@@ -697,19 +698,53 @@ class processor():
         here. Left standalone-only for now (never worse than today)."""
         warnings: list[dict] = []
         if margin_source == MARGIN_SOURCE_EXCHANGE:
-            baseline = resolve_exchange_baseline_margin(
-                exchange_code=exchange_code,
-                stock_code=stock_code,
-                expiry_display=expiry_display,
-                strike_price=parse_strike(strike_price) or 0,
-                right=right,
-                quantity=int(quantity),
+            from icici_breeze_backend.app.services.margin_addon import (
+                addon_for_underlying,
+                get_active_rates,
             )
-            if baseline.get("found"):
+
+            rates = get_active_rates()
+            baseline = (
+                resolve_exchange_baseline_margin(
+                    exchange_code=exchange_code,
+                    stock_code=stock_code,
+                    expiry_display=expiry_display,
+                    strike_price=parse_strike(strike_price) or 0,
+                    right=right,
+                    quantity=int(quantity),
+                )
+                if rates is not None
+                else {"found": False}
+            )
+            addon = (
+                addon_for_underlying(
+                    exchange_code,
+                    stock_code,
+                    [
+                        {
+                            "strike_price": parse_strike(strike_price) or 0,
+                            "right": right,
+                            "action": action,
+                            "quantity": int(quantity),
+                            "expiry_date": expiry_display,
+                        }
+                    ],
+                    rates=rates,
+                )
+                if baseline.get("found") and rates is not None
+                else None
+            )
+            if baseline.get("found") and addon is not None:
+                span_file = float(baseline["span_margin_required"])
                 return (
                     {
                         "Status": 200,
-                        "Success": {"span_margin_required": baseline["span_margin_required"]},
+                        "Success": {
+                            "span_margin_required": round(span_file + addon["amount"], 2),
+                            "span_file_margin": round(span_file, 2),
+                            "icici_addon": addon["amount"],
+                            "icici_addon_version": addon["version"],
+                        },
                         "Error": "",
                     },
                     warnings,
@@ -2422,6 +2457,37 @@ class processor():
         self._maybe_evict_session(user_id, margins if isinstance(margins, dict) else None)
         return None
 
+    def _span_file_margin_for_legs(self, exchange_code: str, legs: list) -> float | None:
+        """SPAN-file margin plus ICICI's add-on for one underlying's legs in ONE expiry.
+
+        None when the file cannot price every leg, the legs span expiries, or the add-on is
+        not current -- the caller then asks ICICI, never shows a partial figure.
+        """
+        from icici_breeze_backend.app.services.margin_addon import (
+            addon_for_underlying,
+            get_active_rates,
+        )
+
+        active = [l for l in legs if _safe_int(l.get("quantity")) != 0]
+        rates = get_active_rates()
+        if not active or rates is None:
+            return None
+        stock = str(active[0].get("stock_code") or "").strip()
+        expiries = {str(l.get("expiry_date") or "").strip() for l in active}
+        if len(expiries) != 1 or any(str(l.get("stock_code") or "").strip() != stock for l in active):
+            return None
+        try:
+            scan = self._portfolio_baseline_span_margin(exchange_code, active)
+        except Exception:
+            _logger.debug("SPAN-file portfolio margin failed for %s", stock, exc_info=True)
+            return None
+        if not scan.get("found") or scan.get("span_margin_required") is None:
+            return None
+        addon = addon_for_underlying(exchange_code, stock, active, rates=rates)
+        if addon is None:
+            return None
+        return round(float(scan["span_margin_required"]) + float(addon["amount"]), 2)
+
     def _compute_netted_margins(self, breeze, user_id: str, legs: list) -> dict:
         """Group-level and portfolio-level netted SPAN + additive ELM.
 
@@ -2437,6 +2503,19 @@ class processor():
         """
         from collections import OrderedDict
 
+        # "Use the SPAN file elsewhere" (margin_source_prefs, scope `app`): a single-expiry set
+        # of legs is priced from the file plus ICICI's add-on; anything the file cannot price --
+        # a missing contract, or an underlying held across expiries, which the file-based scan
+        # does not net -- keeps ICICI's netted figure.
+        use_span_file = self.get_margin_source(user_id, "app") == MARGIN_SOURCE_EXCHANGE
+
+        def _netted(exch: str, set_legs: list) -> tuple[float | None, str]:
+            if use_span_file:
+                file_margin = self._span_file_margin_for_legs(exch, set_legs)
+                if file_margin is not None:
+                    return file_margin, MARGIN_SOURCE_EXCHANGE
+            return self._netted_span_for_legs(breeze, user_id, exch, set_legs), MARGIN_SOURCE_BREEZE
+
         groups_map: "OrderedDict[tuple, list]" = OrderedDict()
         for l in legs:
             gkey = (l.get("exchange_code"), l.get("stock_code"), l.get("expiry_date"))
@@ -2444,7 +2523,7 @@ class processor():
 
         groups_out = []
         for (exch, stock, expiry), grp_legs in groups_map.items():
-            span = self._netted_span_for_legs(breeze, user_id, exch, grp_legs)
+            span, span_source = _netted(exch, grp_legs)
             elm = _sum_leg_elm(grp_legs)
             # An unpriced leg (see the quote guard in get_positions) has carry None.
             # Summing it as 0.0 would understate the group's carry and hand the UI a
@@ -2466,6 +2545,7 @@ class processor():
                     "exchange_code": exch,
                     "expiry_date": expiry,
                     "span_margin_required": span,
+                    "margin_source": span_source,
                     "elm_margin_required": elm,
                     "carry_margin_returns": carry_ret,
                 }
@@ -2479,10 +2559,12 @@ class processor():
                 (l.get("exchange_code"), l.get("stock_code")), []
             ).append(l)
         port_span: float | None = None
+        port_sources: set[str] = set()
         for (exch, _stock), u_legs in by_underlying.items():
-            s = self._netted_span_for_legs(breeze, user_id, exch, u_legs)
+            s, s_source = _netted(exch, u_legs)
             if s is not None:
                 port_span = (port_span or 0.0) + s
+                port_sources.add(s_source)
         port_elm = _sum_leg_elm(legs)
 
         # Portfolio carry-return: margin-weighted average of the group carry-returns.
@@ -2504,6 +2586,9 @@ class processor():
             "groups": groups_out,
             "portfolio": {
                 "span_margin_required": port_span,
+                "margin_source": (
+                    next(iter(port_sources)) if len(port_sources) == 1 else ("mixed" if port_sources else None)
+                ),
                 "elm_margin_required": port_elm,
                 "carry_margin_returns": port_carry_ret,
             },
@@ -4490,11 +4575,24 @@ class processor():
                 "Error": "Unable to connect to broker. Please check your credentials and re-login.",
                 "Success": None,
             }
-        margin_source = margin_source_override or self.get_strategy_builder_margin_source(user_id)
-        if margin_source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
+        from icici_breeze_backend.app.services.margin_addon import (
+            addon_for_underlying,
+            get_active_rates,
+        )
+        from icici_breeze_backend.app.services.margin_source_prefs import honour
+
+        if margin_source_override:
+            # An explicit request for the SPAN file is still subject to the add-on being
+            # current: without it a SPAN figure is not a stand-in for ICICI's.
+            margin_source = honour(margin_source_override)
+        else:
+            margin_source = self.get_strategy_builder_margin_source(user_id)
+        addon_rates = get_active_rates() if margin_source == MARGIN_SOURCE_EXCHANGE else None
+        if addon_rates is None:
             margin_source = MARGIN_SOURCE_BREEZE
         margin_input = []
         baseline_total = 0.0
+        baseline_found_legs: list[dict] = []
         warnings: list[dict] = []
         missing_baseline_count = 0
         can_use_baseline = margin_source == MARGIN_SOURCE_EXCHANGE
@@ -4538,6 +4636,16 @@ class processor():
                 )
                 if baseline_margin.get("found"):
                     baseline_total += float(baseline_margin.get("span_margin_required") or 0.0)
+                    baseline_found_legs.append(
+                        {
+                            "stock_code": stock_code,
+                            "expiry_date": expiry_api,
+                            "strike_price": strike_price,
+                            "right": right,
+                            "action": action,
+                            "quantity": quantity,
+                        }
+                    )
                     continue
                 missing_baseline_count += 1
                 warnings.append(
@@ -4632,6 +4740,50 @@ class processor():
                 success["elm_approximate"] = elm_approximate
             return success
 
+        addon_stock = str((legs[0] if legs else {}).get("stock_code") or "").strip()
+
+        def _addon(addon_legs: list) -> float | None:
+            """ICICI add-on for legs priced from the SPAN file; None when it cannot be priced."""
+            if addon_rates is None or not addon_legs:
+                return 0.0 if addon_rates is not None else None
+            out = addon_for_underlying(
+                exchange_code, addon_stock, addon_legs, rates=addon_rates, spot=spot
+            )
+            return None if out is None else float(out["amount"])
+
+        def _stamp_addon(success: dict[str, Any], span_file_margin: float | None, amount: float) -> None:
+            success["span_file_margin"] = (
+                round(span_file_margin, 2) if span_file_margin is not None else None
+            )
+            success["icici_addon"] = round(amount, 2)
+            success["icici_addon_version"] = addon_rates.version if addon_rates else None
+
+        if can_use_baseline and baseline_found_legs and _addon(baseline_found_legs) is None:
+            # The registry cannot tier this underlying or the file has no price for it: a
+            # SPAN figure without its add-on would understate ICICI's, so ask ICICI instead.
+            warnings.append(
+                {
+                    "type": "icici_addon_unpriced",
+                    "stock_code": addon_stock,
+                    "message": "ICICI add-on could not be priced for this underlying; ICICI's margin calculator used.",
+                }
+            )
+            for found in baseline_found_legs:
+                margin_input.append(
+                    {
+                        "strike_price": found["strike_price"],
+                        "quantity": found["quantity"],
+                        "product": cfg.OPTIONS,
+                        "action": found["action"],
+                        "expiry_date": found["expiry_date"],
+                        "stock_code": found["stock_code"],
+                        "right": found["right"],
+                    }
+                )
+            baseline_found_legs = []
+            baseline_total = 0.0
+            can_use_baseline = False
+            margin_source = MARGIN_SOURCE_BREEZE
         if can_use_baseline and baseline_only and missing_baseline_count > 0:
             return {
                 "Status": 200,
@@ -4651,8 +4803,14 @@ class processor():
                 time_years=time_years,
             )
             if portfolio_margin.get("found"):
+                portfolio_span = portfolio_margin.get("span_margin_required")
+                portfolio_addon = _addon(legs) or 0.0
                 success: dict[str, Any] = {
-                    "span_margin_required": portfolio_margin.get("span_margin_required"),
+                    "span_margin_required": (
+                        round(float(portfolio_span) + portfolio_addon, 2)
+                        if portfolio_span is not None
+                        else None
+                    ),
                     "margin_source": MARGIN_SOURCE_EXCHANGE,
                     "scanning_risk": portfolio_margin.get("scanning_risk"),
                     "net_option_value": portfolio_margin.get("net_option_value"),
@@ -4661,6 +4819,7 @@ class processor():
                     # before, any netting against the user's open positions below.
                     "margin_benefit": portfolio_margin.get("margin_benefit"),
                 }
+                _stamp_addon(success, portfolio_span, portfolio_addon)
                 if warnings:
                     success["warnings"] = warnings
                 scan_warnings = portfolio_margin.get("warnings") or []
@@ -4677,7 +4836,7 @@ class processor():
                 # sheet has no inter-month spread model, so anything else is
                 # reported via a warning instead of netted.
                 if existing_legs:
-                    standalone_value = portfolio_margin.get("span_margin_required")
+                    standalone_value = success.get("span_margin_required")
                     build_stock = str(legs[0].get("stock_code") or "").strip()
                     build_expiry_raw = str(legs[0].get("expiry_date") or "").strip()
                     build_expiry_display = (
@@ -4706,13 +4865,19 @@ class processor():
                         combined = self._portfolio_baseline_span_margin(
                             exchange_code, same_expiry + legs, spot=spot, iv=iv, time_years=time_years,
                         )
+                        addon_alone = _addon(same_expiry)
+                        addon_combined = _addon(same_expiry + legs)
                         if (
                             existing_alone.get("found")
                             and combined.get("found")
                             and standalone_value is not None
+                            and addon_alone is not None
+                            and addon_combined is not None
                         ):
-                            m_p = float(existing_alone.get("span_margin_required") or 0.0)
-                            m_combined = float(combined.get("span_margin_required") or 0.0)
+                            m_p = float(existing_alone.get("span_margin_required") or 0.0) + addon_alone
+                            m_combined = (
+                                float(combined.get("span_margin_required") or 0.0) + addon_combined
+                            )
                             incremental = m_combined - m_p
                             success["span_margin_required"] = round(incremental, 2)
                             success["standalone_span_margin"] = standalone_value
@@ -4742,11 +4907,13 @@ class processor():
                 if netting_unavailable_reason:
                     success["netting_unavailable_reason"] = netting_unavailable_reason
                 return {"Status": 200, "Error": "", "Success": _attach_elm(success)}
+            fallback_addon = _addon(baseline_found_legs) or 0.0
             fallback_success: dict[str, Any] = {
-                "span_margin_required": baseline_total,
+                "span_margin_required": round(baseline_total + fallback_addon, 2),
                 "margin_source": MARGIN_SOURCE_EXCHANGE,
                 "warnings": warnings,
             }
+            _stamp_addon(fallback_success, baseline_total, fallback_addon)
             if netting_unavailable_reason:
                 fallback_success["netting_unavailable_reason"] = netting_unavailable_reason
             return {
@@ -4790,12 +4957,17 @@ class processor():
         self._maybe_evict_session(user_id, margins)
         if margins.get("Status") == 200:
             base_span = float((margins.get("Success") or {}).get("span_margin_required") or 0.0)
+            # Legs the SPAN file priced carry their ICICI add-on; ICICI's own figure already has it.
+            mixed_addon = (_addon(baseline_found_legs) or 0.0) if baseline_found_legs else 0.0
+            baseline_total += mixed_addon
             standalone_total = base_span + baseline_total
             margins.setdefault("Success", {})
             margins["Success"]["span_margin_required"] = standalone_total
             margins["Success"]["margin_source"] = margin_source
             if warnings:
                 margins["Success"]["warnings"] = warnings
+            if baseline_found_legs:
+                _stamp_addon(margins["Success"], None, mixed_addon)
             _attach_elm(margins["Success"])
 
             # Portfolio-aware netting against open positions (D1-D10). This

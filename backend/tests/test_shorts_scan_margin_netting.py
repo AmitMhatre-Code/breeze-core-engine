@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock, patch
+from tests.fixtures.margin_addon import active_margin_addon
 
 from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_BREEZE,
@@ -23,6 +24,12 @@ from icici_breeze_backend.app.services.processor import processor
 
 
 class TestResolveLegMarginWithSourceNetting(unittest.TestCase):
+    def setUp(self):
+        # SPAN-file paths fail closed to ICICI without a current portal add-on (#48).
+        cm = active_margin_addon()
+        cm.__enter__()
+        self.addCleanup(cm.__exit__, None, None, None)
+
     def _mock_breeze_two_calls(self, standalone: float, combined: float):
         mock_breeze = MagicMock()
 

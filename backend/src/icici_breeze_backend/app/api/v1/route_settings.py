@@ -114,40 +114,6 @@ _BREEZE_API_TESTER_INVOKE_MIN_INTERVAL_SEC = 2.0
 
 
 
-def _ensure_user_margin_source_column() -> None:
-    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-        try:
-            conn.execute(
-                "ALTER TABLE user_account ADD COLUMN strategy_builder_margin_source TEXT NOT NULL DEFAULT 'breeze_api'"
-            )
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
-
-
-def _get_user_margin_source(user_id: str) -> str:
-    _ensure_user_margin_source_column()
-    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-        row = conn.execute(
-            "SELECT strategy_builder_margin_source FROM user_account WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-    source = (row[0] if row and row[0] else MARGIN_SOURCE_BREEZE).strip().lower()
-    if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
-        return MARGIN_SOURCE_BREEZE
-    return source
-
-
-def _set_user_margin_source(user_id: str, source: str) -> None:
-    _ensure_user_margin_source_column()
-    with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
-        conn.execute(
-            "UPDATE user_account SET strategy_builder_margin_source = ? WHERE user_id = ?",
-            (source, user_id),
-        )
-        conn.commit()
-
-
 def _latest_baseline_meta() -> dict[str, Any]:
     ensure_exchange_margin_baseline_table()
     out: dict[str, Any] = {"exchanges": {}}
@@ -484,11 +450,29 @@ async def settings_quantity_limits_post(
 
 @router.get("/margin-source/data", response_model=MarginSourceStateResponse)
 async def settings_margin_source_data(ctx: RequestContext = Depends(get_request_context)):
+    from icici_breeze_backend.app.services import margin_addon, margin_source_prefs
+    from icici_breeze_backend.app.services.reference_data.span_freshness import span_file_freshness
+
+    choices = {
+        scope: margin_source_prefs.get_user_choice(ctx.user_id, scope)
+        for scope in margin_source_prefs.SCOPES
+    }
     return MarginSourceStateResponse(
         user_id=ctx.user_id,
-        margin_source=_get_user_margin_source(ctx.user_id),
+        margin_source=choices[margin_source_prefs.SCOPE_STRATEGY_BUILDER],
+        choices=choices,
+        effective={scope: margin_source_prefs.honour(src) for scope, src in choices.items()},
+        addon=margin_addon.status(),
+        span_freshness=span_file_freshness(),
         latest_baseline=_latest_baseline_meta(),
     )
+
+
+_MARGIN_SCOPE_LABELS = {
+    "strategy_builder": "Strategy Builder",
+    "backtest": "Backtesting",
+    "app": "App-wide",
+}
 
 
 @router.post("/margin-source")
@@ -496,11 +480,15 @@ async def settings_margin_source_post(
     body: MarginSourceUpdateBody,
     ctx: RequestContext = Depends(get_request_context),
 ):
+    from icici_breeze_backend.app.services.margin_source_prefs import set_user_choice
+
     source = (body.margin_source or "").strip().lower()
     if source not in (MARGIN_SOURCE_BREEZE, MARGIN_SOURCE_EXCHANGE):
         raise HTTPException(status_code=400, detail="margin_source must be breeze_api or exchange_baseline")
-    _set_user_margin_source(ctx.user_id, source)
-    return JSONResponse({"ok": True, "message": "Strategy Builder margin source updated."})
+    set_user_choice(ctx.user_id, body.scope, source)
+    return JSONResponse(
+        {"ok": True, "message": f"{_MARGIN_SCOPE_LABELS[body.scope]} margin source updated."}
+    )
 
 
 @router.post("/margin-source/refresh-baseline")

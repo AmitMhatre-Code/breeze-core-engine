@@ -337,6 +337,7 @@ export default function StrategyBuilderPage() {
     exchangeCode: segmentExchange,
     expiryDate,
     spot,
+    marginScope: "strategy_builder",
   });
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
@@ -1301,6 +1302,7 @@ export default function StrategyBuilderPage() {
           expiryDisplay={expiryDate}
           legs={strategyExecuteLegs}
           quoteMeta={chainQuoteMeta}
+          marginScope="strategy_builder"
           controlledChunk={{
             chunkQty,
             onChunkQtyChange: setChunkQty,

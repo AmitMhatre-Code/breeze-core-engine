@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
+from tests.fixtures.margin_addon import active_margin_addon
 
 from icici_breeze_backend.app.api.v1 import route_strategy_builder as rsb
 from icici_breeze_backend.app.auth.context import RequestContext
@@ -49,6 +50,12 @@ def _run(coro):
 
 
 class TestPostMarginNettingWiring(unittest.TestCase):
+    def setUp(self):
+        # SPAN-file paths fail closed to ICICI without a current portal add-on (#48).
+        cm = active_margin_addon()
+        cm.__enter__()
+        self.addCleanup(cm.__exit__, None, None, None)
+
     def test_net_against_positions_true_resolves_positions_and_nets(self):
         body = StrategyBuilderMarginRequest(legs=[_leg()], margin_source="breeze_api")
         position_rows = [

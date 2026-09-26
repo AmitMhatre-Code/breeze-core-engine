@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from io import BytesIO
 from unittest.mock import MagicMock, patch
+from tests.fixtures.margin_addon import active_margin_addon
 
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.income.bear_call_spread import (
     calc_bear_call_spread,
@@ -616,6 +617,12 @@ class TestAuditRetention(unittest.TestCase):
 
 
 class TestProcessorIciciAudit(unittest.TestCase):
+    def setUp(self):
+        # SPAN-file paths fail closed to ICICI without a current portal add-on (#48).
+        cm = active_margin_addon()
+        cm.__enter__()
+        self.addCleanup(cm.__exit__, None, None, None)
+
     def test_baseline_only_margin_skips_icici_audit(self):
         from icici_breeze_backend.app.services.processor import processor
 

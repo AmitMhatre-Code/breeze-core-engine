@@ -292,6 +292,7 @@ export function OptionChainPlaceSection() {
       };
       return apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
         legs: [legBody],
+        margin_scope: "app",
       });
     },
     enabled: Boolean(

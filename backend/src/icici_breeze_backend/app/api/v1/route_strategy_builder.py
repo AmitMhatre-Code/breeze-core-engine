@@ -388,8 +388,12 @@ async def post_margin(
     for leg in legs:
         if leg.get("exchange_code") != ex0:
             raise HTTPException(status_code=400, detail="All legs must use the same exchange_code")
+    from icici_breeze_backend.app.services.margin_source_prefs import honour
+
     effective_margin_source = (
-        body.margin_source or breeze.get_strategy_builder_margin_source(ctx.user_id)
+        honour(body.margin_source)
+        if body.margin_source
+        else breeze.get_margin_source(ctx.user_id, body.margin_scope)
     )
 
     existing_legs: list[dict] | None = None
@@ -432,7 +436,7 @@ async def post_margin(
         ctx.user_id,
         ex0,
         legs,
-        margin_source_override=body.margin_source,
+        margin_source_override=effective_margin_source,
         baseline_only=body.baseline_only,
         spot=body.spot,
         iv=body.iv,
@@ -443,7 +447,9 @@ async def post_margin(
         netting_unavailable_reason=netting_unavailable_reason,
     )
     if data.get("Status") == 200 and "Success" in data and isinstance(data.get("Success"), dict):
-        data["Success"]["margin_source"] = effective_margin_source
+        # The processor may still have fallen back to ICICI (a contract or add-on the SPAN
+        # file cannot price), so its own stamp wins.
+        data["Success"].setdefault("margin_source", effective_margin_source)
     elif data.get("Status") != 200:
         data["margin_source"] = effective_margin_source
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderMargin")

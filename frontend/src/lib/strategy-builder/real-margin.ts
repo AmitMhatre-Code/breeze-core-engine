@@ -13,6 +13,7 @@ import type {
   BasketLegMarginEntry,
   MarginApiRequest,
   MarginApiResponse,
+  MarginScope,
   StrategyLeg,
 } from "@/lib/strategy-builder/types";
 
@@ -51,11 +52,12 @@ function buildMarginLegPayload(
 
 async function fetchRealMargin(
   legs: MarginApiRequest["legs"],
+  marginScope: MarginScope,
   signal?: AbortSignal,
 ): Promise<number> {
   const res = await apiClient.post<MarginApiResponse, MarginApiRequest>(
     "/strategy-builder/margin",
-    { legs, margin_source: "breeze_api" },
+    { legs, margin_scope: marginScope },
     { signal },
   );
   const v = parseSpanMarginFromResponse(res);
@@ -84,11 +86,12 @@ export type PositionsNettingInfo = {
 async function fetchRealMarginWithElm(
   legs: MarginApiRequest["legs"],
   spot: number | null,
+  marginScope: MarginScope,
   signal?: AbortSignal,
 ): Promise<{ span: number } & BasketElmInfo & PositionsNettingInfo> {
   const res = await apiClient.post<MarginApiResponse, MarginApiRequest>(
     "/strategy-builder/margin",
-    { legs, margin_source: "breeze_api", spot: spot ?? undefined },
+    { legs, margin_scope: marginScope, spot: spot ?? undefined },
     { signal },
   );
   const span = parseSpanMarginFromResponse(res);
@@ -132,10 +135,12 @@ export async function fetchRealBasketMargins(
     expiryDate: string;
     lotSize: number;
     spot: number | null;
+    /** Defaults to "app" (the server's default too). */
+    marginScope?: MarginScope;
   },
   signal?: AbortSignal,
 ): Promise<OnDemandMarginData> {
-  const { legs, spot, ...ctx } = params;
+  const { legs, spot, marginScope = "app", ...ctx } = params;
   const activeLegs = legs.filter((l) => l.lots > 0);
   const sellLegs = activeLegs.filter((l) => l.side === "Sell");
 
@@ -144,6 +149,7 @@ export async function fetchRealBasketMargins(
       sellLegs.map(async (leg): Promise<readonly [string, number]> => {
         const margin = await fetchRealMargin(
           [buildMarginLegPayload(leg, ctx)],
+          marginScope,
           signal,
         );
         return [leg.id, margin] as const;
@@ -152,6 +158,7 @@ export async function fetchRealBasketMargins(
     fetchRealMarginWithElm(
       activeLegs.map((l) => buildMarginLegPayload(l, ctx)),
       spot,
+      marginScope,
       signal,
     ),
   ]);
@@ -198,13 +205,15 @@ export async function fetchBasketMarginOnly(
     expiryDate: string;
     lotSize: number;
     spot: number | null;
+    marginScope: MarginScope;
   },
   signal?: AbortSignal,
 ): Promise<{ span: number; elmRequirement: number | null }> {
-  const { legs, spot, ...ctx } = params;
+  const { legs, spot, marginScope, ...ctx } = params;
   const basket = await fetchRealMarginWithElm(
     legs.filter((l) => l.lots > 0).map((l) => buildMarginLegPayload(l, ctx)),
     spot,
+    marginScope,
     signal,
   );
   return { span: basket.span, elmRequirement: basket.elmRequirement };
@@ -230,8 +239,10 @@ export function useOnDemandBasketMargin(params: {
   exchangeCode: string;
   expiryDate: string;
   spot: number | null;
+  /** Which "use the SPAN file" setting governs this page's margins. */
+  marginScope: MarginScope;
 }) {
-  const { legs, lotSize, stockCode, exchangeCode, expiryDate, spot } = params;
+  const { legs, lotSize, stockCode, exchangeCode, expiryDate, spot, marginScope } = params;
   const [lastResult, setLastResult] = useState<
     (OnDemandMarginData & { forKey: string }) | null
   >(null);
@@ -248,6 +259,7 @@ export function useOnDemandBasketMargin(params: {
         expiryDate,
         lotSize,
         spot,
+        marginScope,
       }),
     onSuccess: (data, vars) => {
       setLastResult({ forKey: vars.key, ...data });

@@ -109,7 +109,7 @@ async def get_uncovered_shorts_scan(
         margin_source=(
             breeze.get_strategy_builder_margin_source(ctx.user_id)
             if strategy_builder
-            else MARGIN_SOURCE_BREEZE
+            else breeze.get_margin_source(ctx.user_id, "app")
         ),
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "UncoveredShortsScan")
@@ -153,7 +153,7 @@ async def get_covered_shorts_scan(
         margin_source=(
             breeze.get_strategy_builder_margin_source(ctx.user_id)
             if strategy_builder
-            else MARGIN_SOURCE_BREEZE
+            else breeze.get_margin_source(ctx.user_id, "app")
         ),
     )
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "CoveredShortsScan")

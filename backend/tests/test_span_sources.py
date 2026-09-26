@@ -35,8 +35,10 @@ class _FakeResponse:
 
 @pytest.fixture
 def frozen_today(monkeypatch):
+    """Friday 2026-09-04; its next trading day is Monday the 7th."""
     day = dt.date(2026, 9, 4)
     monkeypatch.setattr(span_sources, "today_ist_date", lambda: day)
+    monkeypatch.setattr(span_sources, "next_trading_day", lambda d: dt.date(2026, 9, 7))
     return day
 
 
@@ -61,8 +63,10 @@ def test_nse_resolution_prefers_the_latest_intraday_revision(monkeypatch, frozen
     assert ref.source_version == 5
     assert ref.source_date == "20260904"
     assert ref.exchange_code == cfg.NFO
-    # Probed i6 first and abandoned it, rather than assuming i4 was the ceiling.
-    assert seen[0].endswith("i6.zip")
+    # Monday's i1 is not out yet, so today's revisions are walked from i6 down, rather than
+    # assuming i4 was the ceiling.
+    assert seen[0].endswith("nsccl.20260907.i1.zip")
+    assert seen[1].endswith("nsccl.20260904.i6.zip")
 
 
 def test_nse_resolution_walks_back_to_the_previous_session(monkeypatch, frozen_today):
@@ -81,7 +85,7 @@ def test_bse_resolution_takes_the_newest_file_mode(monkeypatch, frozen_today):
 
     def fake_get(url, **kwargs):
         seen.append(url)
-        return _FakeResponse(200)
+        return _FakeResponse(200 if "20260904" in url else 404)
 
     monkeypatch.setattr(span_sources.requests, "get", fake_get)
     ref = span_sources.resolve_latest_bse_span_archive()
@@ -92,7 +96,19 @@ def test_bse_resolution_takes_the_newest_file_mode(monkeypatch, frozen_today):
     assert ref.source_version == 5  # mode Z, as BSE's page numbered it
     assert ref.exchange_code == cfg.BFO
     assert ref.label == "Final"
-    assert seen == [ref.url]
+    assert seen == [
+        "https://www.bseindia.com/bsedata/Risk_Automate/BSERISK20260907-00.ZIP",
+        ref.url,
+    ]
+
+
+def test_next_day_beginning_of_day_files_win_once_published(monkeypatch, frozen_today):
+    """ICICI prices off the next session's file from the evening before (#48)."""
+    monkeypatch.setattr(span_sources.requests, "get", lambda url, **kw: _FakeResponse(200))
+    nse = span_sources.resolve_latest_nse_span_archive()
+    bse = span_sources.resolve_latest_bse_span_archive()
+    assert (nse.archive_name, nse.source_date, nse.source_version) == ("nsccl.20260907.i1.zip", "20260907", 1)
+    assert (bse.archive_name, bse.source_date, bse.source_version) == ("BSERISK20260907-00.ZIP", "20260907", 0)
 
 
 def test_bse_resolution_never_calls_the_blocked_api(monkeypatch, frozen_today):

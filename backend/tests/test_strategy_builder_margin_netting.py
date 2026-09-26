@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock, patch
+from tests.fixtures.margin_addon import active_margin_addon
 
 from icici_breeze_backend.app.services.processor import processor
 
@@ -247,6 +248,12 @@ class TestExchangeBaselineNetting(unittest.TestCase):
     """D6: baseline path nets same-expiry positions only, stays fully offline,
     and warns about positions in other expiries rather than dropping them
     silently."""
+
+    def setUp(self):
+        # SPAN-file paths fail closed to ICICI without a current portal add-on (#48).
+        cm = active_margin_addon()
+        cm.__enter__()
+        self.addCleanup(cm.__exit__, None, None, None)
 
     def _fake_baseline_span(self, *, candidate=40_000.0, existing=30_000.0, combined=55_000.0):
         def _fake(exchange_code, legs, *, spot=None, iv=None, time_years=None):

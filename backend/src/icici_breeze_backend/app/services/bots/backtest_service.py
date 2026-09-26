@@ -591,17 +591,80 @@ def price_lots(
     *,
     path: Optional[str] = None,
     today: Optional[datetime.date] = None,
+    margin_source: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Lots for a fly or Bot 2 run, from ICICI's margin for one lot today."""
+    """Lots for a fly or Bot 2 run, from the margin for one lot today.
+
+    `margin_source` is the backtest scope's effective source (margin_source_prefs): the SPAN
+    file plus ICICI's add-on, or ICICI's margin_calculator. A structure the SPAN file cannot
+    price is priced by ICICI instead, and says so in `notes`, as does an outdated SPAN file.
+    """
+    from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
+
     today = today or now_ist().date()
+    pricer = _MarginPricer(proc, user_id, use_span_file=margin_source == MARGIN_SOURCE_EXCHANGE)
     if bot == "fly":
-        return _price_fly(config, user_id, proc, path, today)
-    if bot == "expiry":
-        return _price_writer(config, user_id, proc, path, today)
-    raise ValueError(f"{bot} is not sized by margin")
+        out = _price_fly(config, user_id, proc, path, today, pricer)
+    elif bot == "expiry":
+        out = _price_writer(config, user_id, proc, path, today, pricer)
+    else:
+        raise ValueError(f"{bot} is not sized by margin")
+    out["margin_source"] = "span_file" if pricer.use_span_file else "icici"
+    out["notes"] = pricer.notes()
+    return out
 
 
-def _price_fly(config: IronFlyScalperConfig, user_id: str, proc: Any, path: Optional[str], today: datetime.date) -> dict[str, Any]:
+class _MarginPricer:
+    """One lot's margin for a structure: SPAN file + ICICI add-on, or ICICI's calculator."""
+
+    def __init__(self, proc: Any, user_id: str, *, use_span_file: bool) -> None:
+        self.proc = proc
+        self.user_id = user_id
+        self.use_span_file = use_span_file
+        self._notes: list[str] = []
+        self._warned_exchanges: set[str] = set()
+
+    def notes(self) -> list[str]:
+        return list(self._notes)
+
+    def _note(self, text: str) -> None:
+        if text not in self._notes:
+            self._notes.append(text)
+
+    def span_file(
+        self, *, exchange_code: str, stock_code: str, expiry_display: str, legs: list[tuple]
+    ) -> Optional[float]:
+        """SPAN-file margin + add-on for (right, strike, quantity, action) legs, or None."""
+        if not self.use_span_file:
+            return None
+        from icici_breeze_backend.app.services.reference_data.span_freshness import outdated_message
+
+        if exchange_code not in self._warned_exchanges:
+            self._warned_exchanges.add(exchange_code)
+            warning = outdated_message(exchange_code)
+            if warning:
+                self._note(warning)
+        rows = [
+            {
+                "stock_code": stock_code,
+                "expiry_date": expiry_display,
+                "strike_price": strike,
+                "right": cfg.CALL if str(right).lower() in ("call", cfg.CALL.lower()) else cfg.PUT,
+                "action": cfg.SELL if str(action).lower() == cfg.SELL.lower() else cfg.BUY,
+                "quantity": int(qty),
+            }
+            for right, strike, qty, action in legs
+        ]
+        margin = self.proc._span_file_margin_for_legs(exchange_code, rows)
+        if margin is None:
+            self._note(
+                f"The SPAN file could not price {stock_code} {expiry_display}; "
+                "ICICI's margin calculator was used for it."
+            )
+        return margin
+
+
+def _price_fly(config: IronFlyScalperConfig, user_id: str, proc: Any, path: Optional[str], today: datetime.date, pricer: "_MarginPricer") -> dict[str, Any]:
     from icici_breeze_backend.app.services.bots.scalping.iron_fly_bot import wing_width_for
     from icici_breeze_backend.app.services.bots.scalping.margin import margin_for_mixed_legs
 
@@ -615,9 +678,13 @@ def _price_fly(config: IronFlyScalperConfig, user_id: str, proc: Any, path: Opti
         ("call", atm, lot_size, cfg.SELL),
         ("put", atm, lot_size, cfg.SELL),
     ]
-    per_lot = margin_for_mixed_legs(
-        proc, user_id, exchange_code=cfg.NFO, stock_code="NIFTY", expiry_display=expiry, legs=legs
+    per_lot = pricer.span_file(
+        exchange_code=cfg.NFO, stock_code="NIFTY", expiry_display=expiry, legs=legs
     )
+    if per_lot is None:
+        per_lot = margin_for_mixed_legs(
+            proc, user_id, exchange_code=cfg.NFO, stock_code="NIFTY", expiry_display=expiry, legs=legs
+        )
     if per_lot is None:
         raise LotPricingError("ICICI's margin calculator did not price the fly.")
     lots = int(config.margin_ceiling_inr // per_lot)
@@ -637,7 +704,7 @@ def _price_fly(config: IronFlyScalperConfig, user_id: str, proc: Any, path: Opti
     }
 
 
-def _price_writer(config: ExpiryIndexWriterConfig, user_id: str, proc: Any, path: Optional[str], today: datetime.date) -> dict[str, Any]:
+def _price_writer(config: ExpiryIndexWriterConfig, user_id: str, proc: Any, path: Optional[str], today: datetime.date, pricer: "_MarginPricer") -> dict[str, Any]:
     from icici_breeze_backend.app.services.bots.expiry_index_writer import (
         INDEX_EXCHANGE,
         _available_margin,
@@ -665,10 +732,15 @@ def _price_writer(config: ExpiryIndexWriterConfig, user_id: str, proc: Any, path
         margins: dict[str, Optional[float]] = {}
         for strategy in scope.strategies:
             rights = [cfg.CALL if r == "call" else cfg.PUT for r in STRATEGY_RIGHTS[strategy]]
-            margin = margin_for_legs(
-                proc, user_id, exchange_code=exchange, stock_code=scope.index,
-                expiry_display=expiry, legs=[(r, strikes[r], lot_size) for r in rights],
+            margin = pricer.span_file(
+                exchange_code=exchange, stock_code=scope.index, expiry_display=expiry,
+                legs=[(r, strikes[r], lot_size, cfg.SELL) for r in rights],
             )
+            if margin is None:
+                margin = margin_for_legs(
+                    proc, user_id, exchange_code=exchange, stock_code=scope.index,
+                    expiry_display=expiry, legs=[(r, strikes[r], lot_size) for r in rights],
+                )
             margins[strategy] = round(margin, 2) if margin else None
             lots[strategy] = int(budget // margin) if margin else 0
             lines.append(

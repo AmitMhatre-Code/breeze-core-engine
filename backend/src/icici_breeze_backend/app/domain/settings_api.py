@@ -1,5 +1,5 @@
 """JSON settings API models."""
-from typing import Any, Optional
+from typing import Literal, Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -109,13 +109,24 @@ class AggressiveOrderPreferencesUpdateBody(BaseModel):
 
 class MarginSourceStateResponse(BaseModel):
     user_id: str = ""
-    margin_source: str = "breeze_api"
+    # Legacy single toggle: the Strategy Builder scope's stored choice.
+    margin_source: str = "exchange_baseline"
+    # Stored choice per scope (strategy_builder / backtest / app) -- what the toggles show.
+    choices: dict[str, str] = Field(default_factory=dict)
+    # What each scope actually prices from right now (ICICI while the add-on is missing).
+    effective: dict[str, str] = Field(default_factory=dict)
+    # margin_addon.status(): whether the portal's ICICI add-on is current, and if not, why.
+    addon: dict[str, Any] = Field(default_factory=dict)
+    # span_freshness.span_file_freshness(): loaded SPAN source date per exchange vs expected.
+    span_freshness: dict[str, Any] = Field(default_factory=dict)
     latest_baseline: dict[str, Any] = Field(default_factory=dict)
     message: Optional[str] = None
 
 
 class MarginSourceUpdateBody(BaseModel):
     margin_source: str
+    # Omitted by older clients, which only knew the Strategy Builder toggle.
+    scope: Literal["strategy_builder", "backtest", "app"] = "strategy_builder"
 
 
 class ScripMasterStateResponse(BaseModel):

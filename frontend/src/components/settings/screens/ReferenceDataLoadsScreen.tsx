@@ -21,9 +21,64 @@ type IngestHistoryItem = {
   source_url: string | null;
 };
 
-type MarginSourceData = {
-  margin_source: "breeze_api" | "exchange_baseline";
+type MarginSource = "breeze_api" | "exchange_baseline";
+type MarginScope = "strategy_builder" | "backtest" | "app";
+
+type MarginAddonStatus = {
+  available: boolean;
+  reason: "never_received" | "stale" | null;
+  message: string | null;
+  received_at: string | null;
+  rates: {
+    version: string;
+    index_rate: number;
+    index_deep_otm_rate: number;
+    index_deep_otm_threshold: number;
+    stock_rate: number;
+    stock_deep_otm_rate: number;
+    stock_deep_otm_threshold: number;
+    expiry_day_extra_rate: number;
+  } | null;
 };
+
+type SpanFreshness = {
+  expected_source_date: string;
+  outdated: boolean;
+  exchanges: Record<string, { label: string; source_date: string | null; outdated: boolean }>;
+};
+
+type MarginSourceData = {
+  margin_source: MarginSource;
+  choices?: Partial<Record<MarginScope, MarginSource>>;
+  effective?: Partial<Record<MarginScope, MarginSource>>;
+  addon?: MarginAddonStatus;
+  span_freshness?: SpanFreshness;
+};
+
+const MARGIN_SCOPES: { scope: MarginScope; title: string; description: string }[] = [
+  {
+    scope: "strategy_builder",
+    title: "Strategy Builder",
+    description:
+      "Margins on the Strategy Builder page: builds, proposals, basket margin and the covered-shorts scan.",
+  },
+  {
+    scope: "backtest",
+    title: "Backtesting",
+    description:
+      "Lot sizing for bot backtests. You are warned before a run if the SPAN file is outdated.",
+  },
+  {
+    scope: "app",
+    title: "Everywhere else",
+    description:
+      "Place Order, the option-chain order panel, order confirmation, Basket Order, Uncovered Shorts and the Portfolio page's SPAN figures. Live bots always use ICICI's margin calculator.",
+  },
+];
+
+function pct(rate: number): string {
+  return `${(rate * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+}
 
 type ReferenceDataState = {
   enabled: boolean;
@@ -140,7 +195,7 @@ export function ReferenceDataLoadsScreen() {
     minute_ist: number;
     enabled: boolean;
   } | null>(null);
-  const [marginDraft, setMarginDraft] = useState<"breeze_api" | "exchange_baseline" | null>(null);
+  const [marginDraft, setMarginDraft] = useState<{ scope: MarginScope; source: MarginSource } | null>(null);
   const [showFullHistory, setShowFullHistory] = useState(false);
 
   const q = useQuery({
@@ -156,13 +211,11 @@ export function ReferenceDataLoadsScreen() {
   });
 
   const marginSaveMut = useMutation({
-    mutationFn: (margin_source: "breeze_api" | "exchange_baseline") =>
-      apiClient.post("/api/settings/margin-source", { margin_source }),
-    onSuccess: (_data, margin_source) => {
+    mutationFn: (v: { scope: MarginScope; source: MarginSource }) =>
+      apiClient.post("/api/settings/margin-source", { scope: v.scope, margin_source: v.source }),
+    onSuccess: () => {
       setMarginDraft(null);
-      qc.setQueryData<MarginSourceData>(["settings", "margin-source"], (old) =>
-        old ? { ...old, margin_source } : { margin_source },
-      );
+      void qc.invalidateQueries({ queryKey: ["settings", "margin-source"] });
     },
     onError: () => {
       setMarginDraft(null);
@@ -207,9 +260,22 @@ export function ReferenceDataLoadsScreen() {
 
   const refreshing = Boolean(server?.refresh_in_progress);
 
-  const marginSource = marginDraft ?? marginQ.data?.margin_source ?? "breeze_api";
-  const useExchangeBaseline = marginSource === "exchange_baseline";
-  const marginToggleDisabled = marginQ.isLoading && !marginQ.data;
+  const addon = marginQ.data?.addon;
+  // No current add-on from the portal: every toggle reads "No" and cannot be changed, and each
+  // returns to the user's saved choice once the add-on arrives (the server keeps the choice).
+  const addonMissing = Boolean(marginQ.data) && addon?.available !== true;
+  const marginToggleDisabled = (marginQ.isLoading && !marginQ.data) || addonMissing;
+  const scopeChoice = (scope: MarginScope): MarginSource =>
+    marginDraft?.scope === scope
+      ? marginDraft.source
+      : (marginQ.data?.choices?.[scope] ??
+        (scope === "strategy_builder" ? marginQ.data?.margin_source : undefined) ??
+        "exchange_baseline");
+  const scopeUsesSpan = (scope: MarginScope): boolean =>
+    !addonMissing && scopeChoice(scope) === "exchange_baseline";
+  const outdatedExchanges = Object.values(marginQ.data?.span_freshness?.exchanges ?? {}).filter(
+    (e) => e.outdated,
+  );
 
   const nseSpanStatusText = server?.nse_span_refreshed_at
     ? `Refreshed ${formatApiDateTime(server.nse_span_refreshed_at)}`
@@ -240,7 +306,7 @@ export function ReferenceDataLoadsScreen() {
         <SettingsScreenHeader
           icon={<DatabaseIcon />}
           title="Reference Data Loads"
-          description="Schedule daily loads for bhavcopy, scrip master, and SPAN baseline; choose SPAN vs Breeze API for Strategy Builder margins."
+          description="Schedule daily loads for bhavcopy, scrip master, and SPAN baseline; choose where margins use the SPAN file instead of ICICI's margin calculator."
         />
         <HelpLink topicId="reference-data-loads" className="shrink-0 text-xs">
           Help
@@ -296,32 +362,72 @@ export function ReferenceDataLoadsScreen() {
             <p className="text-xs text-muted">
               Bhavcopy and the scrip master only change end-of-day, so they follow this time. SPAN
               baselines track the exchanges&apos; intraday risk files instead and refresh at 09:15,
-              11:15, 12:45, 14:15, 15:45 and 18:00 IST.
+              11:15, 12:45, 14:15, 15:45, 18:00 and 21:45 IST, picking up the next trading
+              day&apos;s file as soon as the exchange publishes it.
             </p>
           </div>
 
           <div className="space-y-3 rounded-[10px] border border-border px-4 py-3.5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="text-heading font-semibold text-foreground">
-                  Use SPAN files for margin calculation
-                </div>
-                <p className="max-w-[480px] text-heading text-muted">
-                  Off: Breeze API (default). On: Exchange Risk Baseline (SPAN) for Strategy Builder. ICICI
-                  margins may differ; contracts missing from the baseline fall back to Breeze API.
-                </p>
+            <div className="space-y-1">
+              <div className="text-heading font-semibold text-foreground">
+                Use SPAN files for margin calculation
               </div>
-              <ScheduleToggle
-                enabled={useExchangeBaseline}
-                disabled={marginToggleDisabled}
-                onChange={(next) => {
-                  const nextSource = next ? "exchange_baseline" : "breeze_api";
-                  if (marginSource === nextSource || marginSaveMut.isPending) return;
-                  setMarginDraft(nextSource);
-                  marginSaveMut.mutate(nextSource);
-                }}
-              />
+              <p className="max-w-[560px] text-heading text-muted">
+                On: margins come from the exchange SPAN file plus ICICI&apos;s add-on, without
+                calling ICICI. Off: ICICI&apos;s margin calculator. Contracts missing from the
+                SPAN file always fall back to ICICI.
+              </p>
             </div>
+            {MARGIN_SCOPES.map(({ scope, title, description }) => (
+              <div
+                key={scope}
+                className="flex flex-wrap items-start justify-between gap-4 border-t border-border-soft pt-3"
+              >
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="text-sm font-medium text-foreground">{title}</div>
+                  <p className="max-w-[480px] text-xs text-muted">{description}</p>
+                  {scope === "backtest" && scopeUsesSpan(scope) && outdatedExchanges.length > 0 && (
+                    <p className="text-xs text-amber-accent">
+                      {outdatedExchanges
+                        .map(
+                          (e) =>
+                            `The ${e.label} SPAN file is outdated (${
+                              e.source_date ? formatSourceFileDate(e.source_date) : "none loaded"
+                            }).`,
+                        )
+                        .join(" ")}
+                    </p>
+                  )}
+                </div>
+                <ScheduleToggle
+                  enabled={scopeUsesSpan(scope)}
+                  disabled={marginToggleDisabled}
+                  onChange={(next) => {
+                    const source: MarginSource = next ? "exchange_baseline" : "breeze_api";
+                    if (scopeChoice(scope) === source || marginSaveMut.isPending) return;
+                    setMarginDraft({ scope, source });
+                    marginSaveMut.mutate({ scope, source });
+                  }}
+                />
+              </div>
+            ))}
+            {addonMissing && addon?.message && (
+              <div className="app-alert-error text-xs" role="alert">
+                {addon.message}
+              </div>
+            )}
+            {!addonMissing && addon?.rates && (
+              <p className="border-t border-border-soft pt-3 text-xs text-muted">
+                ICICI add-on {addon.rates.version}: index {pct(addon.rates.index_rate)} (
+                {pct(addon.rates.index_deep_otm_rate)} beyond{" "}
+                {pct(addon.rates.index_deep_otm_threshold)} OTM), stock{" "}
+                {pct(addon.rates.stock_rate)} ({pct(addon.rates.stock_deep_otm_rate)} beyond{" "}
+                {pct(addon.rates.stock_deep_otm_threshold)} OTM), plus{" "}
+                {pct(addon.rates.expiry_day_extra_rate)} on expiry day, of each short leg&apos;s
+                notional.
+                {addon.received_at ? ` Fetched ${formatApiDateTime(addon.received_at)}.` : ""}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-3">

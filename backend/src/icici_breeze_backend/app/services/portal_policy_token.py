@@ -30,6 +30,7 @@ _POLICY_CLAIM_KEYS = (
     "latest_version",
     "env_overrides",
     "env_overrides_version",
+    "margin_addon",
 )
 
 _TARGET_TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
@@ -151,4 +152,12 @@ def verify_policy_token(token: str, *, public_ip: str) -> dict[str, Any]:
         _validate_target_tag(policy.get("target_tag"))
     if policy.get("env_overrides"):
         _validate_env_overrides(policy.get("env_overrides"))
+    # Unlike env_overrides, a malformed margin add-on only drops that claim: the license
+    # status riding in the same token must still be honoured.
+    if "margin_addon" in policy:
+        from icici_breeze_backend.app.services.margin_addon import parse_rates
+
+        if parse_rates(policy["margin_addon"]) is None:
+            logger.warning("policy token margin_addon claim is malformed; dropped")
+            policy.pop("margin_addon", None)
     return policy

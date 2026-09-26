@@ -22,6 +22,9 @@ class StrategyBuilderLegIn(BaseModel):
 class StrategyBuilderMarginRequest(BaseModel):
     legs: List[StrategyBuilderLegIn] = Field(min_length=1, max_length=12)
     margin_source: Optional[Literal["breeze_api", "exchange_baseline"]] = None
+    # Which "use the SPAN file" setting governs this quote when `margin_source` is not given
+    # (margin_source_prefs): the Strategy Builder page, or everywhere else in the app.
+    margin_scope: Literal["strategy_builder", "app"] = "app"
     baseline_only: bool = False
     spot: Optional[float] = None
     iv: Optional[float] = None
@@ -69,7 +72,9 @@ class StrategyBuilderChainResponse(BaseModel):
 class StrategyBuilderMarginResponse(BaseModel):
     """Success also carries (when computable): elm_requirement (float, whole-basket ELM),
     elm_is_index (bool), elm_approximate (bool, true when the stock flat-rate tier or a
-    previous-close-lookup fallback was used) — see processor.strategy_builder_margin."""
+    previous-close-lookup fallback was used) — see processor.strategy_builder_margin.
+    On the SPAN-file source it also carries span_file_margin (the file's own figure),
+    icici_addon (ICICI's add-on included in span_margin_required) and icici_addon_version."""
 
     model_config = {"extra": "allow"}
     Status: int

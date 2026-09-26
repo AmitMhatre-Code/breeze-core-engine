@@ -208,7 +208,8 @@ def test_coordinated_batch_still_bumps_the_version(scrip_db):
 
 def test_slots_cover_both_exchanges_publish_schedules():
     slots = [f"{h:02d}:{m:02d}" for h, m in cfg.SPAN_REFRESH_SLOTS_IST]
-    assert slots == ["09:15", "11:15", "12:45", "14:15", "15:45", "18:00"]
+    # 21:45 takes NSE's next-day i1, published ~21:30 the evening before (#48).
+    assert slots == ["09:15", "11:15", "12:45", "14:15", "15:45", "18:00", "21:45"]
 
 
 def test_scheduler_logs_ingests_but_not_no_ops(monkeypatch):

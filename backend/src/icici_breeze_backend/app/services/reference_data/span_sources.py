@@ -9,6 +9,13 @@ not need.
 NSE is a plain archive directory: ``nsccl.{yyyymmdd}.i{n}.zip``, ``n`` counting up through the
 day (i1 lands the previous evening, i5 around 15:30 IST).
 
+Both exchanges publish the *next* trading day's beginning-of-day file ahead of that day -- NSE's
+``i1`` at about 21:30 IST the evening before, BSE's ``-00`` a little after midnight -- stamped
+with the date it is for. ICICI's margin_calculator moves onto that file as soon as it exists, so
+from then until the next session's first intraday file the newest file is future-dated. The
+resolvers therefore probe the next trading day's beginning-of-day file before walking back from
+today; without that, every weekend and every evening we priced a file behind ICICI.
+
 BSE is resolved the same way, by probing file names:
 ``Risk_Automate/BSERISK{yyyymmdd}-{00..04|FINAL}.ZIP`` on ``www.bseindia.com/bsedata/``, one per
 file mode (Beginning of Day, Intra-Day 01-04, Final). Until 2026-09-24 the names came from the
@@ -102,11 +109,47 @@ def download_span_archive(ref: SpanArchiveRef) -> bytes | None:
     return resp.content
 
 
+def next_trading_day(today: dt.date) -> dt.date:
+    """The first trading day after `today`, per the configured exchange calendar.
+
+    Falls back to "next weekday" when the calendar cannot be read (no users DB yet), which is
+    only ever wrong across a holiday -- and then the probe simply 404s and the walk back from
+    today proceeds as before.
+    """
+    try:
+        from icici_breeze_backend.app.services.market_calendar import is_trading_day
+        from icici_breeze_backend.app.core.timezone import IST
+
+        for step in range(1, 8):
+            day = today + dt.timedelta(days=step)
+            if is_trading_day(dt.datetime(day.year, day.month, day.day, 12, 0, tzinfo=IST)):
+                return day
+    except Exception:  # noqa: BLE001 - a calendar problem must not stop a SPAN refresh
+        _logger.debug("SPAN resolver: exchange calendar unavailable; assuming next weekday", exc_info=True)
+    day = today + dt.timedelta(days=1)
+    while day.weekday() >= 5:
+        day += dt.timedelta(days=1)
+    return day
+
+
 def resolve_latest_nse_span_archive(*, lookback_days: int | None = None) -> SpanArchiveRef | None:
-    """Newest ``nsccl.{yyyymmdd}.i{n}.zip``, walking days back and versions down."""
+    """Newest ``nsccl.{yyyymmdd}.i{n}.zip``: the next trading day's i1 if already published,
+    else walking days back from today and versions down."""
     lookback = max(1, int(lookback_days or cfg.REFERENCE_DATA_LOOKBACK_DAYS))
     max_version = max(1, int(cfg.NSE_SPAN_MAX_INTRADAY_VERSION))
     today = today_ist_date()
+    ahead = next_trading_day(today).strftime("%Y%m%d")
+    url = cfg.NSE_SPAN_ARCHIVE_URL_TEMPLATE.format(yyyymmdd=ahead, version=1)
+    if _url_exists(url, MARKET_NSE):
+        return SpanArchiveRef(
+            market=MARKET_NSE,
+            exchange_code=cfg.NFO,
+            archive_name=url.rsplit("/", 1)[-1],
+            url=url,
+            source_date=ahead,
+            source_version=1,
+            label="Intra-Day 01",
+        )
     for day_offset in range(lookback):
         day = today - dt.timedelta(days=day_offset)
         ymd = day.strftime("%Y%m%d")
@@ -127,13 +170,27 @@ def resolve_latest_nse_span_archive(*, lookback_days: int | None = None) -> Span
 
 
 def resolve_latest_bse_span_archive(*, lookback_days: int | None = None) -> SpanArchiveRef | None:
-    """Newest ``BSERISK{yyyymmdd}-{mode}.ZIP``, walking days back and file modes down.
+    """Newest ``BSERISK{yyyymmdd}-{mode}.ZIP``: the next trading day's beginning-of-day file if
+    already published, else walking days back from today and file modes down.
 
     A slot firing seconds before BSE stamps a mode simply finds the previous one; a holiday
     costs six small 404s. Weekends are probed too, since special sessions do publish.
     """
     lookback = max(1, int(lookback_days or cfg.REFERENCE_DATA_LOOKBACK_DAYS))
     today = today_ist_date()
+    ahead = next_trading_day(today).strftime("%Y%m%d")
+    ordinal, suffix, label = _BSE_MODES[-1]
+    url = cfg.BSE_SPAN_ARCHIVE_URL_TEMPLATE.format(yyyymmdd=ahead, mode=suffix)
+    if _url_exists(url, MARKET_BSE):
+        return SpanArchiveRef(
+            market=MARKET_BSE,
+            exchange_code=cfg.BFO,
+            archive_name=url.rsplit("/", 1)[-1],
+            url=url,
+            source_date=ahead,
+            source_version=ordinal,
+            label=label,
+        )
     for day_offset in range(lookback):
         day = today - dt.timedelta(days=day_offset)
         ymd = day.strftime("%Y%m%d")

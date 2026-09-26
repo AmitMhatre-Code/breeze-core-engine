@@ -315,6 +315,7 @@ export default function BasketOrderPage() {
     exchangeCode: segmentExchange,
     expiryDate,
     spot,
+    marginScope: "app",
   });
 
   const totalsNetPremium = useMemo(() => {
@@ -434,6 +435,7 @@ export default function BasketOrderPage() {
           expiryDate,
           lotSize,
           spot,
+          marginScope: "app",
         });
         if (scaleIncludeElm && data.elmRequirement == null) elmUnavailable = true;
         return (

@@ -257,7 +257,9 @@ SPAN_INTRADAY_REFRESH_ENABLED = (
 # IST slot times. Deliberately fixed rather than env-tunable: they are chosen against the
 # exchanges' own publish schedule (BSE stamps its intraday files at 11:15, 12:45, 14:10 and
 # 15:45; NSE at roughly 11:00, 12:30, 14:00 and 15:30), and a slot that finds nothing new
-# skips the download, so a mistimed run costs one HTTP request.
+# skips the download, so a mistimed run costs one HTTP request. 21:45 picks up NSE's next-day
+# i1, stamped ~21:30 the evening before; BSE's next-day file lands after midnight and is taken
+# by the 09:15 slot, which also fires on weekends.
 SPAN_REFRESH_SLOTS_IST: tuple[tuple[int, int], ...] = (
     (9, 15),
     (11, 15),
@@ -265,6 +267,7 @@ SPAN_REFRESH_SLOTS_IST: tuple[tuple[int, int], ...] = (
     (14, 15),
     (15, 45),
     (18, 0),
+    (21, 45),
 )
 NSE_SPAN_ARCHIVE_URL_TEMPLATE = (
     os.environ.get("NSE_SPAN_ARCHIVE_URL_TEMPLATE")

@@ -64,6 +64,7 @@ from icici_breeze_backend.app.services.bots import backtest_jobs, proposals
 from icici_breeze_backend.app.services.bots.run_bundles import bundle_audit_log, bundle_runs
 from icici_breeze_backend.audit import bot_audit
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 
 _logger = logging.getLogger(__name__)
 
@@ -624,7 +625,8 @@ async def plan_bot(
         )
         raise HTTPException(status_code=502, detail="Could not read available margin.")
 
-    margin_source = proc.get_strategy_builder_margin_source(ctx.user_id)
+    # Live bots size real orders, so they always ask ICICI (design-decisions #48).
+    margin_source = MARGIN_SOURCE_BREEZE
     # Priority order, same as the unattended sweep, so the manual review shows what the bot
     # would actually have done rather than a differently-ordered version of it.
     ordered = sorted(expiring, key=lambda c: config.indices[c].priority)

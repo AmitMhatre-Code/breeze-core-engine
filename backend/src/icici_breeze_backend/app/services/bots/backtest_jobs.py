@@ -615,11 +615,24 @@ def _open_bot_backtest(
                 from icici_breeze_backend.app.services.processor import processor
 
                 _update(phase="sizing")
-                note("Pricing one lot's margin at today's levels…")
+                from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_EXCHANGE
+
+                proc = processor()
+                margin_source = proc.get_margin_source(user_id, "backtest")
+                note(
+                    "Pricing one lot's margin at today's levels from the SPAN file…"
+                    if margin_source == MARGIN_SOURCE_EXCHANGE
+                    else "Pricing one lot's margin at today's levels from ICICI's margin calculator…"
+                )
                 with _broker_scope(user_id):
-                    sizing = service.price_lots(bot, config, user_id, processor())
+                    sizing = service.price_lots(
+                        bot, config, user_id, proc, margin_source=margin_source
+                    )
                 run["params"]["sizing"] = sizing["describe"]
+                run["params"]["sizing_margin_source"] = sizing.get("margin_source")
                 lots, scopes = sizing.get("lots"), sizing.get("scopes")
+                for warning in sizing.get("notes") or []:
+                    note(warning)
                 note(sizing["describe"])
 
             # 3. replay on real prices, once per signal setting

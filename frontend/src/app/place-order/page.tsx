@@ -335,9 +335,11 @@ function PlaceOrderPageInner() {
       const [mb, ms] = await Promise.all([
         apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
           legs: [{ ...legBase, action: "Buy" as const }],
+          margin_scope: "app",
         }),
         apiClient.post<MarginApiResponse>("/strategy-builder/margin", {
           legs: [{ ...legBase, action: "Sell" as const }],
+          margin_scope: "app",
         }),
       ]);
       const marginPerLotBuy = parseSpanMargin(mb);

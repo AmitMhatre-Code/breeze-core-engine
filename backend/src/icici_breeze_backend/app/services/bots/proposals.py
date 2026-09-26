@@ -31,6 +31,7 @@ from icici_breeze_backend.app.domain.bots import (
 )
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.audit.logger import AuditLogger, OperationType
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 
 _logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ def price_edited_leg(user_id: str, leg, edit, fresh_by_scrip: dict):
         distance_pct=edit.distance_pct,
         lots=lots,
         lot_size=int(leg.lot_size),
-        margin_source=proc.get_strategy_builder_margin_source(user_id),
+        margin_source=MARGIN_SOURCE_BREEZE,  # live bots always ask ICICI (design-decisions #48)
         held_quantity=leg.held_quantity,
         pledged_quantity=leg.pledged_quantity,
         existing_short_lots=leg.existing_short_lots,
@@ -557,7 +558,7 @@ def _approve_index_plan(
             status_code=502,
             reason_code=ReasonCode.BROKER_ERROR,
         )
-    margin_source = proc.get_strategy_builder_margin_source(user_id)
+    margin_source = MARGIN_SOURCE_BREEZE  # live bots always ask ICICI (design-decisions #48)
 
     run_id = repo.start_run(user_id, BOT_EXPIRY_INDEX_WRITER, trigger)
     placed: list[PlacedLegResult] = []

@@ -29,6 +29,7 @@ from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
 from icici_breeze_backend.app.services.bots import hitl
 from icici_breeze_backend.app.services.bots import holdings_writer as bot1
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 
 _logger = logging.getLogger(__name__)
 
@@ -430,7 +431,7 @@ def _propose_index(
             )
             return
         available = max(0.0, available - float(margin_committed))
-        margin_source = proc.get_strategy_builder_margin_source(user_id)
+        margin_source = MARGIN_SOURCE_BREEZE  # live bots always ask ICICI (design-decisions #48)
 
         from icici_breeze_backend.app.services.bots import proposals as svc
 
@@ -535,7 +536,7 @@ def _fire(
         # this one is concerned, so its per-index cap applies to the remainder.
         available = max(0.0, available - float(margin_committed))
 
-        margin_source = proc.get_strategy_builder_margin_source(user_id)
+        margin_source = MARGIN_SOURCE_BREEZE  # live bots always ask ICICI (design-decisions #48)
         results = []
         for index_code in decision.indices:
             results.append(

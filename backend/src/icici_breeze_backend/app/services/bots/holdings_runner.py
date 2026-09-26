@@ -15,6 +15,7 @@ from icici_breeze_backend.app.db.bots_migrate import BOT_HOLDINGS_WRITER
 from icici_breeze_backend.app.domain.bots import HoldingsWriterConfig, ReasonCode
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots import holdings_writer
+from icici_breeze_backend.app.services.nsccl_baseline import MARGIN_SOURCE_BREEZE
 
 _logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ def run_scan(user_id: str, trigger: str):
             user_id,
             config=config,
             prefs=prefs,
-            margin_source=proc.get_strategy_builder_margin_source(user_id),
+            # Live bots size real orders, so they always ask ICICI (design-decisions #48).
+            margin_source=MARGIN_SOURCE_BREEZE,
         )
     except holdings_writer.BotScanError as e:
         repo.finish_run(
@@ -126,7 +128,8 @@ def fire_autonomous(
     run_id = repo.start_run(user_id, BOT_HOLDINGS_WRITER, trigger)
     try:
         prefs = {p.stock_code: p for p in repo.list_scrip_prefs(user_id)}
-        margin_source = proc.get_strategy_builder_margin_source(user_id)
+        # Live bots size real orders, so they always ask ICICI (design-decisions #48).
+        margin_source = MARGIN_SOURCE_BREEZE
         result = holdings_writer.scan(
             proc, user_id, config=config, prefs=prefs, margin_source=margin_source
         )

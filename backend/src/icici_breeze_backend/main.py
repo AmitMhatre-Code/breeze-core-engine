@@ -205,6 +205,13 @@ def _ensure_app_database() -> None:
             )
 
             ensure_user_telegram_table(db_path)
+            from icici_breeze_backend.app.services.margin_addon import ensure_margin_addon_table
+            from icici_breeze_backend.app.services.margin_source_prefs import (
+                ensure_margin_source_columns,
+            )
+
+            ensure_margin_addon_table(db_path)
+            ensure_margin_source_columns(db_path)
             from icici_breeze_backend.app.services.user_rate_limit_prefs import (
                 migrate_legacy_rate_limit_pause_default,
                 migrate_rate_limit_pause_bounds,

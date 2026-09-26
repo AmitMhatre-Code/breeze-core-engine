@@ -14,6 +14,20 @@ import {
   type BacktestPeriod,
 } from "@/lib/bots-backtest";
 import { BOT_META, type BotType } from "@/lib/use-bots";
+import { apiClient } from "@/lib/api-client";
+import { formatSourceFileDate } from "@/lib/format-iso-date";
+
+/** Bots whose backtest lot count comes from today's margin (backend `price_lots`). */
+const MARGIN_SIZED = new Set(["fly", "expiry"]);
+
+type BacktestMarginSource = {
+  choices?: { backtest?: string };
+  effective?: { backtest?: string };
+  addon?: { available: boolean; message: string | null };
+  span_freshness?: {
+    exchanges: Record<string, { label: string; source_date: string | null; outdated: boolean }>;
+  };
+};
 
 /** A clock winding backwards: this bot's rules, run over past sessions. */
 function HistoryIcon() {
@@ -107,6 +121,18 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
     if (finished) void qc.invalidateQueries({ queryKey: ["bots", "runs"] });
   }, [finished, qc]);
 
+  const marginSized = MARGIN_SIZED.has(bot);
+  const marginSourceQ = useQuery({
+    queryKey: ["settings", "margin-source"],
+    queryFn: () => apiClient.get<BacktestMarginSource>("/api/settings/margin-source/data"),
+    enabled: marginSized,
+  });
+  const backtestOnSpan = marginSourceQ.data?.effective?.backtest === "exchange_baseline";
+  const spanWanted = marginSourceQ.data?.choices?.backtest === "exchange_baseline";
+  const outdatedSpan = backtestOnSpan
+    ? Object.values(marginSourceQ.data?.span_freshness?.exchanges ?? {}).filter((e) => e.outdated)
+    : [];
+
   const customIncomplete = period === "custom" && (!from || !to);
   const budget = status.data?.budget;
   const lastLine = ours?.log?.length ? ours.log[ours.log.length - 1] : null;
@@ -153,6 +179,28 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
                 Settings &rarr; API Usage
               </a>
               .
+            </p>
+          ) : null}
+          {marginSized && outdatedSpan.length > 0 ? (
+            <p className="mt-2 text-xs leading-relaxed text-amber-accent" role="alert">
+              {outdatedSpan
+                .map(
+                  (e) =>
+                    `The ${e.label} SPAN file is outdated (${
+                      e.source_date ? formatSourceFileDate(e.source_date) : "none loaded"
+                    }).`,
+                )
+                .join(" ")}{" "}
+              Lots will be sized from it anyway; refresh it in{" "}
+              <a href="/settings/reference-data-loads" className="underline underline-offset-2">
+                Settings &rarr; Reference Data Loads
+              </a>{" "}
+              for margins that match today&rsquo;s.
+            </p>
+          ) : null}
+          {marginSized && spanWanted && !backtestOnSpan && marginSourceQ.data?.addon?.message ? (
+            <p className="mt-2 text-xs leading-relaxed text-amber-accent">
+              Lots will be sized with ICICI&rsquo;s margin calculator: {marginSourceQ.data.addon.message}
             </p>
           ) : null}
           {otherRunning ? (

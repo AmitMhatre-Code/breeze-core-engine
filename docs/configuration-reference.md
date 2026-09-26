@@ -248,7 +248,7 @@ Customer deployments (the current, active path) get their `.env` written by bree
 | `REFERENCE_DATA_LOOKBACK_DAYS` | `10` | Trading-day lookback when downloading NSE/BSE FO bhavcopy. |
 | `NSE_FO_BHAVCOPY_URL_TEMPLATE` | NSE archives FO zip URL | `{yyyymmdd}` placeholder. |
 | `BSE_FO_BHAVCOPY_URL_TEMPLATE` | BSE derivative CSV URL | `{yyyymmdd}` placeholder. |
-| `SPAN_INTRADAY_REFRESH_ENABLED` | `true` | Intraday SPAN baseline refresh at 09:15, 11:15, 12:45, 14:15, 15:45 and 18:00 IST. The slot times themselves are fixed in code, chosen against the exchanges' own publish schedule. |
+| `SPAN_INTRADAY_REFRESH_ENABLED` | `true` | Intraday SPAN baseline refresh at 09:15, 11:15, 12:45, 14:15, 15:45, 18:00 and 21:45 IST. The slot times themselves are fixed in code, chosen against the exchanges' own publish schedule. |
 | `NSE_SPAN_ARCHIVE_URL_TEMPLATE` | NSCCL SPAN zip URL | `{yyyymmdd}` and `{version}` placeholders. |
 | `NSE_SPAN_MAX_INTRADAY_VERSION` | `6` | Highest `i{n}` revision probed. NSE publishes through `i5`; the extra slot is headroom. |
 | `BSE_SPAN_ARCHIVE_URL_TEMPLATE` | `https://www.bseindia.com/bsedata/Risk_Automate/BSERISK{yyyymmdd}-{mode}.ZIP` | `{yyyymmdd}` and `{mode}` placeholders; modes are probed newest first: `FINAL`, `04` … `01`, `00` (Beginning of Day). Replaced `BSE_SPAN_MAXDATE_API_URL` / `BSE_SPAN_INDEX_API_URL` / `BSE_SPAN_DOWNLOAD_PREFIX` when `api.bseindia.com` started blocking non-browser clients (design-decisions #47). |

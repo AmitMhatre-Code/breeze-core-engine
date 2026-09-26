@@ -100,6 +100,9 @@ export type MarginApiRequest = {
     aggressive_limit?: boolean;
   }[];
   margin_source?: "breeze_api" | "exchange_baseline";
+  /** Which "use the SPAN file" setting governs this quote when `margin_source` is not set:
+   * the Strategy Builder page, or everywhere else ("app"). The server defaults to "app". */
+  margin_scope?: MarginScope;
   baseline_only?: boolean;
   /** Live spot for the underlying; only needed to compute the basket-level ELM figure. */
   spot?: number;
@@ -382,3 +385,6 @@ export type ProposeTradesJobStatusResponse = {
   Error?: string | null;
   Success?: ProposeTradesJobStatusSuccess | null;
 };
+
+/** Settings → Reference Data Loads toggle that governs a margin quote (backend margin_source_prefs). */
+export type MarginScope = "strategy_builder" | "app";
