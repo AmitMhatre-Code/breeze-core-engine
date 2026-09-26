@@ -306,3 +306,29 @@ def test_old_runs_are_pruned(harness_db):
     assert kept == store._MAX_RUNS_KEPT
     # The newest survive, so a just-finished run is never the one pruned.
     assert store.get_run_payload(f"run-{store._MAX_RUNS_KEPT + 4:03d}") is not None
+
+
+def test_run_route_reports_a_missing_icici_session_instead_of_starting():
+    """A run that fails before its first case stores nothing, so the refusal has to come back
+    from the route -- otherwise 'Run comparison' looks like it does nothing (2026-09-26)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from fastapi import HTTPException
+
+    from icici_breeze_backend.app.api.v1 import route_settings as rs
+    from icici_breeze_backend.app.auth.context import RequestContext
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    ctx = RequestContext(user_id="u1", username="u1", roles=["trader"], is_authenticated=True)
+    with patch.object(rs.cfg, "ICICI_BROKER_MODE", "live"), patch.object(
+        rs.breeze, "get_session_breeze", return_value=None
+    ), patch.object(runner, "start_harness_run") as start:
+        try:
+            asyncio.run(rs.margin_harness_run(include_open_positions=True, ctx=ctx))
+        except HTTPException as exc:
+            assert exc.status_code == 503
+            assert "No active ICICI session" in exc.detail
+        else:
+            raise AssertionError("expected a 503")
+    start.assert_not_called()

@@ -556,6 +556,24 @@ async def margin_harness_run(
                 f"'{cfg.ICICI_BROKER_MODE}' mode."
             ),
         )
+    # Checked here, not only in the run thread: a run that fails before its first case stores
+    # nothing, so an error raised inside the thread never reached the screen and the button
+    # looked dead. Off the event loop: generate_session is a paced broker call.
+    import asyncio
+
+    try:
+        session = await asyncio.to_thread(breeze.get_session_breeze, ctx.user_id)
+    except Exception:  # noqa: BLE001 - reported below as "no session"
+        session = None
+    if session is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No active ICICI session: ICICI refused to start one. Log in to the broker "
+                "again and retry; if it keeps failing, ICICI's customer-details service may be "
+                "down."
+            ),
+        )
     out = runner.start_harness_run(ctx.user_id, include_open_positions=include_open_positions)
     if not out.get("started"):
         raise HTTPException(status_code=409, detail="A margin harness run is already in progress.")
