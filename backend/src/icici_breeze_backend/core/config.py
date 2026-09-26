@@ -278,23 +278,11 @@ try:
     )
 except ValueError:
     NSE_SPAN_MAX_INTRADAY_VERSION = 6
-# BSE's risk-parameter page is an Angular app with no server-rendered form; the dropdown and
-# radio selections it posts are really these two JSON calls. getmaxdate returns the latest
-# date holding files, LoadData lists that date's files (flag=0 is the SPAN XML set, flag=1
-# the binary PC-SPAN set we don't use).
-BSE_SPAN_MAXDATE_API_URL = (
-    os.environ.get("BSE_SPAN_MAXDATE_API_URL")
-    or "https://api.bseindia.com/BseIndiaAPI/api/getmaxdate/w"
-).strip()
-BSE_SPAN_INDEX_API_URL = (
-    os.environ.get("BSE_SPAN_INDEX_API_URL")
-    or "https://api.bseindia.com/BseIndiaAPI/api/LoadData/w"
-).strip()
-# LoadData hands back File_Path on notices.bseindia.com, a host that does not resolve on the
-# public internet. The page rewrites it to this prefix before downloading; so do we.
-BSE_SPAN_NOTICES_PREFIX = "http://notices.bseindia.com/"
-BSE_SPAN_DOWNLOAD_PREFIX = (
-    os.environ.get("BSE_SPAN_DOWNLOAD_PREFIX") or "https://www.bseindia.com/bsedata/"
+# BSE's SPAN XML files, one per file mode ({mode}: 00, 01..04, FINAL). Probed by name because
+# api.bseindia.com, which used to list them, blocks non-browser clients since 2026-09-24.
+BSE_SPAN_ARCHIVE_URL_TEMPLATE = (
+    os.environ.get("BSE_SPAN_ARCHIVE_URL_TEMPLATE")
+    or "https://www.bseindia.com/bsedata/Risk_Automate/BSERISK{yyyymmdd}-{mode}.ZIP"
 ).strip()
 try:
     WEBSOCKET_QUOTE_TTL_SECONDS = int(os.environ.get("WEBSOCKET_QUOTE_TTL_SECONDS", "120") or "120")

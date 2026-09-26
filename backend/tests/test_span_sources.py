@@ -10,11 +10,15 @@ from icici_breeze_backend.app.services.reference_data import span_sources
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int = 200, payload=None, content: bytes = b""):
+    def __init__(self, status_code: int = 200, payload=None, content: bytes = b"", content_type=None):
         self.status_code = status_code
         self._payload = payload
         self.content = content
         self.closed = False
+        # What both hosts actually send: an archive type for a file, HTML for a miss.
+        if content_type is None:
+            content_type = "application/zip" if status_code == 200 else "text/html; charset=utf-8"
+        self.headers = {"Content-Type": content_type}
 
     def json(self):
         if self._payload is None:
@@ -27,19 +31,6 @@ class _FakeResponse:
 
     def close(self):
         self.closed = True
-
-
-def _bse_index_rows(ymd: str, modes: tuple[str, ...]) -> dict:
-    return {
-        "Table": [
-            {
-                "File_Mode": mode,
-                "FILE_TYPE": "XML_FILE",
-                "File_Path": f"http://notices.bseindia.com/Risk_Automate/BSERISK{ymd}-{suffix}.ZIP",
-            }
-            for mode, suffix in zip(modes, ("00", "01", "02", "03", "04", "FINAL"))
-        ]
-    }
 
 
 @pytest.fixture
@@ -85,14 +76,11 @@ def test_nse_resolution_walks_back_to_the_previous_session(monkeypatch, frozen_t
     assert ref.archive_name == "nsccl.20260903.i2.zip"
 
 
-def test_bse_resolution_takes_the_newest_file_mode_and_rewrites_the_host(monkeypatch, frozen_today):
-    """notices.bseindia.com does not resolve publicly; the page rewrites it before download."""
+def test_bse_resolution_takes_the_newest_file_mode(monkeypatch, frozen_today):
+    seen: list[str] = []
 
     def fake_get(url, **kwargs):
-        if url == cfg.BSE_SPAN_MAXDATE_API_URL:
-            return _FakeResponse(payload={"Table": [{"MaxDT": "04/09/2026"}]})
-        if url == cfg.BSE_SPAN_INDEX_API_URL:
-            return _FakeResponse(payload=_bse_index_rows("20260904", ("B", "I", "J", "K", "L", "Z")))
+        seen.append(url)
         return _FakeResponse(200)
 
     monkeypatch.setattr(span_sources.requests, "get", fake_get)
@@ -101,22 +89,33 @@ def test_bse_resolution_takes_the_newest_file_mode_and_rewrites_the_host(monkeyp
     assert ref is not None
     assert ref.archive_name == "BSERISK20260904-FINAL.ZIP"
     assert ref.url == "https://www.bseindia.com/bsedata/Risk_Automate/BSERISK20260904-FINAL.ZIP"
-    assert "notices.bseindia.com" not in ref.url
-    assert ref.source_version == 5  # Z, the highest file mode
+    assert ref.source_version == 5  # mode Z, as BSE's page numbered it
     assert ref.exchange_code == cfg.BFO
     assert ref.label == "Final"
+    assert seen == [ref.url]
 
 
-def test_bse_resolution_falls_back_when_the_newest_listed_file_is_not_up_yet(monkeypatch, frozen_today):
-    """The index lists a mode as soon as it is scheduled, so a slot firing seconds early must
-    fall through to the previous mode rather than failing outright."""
+def test_bse_resolution_never_calls_the_blocked_api(monkeypatch, frozen_today):
+    """api.bseindia.com 403s every non-browser client since 2026-09-24; hammering it every slot
+    only invites Akamai to flag the IP for the file host too."""
+    hosts: set[str] = set()
 
     def fake_get(url, **kwargs):
-        if url == cfg.BSE_SPAN_MAXDATE_API_URL:
-            return _FakeResponse(payload={"Table": [{"MaxDT": "04/09/2026"}]})
-        if url == cfg.BSE_SPAN_INDEX_API_URL:
-            return _FakeResponse(payload=_bse_index_rows("20260904", ("B", "I", "J", "K", "L")))
-        return _FakeResponse(404 if url.endswith("-04.ZIP") else 200)
+        hosts.add(url.split("/")[2])
+        return _FakeResponse(404)
+
+    monkeypatch.setattr(span_sources.requests, "get", fake_get)
+    span_sources.resolve_latest_bse_span_archive(lookback_days=2)
+
+    assert hosts == {"www.bseindia.com"}
+
+
+def test_bse_resolution_falls_back_when_the_next_mode_is_not_up_yet(monkeypatch, frozen_today):
+    """Mid-session: FINAL and 04 are not stamped yet, so a slot must take 03 rather than fail."""
+    up = {"BSERISK20260904-00.ZIP", "BSERISK20260904-01.ZIP", "BSERISK20260904-02.ZIP", "BSERISK20260904-03.ZIP"}
+
+    def fake_get(url, **kwargs):
+        return _FakeResponse(200 if url.rsplit("/", 1)[-1] in up else 404)
 
     monkeypatch.setattr(span_sources.requests, "get", fake_get)
     ref = span_sources.resolve_latest_bse_span_archive()
@@ -124,24 +123,36 @@ def test_bse_resolution_falls_back_when_the_newest_listed_file_is_not_up_yet(mon
     assert ref is not None
     assert ref.archive_name == "BSERISK20260904-03.ZIP"
     assert ref.source_version == 3
+    assert ref.label == "Intra-Day 03"
 
 
-def test_bse_resolution_uses_the_index_only_for_the_xml_file_set(monkeypatch, frozen_today):
-    """flag=1 is the binary PC-SPAN set, which the XML ingest cannot read."""
-    flags: list = []
+def test_bse_resolution_walks_back_over_a_holiday(monkeypatch, frozen_today):
+    """Before the day's first file (or on a holiday) the previous session's Final is newest."""
 
     def fake_get(url, **kwargs):
-        if url == cfg.BSE_SPAN_MAXDATE_API_URL:
-            return _FakeResponse(payload={"Table": [{"MaxDT": "04/09/2026"}]})
-        if url == cfg.BSE_SPAN_INDEX_API_URL:
-            flags.append((kwargs.get("params") or {}).get("flag"))
-            return _FakeResponse(payload=_bse_index_rows("20260904", ("B",)))
-        return _FakeResponse(200)
+        return _FakeResponse(200 if url.endswith("BSERISK20260902-FINAL.ZIP") else 404)
 
     monkeypatch.setattr(span_sources.requests, "get", fake_get)
-    span_sources.resolve_latest_bse_span_archive()
+    ref = span_sources.resolve_latest_bse_span_archive()
 
-    assert flags == [0]
+    assert ref is not None
+    assert ref.source_date == "20260902"
+    assert ref.archive_name == "BSERISK20260902-FINAL.ZIP"
+
+
+def test_an_html_200_is_not_an_archive(monkeypatch, frozen_today):
+    """A bot-protection challenge served with status 200 must not be mistaken for the file."""
+
+    def fake_get(url, **kwargs):
+        if url.endswith("BSERISK20260904-FINAL.ZIP"):
+            return _FakeResponse(200, content_type="text/html")
+        return _FakeResponse(200 if url.endswith("BSERISK20260904-04.ZIP") else 404)
+
+    monkeypatch.setattr(span_sources.requests, "get", fake_get)
+    ref = span_sources.resolve_latest_bse_span_archive()
+
+    assert ref is not None
+    assert ref.archive_name == "BSERISK20260904-04.ZIP"
 
 
 def test_probe_does_not_read_the_body(monkeypatch, frozen_today):

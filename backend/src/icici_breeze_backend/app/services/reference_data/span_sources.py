@@ -9,19 +9,18 @@ not need.
 NSE is a plain archive directory: ``nsccl.{yyyymmdd}.i{n}.zip``, ``n`` counting up through the
 day (i1 lands the previous evening, i5 around 15:30 IST).
 
-BSE has no such directory. Its risk-parameter page is an Angular app -- the date dropdowns and
-the file-mode radio buttons are client-side, and the HTML holds no form to post -- so the
-selections a user makes there are reproduced here as the two JSON calls the page itself makes.
-``LoadData`` returns one row per file mode (B, I, J, K, L, Z, oldest to newest) with a
-``File_Path`` on ``notices.bseindia.com``, which does not resolve publicly; the page rewrites
-it to ``www.bseindia.com/bsedata/`` before downloading, and so do we.
+BSE is resolved the same way, by probing file names:
+``Risk_Automate/BSERISK{yyyymmdd}-{00..04|FINAL}.ZIP`` on ``www.bseindia.com/bsedata/``, one per
+file mode (Beginning of Day, Intra-Day 01-04, Final). Until 2026-09-24 the names came from the
+two JSON calls BSE's Angular risk-parameter page makes (``getmaxdate/w``, ``LoadData/w``); since
+then ``api.bseindia.com`` answers every non-browser client with an Akamai 403, while the files
+themselves still download. The names are fixed, so probing them needs nothing from the API.
 """
 from __future__ import annotations
 
 import datetime as dt
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 import requests
 
@@ -38,17 +37,17 @@ _logger = logging.getLogger(__name__)
 MARKET_NSE = "nse"
 MARKET_BSE = "bse"
 
-# BSE file modes, oldest to newest within a day. The labels are the page's own.
-_BSE_MODE_ORDER: dict[str, int] = {"B": 0, "I": 1, "J": 2, "K": 3, "L": 4, "Z": 5}
-_BSE_MODE_LABELS: dict[str, str] = {
-    "B": "Beginning of the Day",
-    "I": "Intra-Day 01",
-    "J": "Intra-Day 02",
-    "K": "Intra-Day 03",
-    "L": "Intra-Day 04",
-    "Z": "Final",
-}
-_BSE_XML_FLAG = 0  # flag=1 is the binary PC-SPAN set, which this app cannot parse.
+# BSE file modes, newest first: (ordinal, file-name suffix, label). Ordinals and labels are the
+# ones BSE's page gave modes B, I, J, K, L, Z, so `source_version` and the ingest history read
+# the same as before the API was blocked.
+_BSE_MODES: tuple[tuple[int, str, str], ...] = (
+    (5, "FINAL", "Final"),
+    (4, "04", "Intra-Day 04"),
+    (3, "03", "Intra-Day 03"),
+    (2, "02", "Intra-Day 02"),
+    (1, "01", "Intra-Day 01"),
+    (0, "00", "Beginning of the Day"),
+)
 
 
 @dataclass(frozen=True)
@@ -64,12 +63,6 @@ class SpanArchiveRef:
     label: str = ""
 
 
-def _bse_headers() -> dict[str, str]:
-    headers = dict(BSE_HTTP_HEADERS)
-    headers["Accept"] = "application/json,text/plain,*/*"
-    return headers
-
-
 def _market_headers(market: str) -> dict[str, str]:
     return dict(NSE_ARCHIVES_HTTP_HEADERS) if market == MARKET_NSE else dict(BSE_HTTP_HEADERS)
 
@@ -79,7 +72,8 @@ def _url_exists(url: str, market: str) -> bool:
 
     Streamed, so the status line is available before any of the ~9 MB payload is read, and the
     connection is dropped straight after. HEAD is not usable: bseindia answers HEAD with 404
-    for files it serves happily on GET.
+    for files it serves happily on GET. An HTML body is never an archive: both hosts send their
+    misses as HTML, and a bot-protection challenge served as 200 would be too.
     """
     try:
         resp = requests.get(
@@ -92,7 +86,8 @@ def _url_exists(url: str, market: str) -> bool:
         _logger.debug("SPAN archive probe failed for %s: %s", url, exc)
         return False
     try:
-        return resp.status_code == 200
+        content_type = str(resp.headers.get("Content-Type") or "").lower()
+        return resp.status_code == 200 and "text/html" not in content_type
     finally:
         resp.close()
 
@@ -131,79 +126,29 @@ def resolve_latest_nse_span_archive(*, lookback_days: int | None = None) -> Span
     return None
 
 
-def _bse_max_date() -> dt.date | None:
-    try:
-        resp = requests.get(
-            cfg.BSE_SPAN_MAXDATE_API_URL, headers=_bse_headers(), timeout=request_timeout()
-        )
-        resp.raise_for_status()
-        table = (resp.json() or {}).get("Table") or []
-    except (requests.RequestException, ValueError) as exc:
-        _logger.debug("BSE SPAN max-date lookup failed: %s", exc)
-        return None
-    for row in table:
-        raw = str((row or {}).get("MaxDT") or "").strip()
-        try:
-            return dt.datetime.strptime(raw, "%d/%m/%Y").date()
-        except ValueError:
-            continue
-    return None
-
-
-def _bse_file_url(file_path: str) -> str:
-    path = str(file_path or "").strip()
-    if not path:
-        return ""
-    if path.lower().startswith(cfg.BSE_SPAN_NOTICES_PREFIX.lower()):
-        return cfg.BSE_SPAN_DOWNLOAD_PREFIX + path[len(cfg.BSE_SPAN_NOTICES_PREFIX) :]
-    return path
-
-
-def _bse_index_for_date(day: dt.date) -> list[dict[str, Any]]:
-    """The rows behind the page's file-mode radio buttons for one date."""
-    try:
-        resp = requests.get(
-            cfg.BSE_SPAN_INDEX_API_URL,
-            params={"date": day.strftime("%Y%m%d"), "flag": _BSE_XML_FLAG},
-            headers=_bse_headers(),
-            timeout=request_timeout(),
-        )
-        resp.raise_for_status()
-        table = (resp.json() or {}).get("Table") or []
-    except (requests.RequestException, ValueError) as exc:
-        _logger.debug("BSE SPAN index lookup failed for %s: %s", day.isoformat(), exc)
-        return []
-    return [row for row in table if isinstance(row, dict)]
-
-
 def resolve_latest_bse_span_archive(*, lookback_days: int | None = None) -> SpanArchiveRef | None:
-    """Newest BSE SPAN XML archive: latest published date, then highest file mode on it."""
+    """Newest ``BSERISK{yyyymmdd}-{mode}.ZIP``, walking days back and file modes down.
+
+    A slot firing seconds before BSE stamps a mode simply finds the previous one; a holiday
+    costs six small 404s. Weekends are probed too, since special sessions do publish.
+    """
     lookback = max(1, int(lookback_days or cfg.REFERENCE_DATA_LOOKBACK_DAYS))
-    start = _bse_max_date() or today_ist_date()
+    today = today_ist_date()
     for day_offset in range(lookback):
-        day = start - dt.timedelta(days=day_offset)
-        candidates: list[tuple[int, str, str, str]] = []
-        for row in _bse_index_for_date(day):
-            mode = str(row.get("File_Mode") or "").strip().upper()
-            if mode not in _BSE_MODE_ORDER:
-                continue
-            url = _bse_file_url(str(row.get("File_Path") or ""))
-            if not url:
-                continue
-            candidates.append((_BSE_MODE_ORDER[mode], mode, url, url.rsplit("/", 1)[-1]))
-        # Newest first, but the index lists a mode as soon as it is scheduled, so fall through
-        # to the previous mode when the file itself is not up yet.
-        for ordinal, mode, url, name in sorted(candidates, reverse=True):
+        day = today - dt.timedelta(days=day_offset)
+        ymd = day.strftime("%Y%m%d")
+        for ordinal, suffix, label in _BSE_MODES:
+            url = cfg.BSE_SPAN_ARCHIVE_URL_TEMPLATE.format(yyyymmdd=ymd, mode=suffix)
             if not _url_exists(url, MARKET_BSE):
                 continue
             return SpanArchiveRef(
                 market=MARKET_BSE,
                 exchange_code=cfg.BFO,
-                archive_name=name,
+                archive_name=url.rsplit("/", 1)[-1],
                 url=url,
-                source_date=day.strftime("%Y%m%d"),
+                source_date=ymd,
                 source_version=ordinal,
-                label=_BSE_MODE_LABELS.get(mode, mode),
+                label=label,
             )
     return None
 
