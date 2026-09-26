@@ -8,9 +8,9 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
-from icici_breeze_backend.app.services.nsccl_baseline import refresh_all_span_baselines
 from icici_breeze_backend.app.services.processor import processor
 from icici_breeze_backend.app.services.reference_data import bhavcopy_bse, bhavcopy_nse, bhavcopy_store, scrip_index
+from icici_breeze_backend.app.services.reference_data.span_refresh_runner import refresh_all_span_baselines
 from icici_breeze_backend.app.services.reference_data.state import (
     append_ingest_history,
     load_progress_state,

@@ -11,6 +11,7 @@ import time
 from icici_breeze_backend.app.services.chain_build_service import refresh_active_chains
 from icici_breeze_backend.app.services.reference_data.active_chains import list_active_chains
 from icici_breeze_backend.app.services.reference_data.keys import WS_TICK_DIRTY_CHANNEL
+from icici_breeze_backend.workers._env import load_env
 
 _logger = logging.getLogger(__name__)
 _stop = threading.Event()
@@ -99,20 +100,6 @@ def _maybe_refresh() -> None:
             _last_refresh_monotonic = time.monotonic()
 
 
-def _load_env() -> None:
-    try:
-        from dotenv import load_dotenv
-
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-        env_path = os.path.join(root, ".env")
-        if os.path.isfile(env_path):
-            load_dotenv(env_path, override=True)
-        else:
-            load_dotenv(override=True)
-    except ImportError:
-        pass
-
-
 def _resolve_lot_size(stock_code: str, expiry_display: str, exchange_code: str) -> int | None:
     from icici_breeze_backend.app.services.processor import processor
 
@@ -194,7 +181,7 @@ def _handle_signal(signum: int, _frame: object) -> None:
 
 
 def main() -> int:
-    _load_env()
+    load_env()
     # Shared with the API process rather than basicConfig: this worker is a separate OS
     # process, and rolling its own config meant it silently opted out of the secret
     # redaction filter and of any future handler wired up in configure_logging.

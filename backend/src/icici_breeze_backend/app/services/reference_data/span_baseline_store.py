@@ -156,86 +156,117 @@ def publish_span_baseline_from_db(version: int | None = None) -> int:
         ver = live
     else:
         ver = _next_version()
-    sheets: dict[str, dict[str, dict[str, float | int]]] = {}
     meta_by_exchange: dict[str, dict[str, Any]] = {}
+    # One sheet in memory at a time, streamed off the primary-key index (which already orders
+    # rows by exchange, underlying, expiry). Building every sheet first and then keeping them
+    # all as the local mirror cost ~265 MB at peak and ~214 MB resident for good (134k contracts
+    # with risk arrays), and the old mirror was still held while the new one was built -- the
+    # API process was OOM-killed seconds after an intraday publish (design-decisions #46).
+    written: set[str] = set()
+    current_key: str | None = None
+    contracts: dict[str, dict[str, Any]] = {}
+
+    def _flush() -> None:
+        if current_key is None or not contracts:
+            return
+        ex_u, short_u, expiry_s = current_key.split("|", 2)
+        redis_key = span_baseline_sheet_key(ver, ex_u, short_u, expiry_s)
+        if current_key in written:
+            # The ORDER BY is on the stored spelling, the sheet key on the normalised one, so a
+            # row stored in another case or with stray whitespace can reopen a written sheet.
+            prior = cache_get_json(redis_key)
+            if isinstance(prior, dict):
+                contracts.update({k: v for k, v in prior.items() if k not in contracts})
+        cache_set_json(redis_key, contracts)
+        written.add(current_key)
 
     try:
         with _scrip_conn() as conn:
-            rows = conn.execute(
+            cursor = conn.execute(
                 """
                 SELECT exchange_code, short_name, expiry_date, strike_price, option_type,
                        margin_per_lot, lot_size, risk_array, settle_price, source_file, source_date
                 FROM exchange_margin_baseline
+                ORDER BY exchange_code, short_name, expiry_date
                 """
-            ).fetchall()
+            )
+            for ex, short, expiry, strike, opt_type, mpl, ls, risk_raw, settle_raw, src_file, src_date in cursor:
+                ex_u = str(ex or "").strip().upper()
+                short_u = str(short or "").strip().upper()
+                expiry_s = str(expiry or "").strip()
+                opt = str(opt_type or "").strip().upper()
+                if not ex_u or not short_u or not expiry_s or opt not in ("CE", "PE"):
+                    continue
+                strike_f = parse_strike(strike)
+                if strike_f is None:
+                    continue
+                try:
+                    margin_per_lot = float(mpl)
+                    lot_size = int(ls) if ls else 0
+                except (TypeError, ValueError):
+                    continue
+                if margin_per_lot < 0:
+                    continue
+
+                sheet_key = _sheet_local_key(ex_u, short_u, expiry_s)
+                if sheet_key != current_key:
+                    _flush()
+                    current_key = sheet_key
+                    contracts = {}
+                contracts[_contract_key(strike_f, opt)] = _contract_entry(
+                    margin_per_lot,
+                    lot_size,
+                    _parse_risk_array(risk_raw),
+                    _safe_settle_price(settle_raw),
+                )
+                m = meta_by_exchange.setdefault(
+                    ex_u,
+                    {
+                        "row_count": 0,
+                        "source_date": str(src_date or ""),
+                        "source_file": str(src_file or ""),
+                    },
+                )
+                m["row_count"] = int(m["row_count"]) + 1
+                if src_date and str(src_date) > str(m.get("source_date") or ""):
+                    m["source_date"] = str(src_date)
+                    m["source_file"] = str(src_file or "")
+            _flush()
     except sqlite3.Error as exc:
         _logger.warning("SPAN baseline publish failed reading SQLite: %s", exc)
         return ver
 
-    for ex, short, expiry, strike, opt_type, mpl, ls, risk_raw, settle_raw, src_file, src_date in rows:
-        ex_u = str(ex or "").strip().upper()
-        short_u = str(short or "").strip().upper()
-        expiry_s = str(expiry or "").strip()
-        opt = str(opt_type or "").strip().upper()
-        if not ex_u or not short_u or not expiry_s or opt not in ("CE", "PE"):
-            continue
-        strike_f = parse_strike(strike)
-        if strike_f is None:
-            continue
-        try:
-            margin_per_lot = float(mpl)
-            lot_size = int(ls) if ls else 0
-        except (TypeError, ValueError):
-            continue
-        if margin_per_lot < 0:
-            continue
-
-        sheet_key = _sheet_local_key(ex_u, short_u, expiry_s)
-        risk_array = _parse_risk_array(risk_raw)
-        sheets.setdefault(sheet_key, {})[_contract_key(strike_f, opt)] = _contract_entry(
-            margin_per_lot,
-            lot_size,
-            risk_array,
-            _safe_settle_price(settle_raw),
-        )
-        m = meta_by_exchange.setdefault(
-            ex_u,
-            {
-                "row_count": 0,
-                "source_date": str(src_date or ""),
-                "source_file": str(src_file or ""),
-            },
-        )
-        m["row_count"] = int(m["row_count"]) + 1
-        if src_date and str(src_date) > str(m.get("source_date") or ""):
-            m["source_date"] = str(src_date)
-            m["source_file"] = str(src_file or "")
-
-    by_sheet: dict[str, dict[str, dict[str, float | int]]] = {}
-    for sheet_key, contracts in sheets.items():
-        ex_u, short_u, expiry_s = sheet_key.split("|", 2)
-        cache_set_json(
-            span_baseline_sheet_key(ver, ex_u, short_u, expiry_s),
-            contracts,
-        )
-        by_sheet[sheet_key] = contracts
-
     for ex_u, meta in meta_by_exchange.items():
         cache_set_json(span_baseline_meta_key(ver, ex_u), meta)
 
+    # Sheets load into the mirror on demand (`_load_sheet_into_local`), as they already did
+    # after every restart; dropping the cached ones is what makes this publish visible.
     with _lock:
         _local["meta"] = dict(meta_by_exchange)
-        _local["by_sheet"] = by_sheet
+        _local["by_sheet"] = {}
 
     if ver != live:
         bump_refdata_version(ver)
     _logger.info(
         "Published SPAN baseline version %s sheets=%s rows=%s",
         ver,
-        len(sheets),
+        len(written),
         sum(int(m.get("row_count") or 0) for m in meta_by_exchange.values()),
     )
     return ver
+
+
+def reset_local_mirror() -> None:
+    """Forget cached sheets and re-read the meta: another process has just published.
+
+    The SPAN refresh runs in a child process (`span_refresh_runner`), and a standalone publish
+    writes into the live version under the same keys, so sheets this process already cached
+    would otherwise keep serving the previous revision's margins until the next restart.
+    """
+    with _lock:
+        _local["meta"] = {}
+        _local["by_sheet"] = {}
+    load_local_from_redis()
 
 
 def load_local_from_redis() -> None:

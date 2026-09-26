@@ -90,7 +90,6 @@ from icici_breeze_backend.app.services.nsccl_baseline import (
     MARGIN_SOURCE_BREEZE,
     MARGIN_SOURCE_EXCHANGE,
     ensure_exchange_margin_baseline_table,
-    refresh_all_span_baselines,
 )
 from icici_breeze_backend.app.repositories import exchange_calendar as ec_repo
 from icici_breeze_backend.app.services.portal_exchange_calendar import (
@@ -508,7 +507,14 @@ async def settings_margin_source_post(
 async def settings_margin_source_refresh_baseline(ctx: RequestContext = Depends(get_request_context)):
     """Pull the newest published SPAN file for both exchanges. Forced: an operator clicking
     refresh wants the download attempted, not the scheduler's already-current shortcut."""
-    results = refresh_all_span_baselines(force=True)
+    import asyncio
+
+    from icici_breeze_backend.app.services.reference_data.span_refresh_runner import (
+        refresh_all_span_baselines,
+    )
+
+    # Off the event loop: the refresh waits on a child process for up to a minute.
+    results = await asyncio.to_thread(refresh_all_span_baselines, force=True)
     failed = {m: (out.get("Error") or "refresh failed") for m, out in results.items() if out.get("Status") != 200}
     if len(failed) == len(results):
         raise HTTPException(

@@ -913,8 +913,13 @@ def refresh_span_baseline(market: str, *, force: bool = False) -> dict:
     }
 
 
-def refresh_all_span_baselines(*, force: bool = False) -> dict[str, dict]:
-    """Refresh both markets. One market failing does not stop the other."""
+def refresh_all_span_baselines_in_process(*, force: bool = False) -> dict[str, dict]:
+    """Refresh both markets in *this* process. One market failing does not stop the other.
+
+    Callers want `span_refresh_runner.refresh_all_span_baselines`, which runs this in a child
+    process: here, in the API process, it holds the GIL long enough to drop the broker
+    WebSocket and adds hundreds of MB to uvicorn (design-decisions #46).
+    """
     return {
         market: refresh_span_baseline(market, force=force)
         for market in (span_sources.MARKET_NSE, span_sources.MARKET_BSE)

@@ -2,8 +2,10 @@
 
 Separate from the daily reference-data scheduler because the cadence is different in kind:
 bhavcopy and the ICICI scrip master only change end-of-day, while both exchanges republish
-their risk file several times a session. Runs in the API process only -- the chain-builder
-worker must not also fetch and ingest, or the two would race on the same SQLite table.
+their risk file several times a session. Scheduled from the API process only -- the
+chain-builder worker must not also fetch and ingest, or the two would race on the same SQLite
+table. The ingest itself runs in a child process the API process spawns
+(`span_refresh_runner`, design-decisions #46).
 """
 from __future__ import annotations
 
@@ -70,7 +72,9 @@ def _record(market: str, out: dict, *, slot: str) -> None:
 
 def run_span_refresh_slot(slot: str) -> dict[str, dict]:
     """Refresh both markets for one slot and log whatever actually landed."""
-    from icici_breeze_backend.app.services.nsccl_baseline import refresh_all_span_baselines
+    from icici_breeze_backend.app.services.reference_data.span_refresh_runner import (
+        refresh_all_span_baselines,
+    )
 
     results = refresh_all_span_baselines()
     for market, out in results.items():
