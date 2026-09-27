@@ -1,4 +1,4 @@
-"""Reading how full the container is (docs/design-decisions.md #41).
+"""Reading how full the container is (guide/technical/design-decisions.md #41).
 
 What these pin: the limit is read from whichever cgroup version is mounted; "no limit" is
 recognised in both of its spellings and falls back to the host's RAM; the reading is the

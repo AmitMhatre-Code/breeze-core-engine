@@ -2,7 +2,7 @@
 breeze-saas-portal remind a user over Telegram to re-login before market open
 when their ICICI broker session has lapsed overnight and they still have an
 armed PB/SL rule, even if this deployment is powered off at the time (the
-portal acts on the last value it received). See docs/architecture.md and
+portal acts on the last value it received). See guide/technical/architecture.md and
 breeze-saas-portal's squareoff reminder scheduler.
 
 Scoped to exactly the users who currently have an armed rule (usually 0 or 1,

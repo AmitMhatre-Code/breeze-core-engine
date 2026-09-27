@@ -48,7 +48,7 @@ SECOND_WINDOW = datetime.timedelta(minutes=15)
 #: leaves room for a bot whose exit reaches past midnight without making every bar a second
 #: read. Holding the lot instead -- which is what an unbounded book did -- costs every contract
 #: every day touched, ~375 bars a strike, for the whole job: a month replayed across Bot 3's
-#: twelve signal settings grew until the kernel killed the process (docs/design-decisions.md
+#: twelve signal settings grew until the kernel killed the process (guide/technical/design-decisions.md
 #: #41). Re-reading an evicted day is an indexed SQLite query against a local file, which is
 #: the cheap half of that trade.
 CACHED_DAYS = 2

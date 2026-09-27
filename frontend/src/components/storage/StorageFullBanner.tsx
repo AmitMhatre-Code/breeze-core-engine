@@ -6,7 +6,7 @@ import { useStorageStatus } from "@/lib/settings/storage";
 
 /**
  * Persistent (non-dismissable) banner while the data volume is at or past its threshold
- * (Settings -> Storage, docs/design-decisions.md #44). Sits under the license banner rather than
+ * (Settings -> Storage, guide/technical/design-decisions.md #44). Sits under the license banner rather than
  * replacing it: both are deployment-wide, and a lapsed licence and a full disk are independent.
  * Amber, like the licence *warning* states: the app still trades; backtests that write data wait.
  */

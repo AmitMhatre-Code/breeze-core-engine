@@ -66,7 +66,7 @@ def decrypt_broker_session_token(encrypted: str, encryption_key: str) -> Optiona
 
 def _broker_full_secret_store_cipher(encryption_key: str):
     """Fernet for the full API secret persisted beside the broker token (own key, distinct from
-    the token store and the session cookie) -- see docs/design-decisions.md #31."""
+    the token store and the session cookie) -- see guide/technical/design-decisions.md #31."""
     key_material = hashlib.sha256(((encryption_key or "") + "broker_full_secret_store_v1").encode()).digest()
     return Fernet(urlsafe_b64encode(key_material[:32]))
 

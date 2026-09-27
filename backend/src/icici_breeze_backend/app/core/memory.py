@@ -6,7 +6,7 @@ kills the fattest process in the cgroup -- uvicorn -- with `SIGKILL`. There is n
 catch and no traceback to log: the process stops mid-line, supervisord restarts it, and the work
 it was doing is only discovered as abandoned by the *next* startup. Anything long-running and
 memory-hungry therefore has to look where a `try` cannot, which is what this module is for
-(docs/design-decisions.md #41).
+(guide/technical/design-decisions.md #41).
 
 Everything here degrades to `None` rather than raising. On a dev machine there is no `/proc` and
 no cgroup, and a caller that cannot read a number must carry on rather than refuse to work.

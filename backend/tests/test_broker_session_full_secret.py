@@ -1,4 +1,4 @@
-"""The full API secret persisted beside the broker token (docs/design-decisions.md #31).
+"""The full API secret persisted beside the broker token (guide/technical/design-decisions.md #31).
 
 A session restored from the persisted token used to be signed with only the stored app half of
 the secret, so every signed ICICI call after a restart failed with "Invalid Checksum". These tests

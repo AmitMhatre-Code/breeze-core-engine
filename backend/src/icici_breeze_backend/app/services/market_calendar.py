@@ -6,7 +6,7 @@ Backed by the `exchange_calendar` singleton table (see
 operator-editable via Settings -> Exchange Calendar. There is no exchange
 API for one-off special sessions (e.g. Muhurat trading), so this DB-backed
 value — not a hardcoded constant — is what every part of the backend must
-consult. See docs/design-decisions.md for the full rationale.
+consult. See guide/technical/design-decisions.md for the full rationale.
 """
 from __future__ import annotations
 

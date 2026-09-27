@@ -2,7 +2,7 @@
 
 The per-user lock below serializes *all* outbound Breeze calls: at most one in flight per
 user, always. That is deliberate and load-bearing — see design decision #24 in
-`docs/design-decisions.md` before removing it or dispatching order calls concurrently.
+`guide/technical/design-decisions.md` before removing it or dispatching order calls concurrently.
 Short version: ICICI limits a count per rolling minute (not concurrency) and its cooldown
 outlasts the minute boundary, so bursting spends the same budget faster for a multi-minute
 penalty; and serialization is the only reason a throttle is unambiguously a *refusal*,

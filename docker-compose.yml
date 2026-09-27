@@ -15,6 +15,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # The /guide pages are built from repo-root guide/user (never guide/technical).
+      additional_contexts:
+        guide: ./guide/user
     environment:
       NEXT_PUBLIC_BACKEND_URL: "http://proxy:3000"
       # Dev-style rewrites inside Next (nginx also proxies /icici-return and /auth to backend)

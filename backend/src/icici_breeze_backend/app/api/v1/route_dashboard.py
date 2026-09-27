@@ -40,7 +40,7 @@ async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_c
     (the REST post-close fallback inside `get_index_quotes_status` resolves its own
     session and degrades to null quotes if one isn't available).
 
-    The index direction signal rides this same poll (docs/design-decisions.md #30) rather than
+    The index direction signal rides this same poll (guide/technical/design-decisions.md #30) rather than
     adding a second navbar request; `navbar_view` never raises.
     """
     from icici_breeze_backend.app.services.index_signal.reader import navbar_view

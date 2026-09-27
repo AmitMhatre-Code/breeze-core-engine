@@ -68,7 +68,7 @@ _opening = 0
 #: The reserve below it is not slack. Past it the kernel kills the biggest process in the cgroup
 #: -- this one -- with `SIGKILL`: no exception to catch, no failed run to show, just a restart
 #: whose startup finds the row and marks it interrupted. That is the failure this replaces with
-#: a sentence saying what to do (docs/design-decisions.md #41). A reading that cannot be taken
+#: a sentence saying what to do (guide/technical/design-decisions.md #41). A reading that cannot be taken
 #: at all (no `/proc`, as on a dev machine) is not treated as a refusal.
 MEMORY_CEILING = 0.80
 

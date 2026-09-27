@@ -392,7 +392,7 @@ class BacktestZipWriter:
     flat. Handing them over as a single dict meant every row of every setting had to be live at
     the moment the zip was written, which is the peak the process did not survive: no exception,
     no failed run, just a `SIGKILL` and a row the next startup reads as interrupted
-    (docs/design-decisions.md #41). The caller adds a setting's files as that setting finishes
+    (guide/technical/design-decisions.md #41). The caller adds a setting's files as that setting finishes
     and drops the rows, so only one setting's worth is ever held.
 
     The file is assembled under a `.partial` name and moved into place by `close()`, so a run

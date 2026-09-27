@@ -8,11 +8,14 @@ export type HelpTopic = {
   body: string[];
   keywords?: string[];
   relatedTopicIds?: string[];
+  /** Matching user-guide section, as `slug` or `slug#heading-anchor` (opens /guide/… in a new tab). */
+  guide?: string;
 };
 
 export const helpTopics: HelpTopic[] = [
   {
     id: "login-flow",
+    guide: "signing-in",
     category: "account",
     title: "How do I log in?",
     summary:
@@ -27,6 +30,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "risk-disclosure-login",
+    guide: "signing-in#step-4-the-risk-disclosure",
     category: "account",
     title: "Why do I see the risk disclosure every login?",
     summary:
@@ -41,6 +45,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "forgot-password",
+    guide: "account-recovery#you-forgot-your-app-password",
     category: "account",
     title: "I forgot my app password",
     summary: "Reset your app password using ICICI authentication.",
@@ -54,6 +59,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "license-status",
+    guide: "read-only-mode",
     category: "account",
     title: "License banner or read-only trading",
     summary:
@@ -69,6 +75,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "account-deletion",
+    guide: "settings-danger-zone#delete-account",
     category: "account",
     title: "Deleting your Breeze Modern account",
     summary:
@@ -83,6 +90,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "parked-orders",
+    guide: "order-book#parked-execution",
     category: "orders",
     title: "Parked orders and after-hours placement",
     summary:
@@ -98,6 +106,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "aggressive-limit",
+    guide: "place-order#aggressive-orders",
     category: "orders",
     title: "Aggressive orders",
     summary:
@@ -113,6 +122,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "clone-square-off",
+    guide: "order-book#cloning-an-order",
     category: "orders",
     title: "Clone and square-off from Order Book",
     summary:
@@ -127,6 +137,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "chunk-splitting",
+    guide: "place-order#order-chunking",
     category: "orders",
     title: "Why orders split into multiple chunks",
     summary:
@@ -141,6 +152,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "rate-limit-429",
+    guide: "api-limits#the-per-minute-limit",
     category: "orders",
     title: "Broker rate limit (HTTP 429)",
     summary:
@@ -155,6 +167,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "basket-order",
+    guide: "basket-order",
     category: "orders",
     title: "Basket Order",
     summary:
@@ -170,6 +183,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "profit-booking-stop-loss",
+    guide: "portfolio#profit-booking--stop-loss",
     category: "orders",
     title: "Profit Booking / Stop Loss (automated exits)",
     summary:
@@ -193,6 +207,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "quote-sources",
+    guide: "finding-your-way#where-prices-come-from",
     category: "quotes",
     title: "Quote source badges (Live, Bhavcopy, ICICI API)",
     summary:
@@ -207,6 +222,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "market-hours",
+    guide: "finding-your-way#where-prices-come-from",
     category: "quotes",
     title: "Market hours and when live quotes apply",
     summary:
@@ -221,6 +237,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "strategy-builder-overview",
+    guide: "strategy-builder",
     category: "strategy",
     title: "What Strategy Builder does",
     summary:
@@ -235,6 +252,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "probability-of-profit",
+    guide: "glossary#pop-probability-of-profit",
     category: "strategy",
     title: "Probability of profit (PoP)",
     summary:
@@ -250,6 +268,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "strategy-builder-constraints",
+    guide: "strategy-builder#when-nothing-comes-back",
     category: "strategy",
     title: "No strategies returned",
     summary:
@@ -265,6 +284,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "near-threshold-alternatives",
+    guide: "strategy-builder#3-proposed-trades",
     category: "strategy",
     title: "Near-threshold alternatives",
     summary:
@@ -279,6 +299,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "unlimited-loss",
+    guide: "strategy-builder#3-proposed-trades",
     category: "strategy",
     title: "Unlimited loss warning",
     summary:
@@ -293,6 +314,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "strategy-builder-margins",
+    guide: "margins",
     category: "strategy",
     title: "Strategy Builder margin estimates",
     summary:
@@ -307,6 +329,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "setup-checklist",
+    guide: "settings-trading",
     category: "settings",
     title: "First-time setup checklist",
     summary:
@@ -327,6 +350,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "credentials",
+    guide: "settings-trading#broker-credentials",
     category: "settings",
     title: "Broker credentials",
     summary: "Update ICICI API key and secret fragment.",
@@ -340,6 +364,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "quantity-limits",
+    guide: "settings-trading#quantity-limits",
     category: "settings",
     title: "Quantity limits",
     summary:
@@ -354,6 +379,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "reference-data-loads",
+    guide: "settings-automation#reference-data-loads",
     category: "settings",
     title: "Reference data loads",
     summary:
@@ -368,6 +394,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "exchange-calendar",
+    guide: "settings-automation#exchange-calendar",
     category: "settings",
     title: "Exchange calendar",
     summary:
@@ -382,6 +409,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "api-usage-limits",
+    guide: "api-limits",
     category: "settings",
     title: "API usage and daily limits",
     summary:
@@ -397,6 +425,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "genai-market-outlook",
+    guide: "dashboard#ai-market-outlook",
     category: "settings",
     title: "AI market outlook",
     summary: "A shared market outlook generated centrally, shown on the dashboard.",
@@ -409,6 +438,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "audit-logs",
+    guide: "settings-diagnostics#audit-logs",
     category: "settings",
     title: "Strategy Builder audit logs",
     summary:
@@ -422,6 +452,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "breeze-api-playground",
+    guide: "settings-danger-zone#api-playground",
     category: "settings",
     title: "Breeze API Playground",
     summary:
@@ -435,6 +466,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "portfolio-payoff",
+    guide: "portfolio#group-payoff",
     category: "product",
     title: "Portfolio payoff curve",
     summary:
@@ -448,6 +480,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "mobile-responsive",
+    guide: "finding-your-way#using-the-app-on-a-phone-or-tablet",
     category: "product",
     title: "Mobile and smaller screens",
     summary:
@@ -461,6 +494,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "what-is-breeze-modern",
+    guide: "welcome",
     category: "product",
     title: "What is Breeze Modern?",
     summary:
@@ -474,6 +508,7 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: "order-pages-compared",
+    guide: "place-order",
     category: "product",
     title: "Place Order vs Basket Order vs Strategy Builder",
     summary:

@@ -1,0 +1,145 @@
+# Application functionality
+
+Breeze Modern is a **browser-based trading and portfolio dashboard** that sits on top of **ICICI Direct Breeze** APIs. Users authenticate with **app credentials** (direct account password) and **ICICI** (broker session). The app surfaces portfolio, orders, option strategies, margin and scrip tooling, and optional AI-assisted market outlook features.
+
+---
+
+## Identity and access
+
+- **Direct app auth**: Login uses `/auth/direct-login` (user id + app password), then `/auth/icici-redirect` to complete broker login.
+- **Deprecated path**: Legacy `/auth/login` (ICICI-token login) is disabled and returns HTTP 410.
+- **Application session**: After direct auth and ICICI steps complete, the backend issues credentials (JWT in cookies / headers patterns as implemented) so subsequent JSON API calls are authorized.
+- **ICICI Breeze session**: Broker API key and session token are stored per user (encrypted); the backend builds `BreezeConnect` sessions to call ICICI on the user’s behalf.
+
+---
+
+## Primary UI areas (Next.js App Router)
+
+Paths below are relative to the site root (e.g. `http://localhost:3000` in development).
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Landing; navigation toward login. |
+| `/login` | Direct sign-in and ICICI login flow entry. |
+| `/logout` | Session termination UX. |
+| `/register` | New user registration (direct user id/password + ICICI credentials). |
+| `/register/correct` | Correct stored ICICI credentials for an existing direct account. |
+| `/register/forgot-password` | Start app-password recovery flow. |
+| `/register/recover-complete` | Complete app-password reset after broker verification. |
+| `/register/delete` | Account deletion flow. |
+| `/challenge` | ICICI challenge handling UX (works with backend challenge endpoints). |
+| `/dashboard` | Home-style overview: aggregates `/home/data` and VIX/options endpoints. |
+| `/portfolio` | Holdings and positions-style data from `/portfolio/data`. |
+| `/orders` | Order list from `/book/data`. |
+| `/strategies` | Summary entry using hedge, vertical-spread, and uncovered-shorts data endpoints. |
+| `/hedge`, `/vertical-spread`, `/uncovered-shorts` | Dedicated strategy views and scans. |
+| `/trade-options-chain` | Options chain trading UI. |
+| `/strategy-builder` | Multi-step builder: underlyings, chain, margin, execution APIs. |
+| `/performance` | Performance metrics from `/performance/data`. |
+| `/signals` | The NIFTY/SENSEX direction signals: one section per mechanism (volume expansion, momentum) showing what it watches, its live 1/5/15-minute readings per index, what its last backtest says in plain words, whether it is available to bots (a signal backtest covering 30 days), and which one the navbar shows. One Backtest button replays every signal over a period; the activity log lists each run with a zip of every reading and call. See [Architecture — Signals](./architecture.md#signals-the-grid). |
+| `/bots` | Bot cards (holdings writer, expiry writer, momentum scalper, iron fly, CAS Bingo): settings, modes, runs, and a backtest per bot that replays every signal setting it could use, with one zip of results per run. |
+| `/admin` | Administrative/test surfaces (guarded by backend). |
+| `/guide`, `/guide/<section>` | The user guide, public (no sign-in, listed in `public-auth-routes.ts`) and statically generated from `guide/user/` at build time. Linked from the sidebar, header, Help dialog and login/register pages; opens in a new tab. |
+| `/settings` | Hub linking to detailed settings pages. |
+| `/settings/credentials` | ICICI API credentials management. |
+| `/settings/quantity-limits` | Quantity limit configuration. |
+| `/settings/margin-source` | Breeze vs exchange margin baseline source. |
+| `/settings/scrip-master` | Scrip master refresh. |
+| `/settings/reference-data-loads` | Reference-data pipeline status/schedule: NSE/BSE bhavcopy, scrip, and SPAN load progress and history; edit the daily IST refresh time or trigger an immediate load. Also hosts the margin comparison harness (prices structures with ICICI and with every local SPAN/ELM method, then ranks them; live broker mode only, JSON export per run). SPAN baselines additionally refresh at six fixed IST slots through the session (see [Architecture](./architecture.md#reference-data-pipeline)). |
+| `/settings/exchange-calendar` | Per-user trading-day holidays and session hours; can sync from Breeze Console when `PORTAL_API_BASE_URL` is configured. |
+| `/settings/api-usage` | API usage statistics. |
+| `/settings/breeze-api-playground` | Interactively call raw ICICI Breeze API methods (including WS subscribe) against the signed-in session — for diagnosing broker-side issues. |
+| `/settings/strategy-audit-logs` | Browse recorded strategy-builder evaluation/audit entries. |
+| `/settings?tab=application-logs` | Download this deployment's rotating application logs as a zip (`/diagnostics/logs/*`). Deployment-wide, not per-user; authenticated but not admin-only. |
+| `/settings?tab=storage` | Data-volume usage, read live, and what occupies it (backtest history, backtest results, logs, and the app's own files), each with its size and the dates it covers; delete any deletable element for a date range, with the backtest cache or accounts database compacted afterwards. The request & page-view log in the accounts database is deletable; its order/square-off/bot event rows are not (design-decisions #45). Also sets the single threshold that shows the app-wide "free up space" banner and halts backtests that write data (design-decisions #44). |
+| `/settings/delete-account` | Account deletion entry. |
+
+The UI uses **React Query** for server state and **Chart.js** where charts are shown.
+
+**License / read-only mode**: when this instance's license (issued and tracked by breeze-saas-portal) is not `active`, a status banner appears and trading-mutation actions (order placement, strategy execution, hedge/spread actions) are blocked with a "Read-only mode" message, both client-side (`components/license/RevokedTradingPageGuard.tsx`) and server-side (HTTP 403). This is expected behavior when a license lapses or is revoked, not a bug — see [Architecture — Portal integration](./architecture.md#portal-integration-license-heartbeat-and-upgrades).
+
+---
+
+## Backend capability map (by feature)
+
+### Home and session
+
+- **`/home/data`**: Consolidated “home” payload for the dashboard (user-facing summary).
+- **Legacy-compatible paths** under `home.py`: login/logout redirects, `icici-return` for broker callback, challenge context, ICICI session posts—supporting both HTML redirect flows and JSON used by the modern UI.
+
+### Portfolio, orders, book
+
+- **`/portfolio/data`**, **`/portfolio/hedge-candidates`**: Portfolio and hedge candidate retrieval via ICICI.
+- **`/order/data`**, **`/order`**: Order listing and related operations.
+- **`/book/data`**, **`/book`**: Book / positions-style data (implementation aligns with ICICI book APIs).
+- **`/book/parked-orders`** (+ patch/delete endpoints): Parked order draft lifecycle.
+
+### Dashboard and volatility
+
+- **`/dashboard/vix`**, **`/dashboard/vix/options`**, ATM variants: VIX and options chain slices for dashboard widgets.
+
+### Strategy analytics
+
+- **`/hedge/data`**: Hedge strategy data.
+- **`/vertical-spread/data`**: Vertical spread universe / codes.
+- **`/uncovered-shorts/data`**, **`/uncovered-shorts/scan`**, **`/uncovered-shorts/covered-shorts-scan`**: Uncovered shorts analysis and scans.
+
+### Strategy builder
+
+- **`/strategy-builder/underlyings`**, **`/chain`**, **`/covered-shorts-scan`**, **`/margin`**, **`/execute`**: End-to-end builder pipeline including margin calculation and order execution (broker-backed).
+
+### Registration API
+
+- **`/api/register/*`**: Direct registration, correction, delete, and recovery endpoints (`/direct`, `/correct-direct`, `/delete`, `/recover/start`, `/recover/complete`) backed by `users.sqlite3`.
+
+### Settings API
+
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)), and storage (`/storage/status` polled by the banner, `/storage` inventory, `/storage/threshold`, `/storage/delete` + `/storage/job`).
+
+### Signals and bots
+
+- **`/api/signals*`**: the Signals page — readings, last-backtest summaries and gate status (`GET /api/signals`), the navbar choice (`PUT /api/signals/navbar`), signal backtests (`POST /api/signals/backtest`, `GET …/job`, `POST …/cancel`, `GET …/runs`, `GET …/runs/{id}/zip`).
+- **`/bots/*`**: bot configs, runs, cycles, proposals and backtests (`/bots/backtest/start`, `/job`, `/run`); a bot backtest's results zip downloads from its Activity row via `/api/settings/bot-audit-logs/backtest/{name}/download`.
+
+### Outlook (market narrative)
+
+- Not Microsoft Outlook: a **market outlook** feature combining RSS headlines with AI-generated commentary. Generation is centralized on breeze-saas-portal (one admin-configured API key + prompt produces a single global outlook on a schedule); this app's `GET /api/outlook/market` is a thin pass-through that polls the portal's cached result and preserves the last-known-good outlook if the portal is briefly unreachable. There is no per-user API key or configuration on this instance anymore.
+
+### Breeze API Playground
+
+- Backend catalog (`app/domain/breeze_api_tester_catalog.py`) exposed for the `/settings/breeze-api-playground` UI: lets a signed-in user invoke raw ICICI Breeze API methods, including WS subscribe, against their own session — useful for diagnosing broker-side issues without leaving the app.
+
+### Portal integration (license, heartbeat, deployment)
+
+- **`/deployment/license-status`**: Cached license status for this instance (JWT-protected), also embedded in `/home/data`. Trading-mutation routes (order, book, hedge, strategy-builder) return HTTP 403 in read-only license states. See [Architecture — Portal integration](./architecture.md#portal-integration-license-heartbeat-and-upgrades) for the full heartbeat/activation/upgrade mechanism — the portal side is authoritatively documented in breeze-saas-portal's `docs/license-management.md`.
+
+### Performance and admin
+
+- **`/performance/data`**: Performance reporting payload.
+- **`/admin/*`**: Admin data and test runners (restricted usage), including `/admin/tests/status`.
+
+### Audit
+
+- Internal audit logging is active; an operator-facing `route_audit` module exists but is not currently mounted in the v1 router. Recorded strategy-builder evaluation/audit entries are separately browsable at `/settings/strategy-audit-logs`.
+
+### Health
+
+- **`/health`**: Liveness for orchestration and load checks, including Redis connectivity/fallback status.
+- **`/metrics`**: ICICI client metrics payload for monitoring.
+- **`/metrics/runtime`**: WS tick pipeline, active-chains registry, and Redis stats.
+
+---
+
+## Static and file assets
+
+- **`/static`**: FastAPI `StaticFiles` mount from `backend/static/` when present (sample data, legacy assets).
+- **Backend data directory** (`backend/data/`): SQLite databases, ICICI master files, NSE/BSE freeze limit text files, logs—see [Architecture](./architecture.md).
+
+---
+
+## What the application does *not* do
+
+- It does **not** replace ICICI’s official apps for all broker features; it focuses on the flows and data exposed by the Breeze API surface wired in this codebase.
+- It is **not** a hosted multi-tenant SaaS by default: deployments are **your** infrastructure (local Docker, EC2, etc.) with **your** secrets in `.env`.
+
+For **how** requests move through the system, see [Flows](./flows.md). For **components and topology**, see [Architecture](./architecture.md).

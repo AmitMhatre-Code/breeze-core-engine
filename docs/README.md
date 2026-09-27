@@ -1,21 +1,22 @@
-# Breeze Modern — documentation
+# docs/ — plans, specs and filings
 
-This folder contains detailed documentation for the application. The repository [README](../README.md) stays short: high-level product description, how to run locally, and essential prerequisites (redirects and secrets). Everything below goes deeper. Start here with the index table, or open any page directly.
+User and technical documentation lives in **[`guide/`](../guide/README.md)**, not here:
 
-| Document | What it covers |
-|----------|----------------|
-| [Functionality](./functionality.md) | Feature areas, screens, APIs used by the UI, and behaviour at a user level. |
-| [Signals, bots and backtests](./signals-bots-and-backtests.md) | Plain-language guide for options traders: how direction signals are generated, how each bot trades, and what the backtests have found so far. |
-| [Architecture](./architecture.md) | Technical stack, runtime topology, components, data stores, and integration boundaries. |
-| [Design decisions](./design-decisions.md) | Rationale for major choices (single origin, proxy model, auth, persistence, deployment shape). |
-| [User and system flows](./flows.md) | End-to-end flows with sequence and flow diagrams (login, broker auth, registration, trading data, settings, deployment paths). |
-| [License management](../../breeze-saas-portal/docs/license-management.md) | Deployment licensing (authoritative doc in **breeze-saas-portal**): portal APIs, trial policy, heartbeat DRM, and core-engine enforcement. |
-| [Configuration reference](./configuration-reference.md) | Environment variables, defaults, Google/ICICI redirect checklist, Docker and Next env wiring. |
-| [AWS deployment](./aws-deployment.md) | How this app actually gets deployed (breeze-saas-portal CloudFormation) vs the dormant legacy GitHub Actions path, GHCR image publishing, and the cross-repo DRM key contract. |
+- **[`guide/user/`](../guide/user/)** is the user guide, published inside the app at `/guide`.
+- **[`guide/technical/`](../guide/technical/)** holds the engineering docs (architecture, design decisions, flows, functionality, configuration, AWS deployment) and the simplified technical overview. It stays in the repository and is never published.
+
+This folder keeps working material that is neither:
+
+| Document | What it is |
+|----------|------------|
+| [Bots MVP plan](./bots-mvp-plan.md), [Scalping bots plan](./bots-scalping-plan.md), [CAS Bingo plan](./bots-cas-bingo-plan.md) | Bot design and build plans (read §9 of the MVP plan first — it reverses §3/§4). |
+| [Signals streamline plan](./signals-streamline-plan.md) | Plan behind the current Signals page and the 30-day backtest gate. |
+| [PB/SL reliability and API budget plan](./pbsl-reliability-and-api-budget-plan.md), [Strategy group PB/SL plan](./strategy-group-pbsl-plan.md) | Profit Booking / Stop Loss plans. |
+| [Strategy Builder portfolio margin plan](./strategy-builder-portfolio-margin-plan.md), [Options strategies spec](./options-strategies.md), options strategy engine specs ([Gemini](./options_strategy_engine_spec%20-%20Gemini.md), [OpenAI](./options_strategy_engine_spec%20-%20OpenAI.md)) | Strategy Builder specs and plans. |
+| [UAT plan](./uat-plan.md) | Manual post-release smoke test. |
+| [Terms and conditions](./breeze_terms_and_conditions.md), [Login terms](./login-terms.md) | Reference copies of legal text. The live text is served by breeze-saas-portal. |
 
 ## Copyright submission package
-
-Use the following set when preparing a filing package for the Copyright Office:
 
 | Document | Purpose |
 |----------|---------|
@@ -24,5 +25,3 @@ Use the following set when preparing a filing package for the Copyright Office:
 | [Single code document](./code-submission.md) | Consolidated first-party code document (PDF-ready markdown). |
 
 The code document intentionally excludes third-party dependencies (`node_modules`, `.venv`), generated/build outputs, runtime logs, secrets (`.env*`), local databases, and the read-only `legacy/` snapshot.
-
-The `legacy/` directory in the repo is a **read-only** historical snapshot; it is not described as part of the running system here.

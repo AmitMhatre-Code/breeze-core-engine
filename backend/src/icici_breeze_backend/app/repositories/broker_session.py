@@ -10,7 +10,7 @@ max_age already assumes this). See `app/services/processor.py::_resolve_broker_t
 
 The row also carries the full API secret, because the token alone cannot sign a request:
 every signed ICICI call is `sha256(timestamp + body + secret)`, and without request cookies
-only the stored app half of the secret is available -- see docs/design-decisions.md #31.
+only the stored app half of the secret is available -- see guide/technical/design-decisions.md #31.
 The secret shares the token's lifetime: written at login, dropped by a login that has none,
 cleared on a credential change, and **deleted** (not merely ignored) once the row expires.
 """

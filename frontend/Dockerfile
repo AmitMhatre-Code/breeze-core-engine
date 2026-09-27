@@ -6,6 +6,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+# User guide source (repo-root guide/user), supplied by docker-compose.yml as the named build
+# context "guide". The /guide pages are generated from it at build time.
+COPY --from=guide . /guide/user
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

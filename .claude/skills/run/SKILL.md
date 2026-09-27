@@ -121,7 +121,7 @@ ICICI OAuth redirect to drive. Password must be 8+ characters.
 
 By default, a fresh local run reports `unlicensed` (read-only banner, every
 order/hedge/strategy-builder mutation 403s from `require_trading_not_revoked`) —
-this is correct, fail-closed behavior per `docs/architecture.md`, not a bug.
+this is correct, fail-closed behavior per `guide/technical/architecture.md`, not a bug.
 `mock-route`-ing `/deployment/license-status` only fakes the **frontend** display
 (unblocks `guardTradingAction` so a confirm dialog opens) — it does **not** satisfy
 the backend's own independent check, so a real submission still 403s. To unblock

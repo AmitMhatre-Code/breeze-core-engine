@@ -17,7 +17,7 @@ LIMITS_MASTER = "NSEFreezeLimits.txt"  # legacy alias for NSE quantity limits
 
 # Constants
 # ELM is the INDEX exposure-margin rate. Portfolio shows it as a labelled overlay beside ICICI's
-# SPAN figure, never folded into it (see docs/design-decisions.md).
+# SPAN figure, never folded into it (see guide/technical/design-decisions.md).
 ELM = 0.02
 # Single-stock exposure margin for that same Portfolio overlay. Exchange-prescribed 3.5%.
 # Deliberately NOT ELM_STOCK_STD (5%) -- that tier belongs to the Strategy Builder engine and is

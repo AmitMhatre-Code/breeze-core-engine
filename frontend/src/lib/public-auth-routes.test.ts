@@ -13,6 +13,8 @@ describe("public-auth-routes", () => {
       "/register",
       "/register/correct",
       "/register/forgot-password",
+      "/guide",
+      "/guide/portfolio",
       "/",
     ]) {
       expect(isPublicUnauthenticatedPath(path)).toBe(true);

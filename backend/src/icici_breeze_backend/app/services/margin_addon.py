@@ -1,6 +1,6 @@
 """ICICI margin add-on: what ICICI's margin_calculator charges above the exchange SPAN file.
 
-Three margin-harness runs (docs/design-decisions.md #48) showed ICICI's quoted figure sitting
+Three margin-harness runs (guide/technical/design-decisions.md #48) showed ICICI's quoted figure sitting
 above the SPAN file's own margin by a fixed share of each *short* leg's notional -- ~2% for
 index options, ~3% once a strike is more than 10% out of the money, more for single stocks --
 identical for a naked short and an iron condor at the same strike, and nil on long-only books.

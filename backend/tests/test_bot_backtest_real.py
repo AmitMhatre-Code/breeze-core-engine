@@ -473,7 +473,7 @@ def _cache_option_day(cache, key, day, *, price=40.0, minutes=5):
 
 
 class TestTheOptionBookHoldsARollingWindow:
-    """The book keeps the last few days, not the whole run (docs/design-decisions.md #41).
+    """The book keeps the last few days, not the whole run (guide/technical/design-decisions.md #41).
 
     An unbounded book held every contract of every day for the length of a job, which for a
     month replayed across twelve signal settings grew until the kernel killed the process. What

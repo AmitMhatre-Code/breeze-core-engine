@@ -91,3 +91,6 @@ legacy/
 
 # --- Ad hoc review screenshots (not part of the app) ---
 .review/
+
+# --- User guide screenshots copied into the frontend at dev/build time (source: guide/user/images) ---
+frontend/public/guide-assets/

@@ -7,7 +7,7 @@ made, the alternative that lost is named so nobody "fixes" it back.
 
 Read first: `docs/bots-mvp-plan.md` §2, §5, §9 (what bots reuse), `docs/bots-scalping-plan.md`
 §2.2 (the SG collision), §4.3 (buy-first sequencing), §7 (paper fills), and
-`docs/design-decisions.md` #24 (serialized broker calls) and #30 (the one signal source).
+`guide/technical/design-decisions.md` #24 (serialized broker calls) and #30 (the one signal source).
 
 ---
 

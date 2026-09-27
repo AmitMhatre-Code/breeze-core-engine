@@ -2,7 +2,7 @@
 
 v1 scope: unrealized component only (currently open positions, priced against the previous
 session's close). Realized P&L from same-day squared-off trades is intentionally excluded —
-see docs/architecture.md discussion / project plan for the tradeoffs (extra ICICI trade-list
+see guide/technical/architecture.md discussion / project plan for the tradeoffs (extra ICICI trade-list
 calls per dashboard load, non-trivial closed-leg matching).
 """
 from __future__ import annotations

@@ -832,7 +832,7 @@ class processor():
         if not enc_key:
             return None, {"Status": 400, "Error": "JWT_SECRET not set"}
         mgr = CredentialManager(encryption_key=enc_key)
-        # Order matters (docs/design-decisions.md #31). With no request in scope and no fragment,
+        # Order matters (guide/technical/design-decisions.md #31). With no request in scope and no fragment,
         # `reconstruct_full_api_secret` returns only the stored app half; a session built on that
         # passes generate_session (customerdetails is unsigned) and then fails every signed call
         # with "Invalid Checksum". So the persisted full secret must be tried before it.

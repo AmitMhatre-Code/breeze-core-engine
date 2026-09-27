@@ -148,6 +148,12 @@ function LoginContent() {
               Reset via ICICI
             </a>
           </p>
+          <p className="text-center text-body text-muted">
+            New here?{" "}
+            <a href="/guide/before-you-begin" target="_blank" rel="noopener" className="app-link">
+              Read the user guide ↗
+            </a>
+          </p>
         </div>
 
         <div className="relative my-6">

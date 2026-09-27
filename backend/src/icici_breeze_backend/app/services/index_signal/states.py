@@ -1,6 +1,6 @@
 """The vocabulary every signal speaks: its states and the reasons it gives for them.
 
-"unavailable" is a state of its own and never "neutral" (docs/design-decisions.md #30). Neutral is
+"unavailable" is a state of its own and never "neutral" (guide/technical/design-decisions.md #30). Neutral is
 a reading -- the market was looked at and nothing fired. Unavailable means there is no reading:
 the session is shut, the feed is stale, the baseline is not built yet. A consumer deciding whether
 to trade must be able to tell those apart, so anything but "bullish"/"bearish" is no trade.

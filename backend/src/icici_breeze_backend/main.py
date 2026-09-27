@@ -257,7 +257,7 @@ def _ensure_app_database() -> None:
             )
 
             # A row past its IST midnight is deleted, not just ignored: it carries the full
-            # API secret (docs/design-decisions.md #31).
+            # API secret (guide/technical/design-decisions.md #31).
             purge_expired_broker_sessions()
             from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
 

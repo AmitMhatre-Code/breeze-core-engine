@@ -121,5 +121,12 @@ jobs:
               grep -rE "sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}" /app 2>/dev/null || true
               exit 1
             fi
+            # guide/technical is repo-only engineering documentation (license-bypass env var,
+            # DRM design). Only guide/user may be a build input.
+            if find / -xdev \( -name "configuration-reference.md" -o -name "design-decisions.md" -o -name "technical-overview.md" -o -name "backtest-findings.md" \) 2>/dev/null | grep -q .; then
+              echo "ERROR: repo-only guide/technical docs found in image"
+              find / -xdev \( -name "configuration-reference.md" -o -name "design-decisions.md" -o -name "technical-overview.md" -o -name "backtest-findings.md" \) 2>/dev/null
+              exit 1
+            fi
             echo "Image secret scan passed"
           '

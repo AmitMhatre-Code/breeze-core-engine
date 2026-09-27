@@ -7,6 +7,8 @@ const PUBLIC_UNAUTHENTICATED_PATH_PREFIXES = [
   "/challenge",
   "/logout",
   "/register",
+  // The user guide is public on purpose: registration and first sign-in are explained there.
+  "/guide",
 ] as const;
 
 export function isPublicUnauthenticatedPath(

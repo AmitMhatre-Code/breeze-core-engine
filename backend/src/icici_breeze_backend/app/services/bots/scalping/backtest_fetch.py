@@ -57,7 +57,7 @@ class AllowanceSpent(Stopped):
     is raised by the run's own counter, while this is the whole deployment's day and is decided
     by `api_usage.advisory_budget_exhausted`. They have different remedies -- raise the backtest
     budget, versus wait for IST midnight -- so they are never reported as one
-    (docs/design-decisions.md #42).
+    (guide/technical/design-decisions.md #42).
     """
 
 
@@ -184,7 +184,7 @@ class Fetcher:
             # day, so the next request cannot succeed either. Returning it as a per-window
             # error instead cost a 9-month fetch 1,631 refusals, 34 minutes of spacing sleep
             # and 1,631 units of its own budget, all of it after the answer was already known
-            # (2026-09-23; docs/design-decisions.md #42).
+            # (2026-09-23; guide/technical/design-decisions.md #42).
             from icici_breeze_backend.app.services.api_usage import (
                 API_CALLS_LIMIT_PER_DAY,
                 AMBER_MAX,

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/api-client";
 
-/** Settings -> Storage (docs/design-decisions.md #44). Served under `/api/settings/storage`. */
+/** Settings -> Storage (guide/technical/design-decisions.md #44). Served under `/api/settings/storage`. */
 
 export type StorageStatus = {
   available: boolean;

@@ -4,7 +4,7 @@ Source for this product lives in the **`breeze-core-engine`** repository (engine
 
 A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, option strategies, margin and scrip tools, and optional AI-assisted market outlook. Users sign in with **Google** (application identity) and **ICICI** (broker session). The stack is a **Next.js** front end and a **FastAPI** backend that calls ICICI through **`breeze_connect`**, with **SQLite** and local files under `backend/data/`.
 
-**Documentation**: deeper material lives in **[`docs/`](./docs/README.md)**—functionality, architecture, design decisions, flow diagrams, full configuration reference, and AWS deployment.
+**Documentation**: everything lives in **[`guide/`](./guide/README.md)**. The user guide (`guide/user/`) is published inside the app at `/guide`; the engineering docs (`guide/technical/`: functionality, architecture, design decisions, flow diagrams, full configuration reference, AWS deployment) stay in the repository and are never published. `docs/` holds plans, specs, the UAT plan and the copyright package.
 
 ---
 
@@ -22,7 +22,7 @@ A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, op
 - **Docker and Docker Compose** *or*, for `./dev.sh`, Python venv under `backend/.venv` and Node for the frontend
 - A **repo-root `.env`** file (same file for Docker backend service and local uvicorn). **Do not commit** real secrets.
 
-**Minimum variables** (see **[Configuration reference](docs/configuration-reference.md)** for the full list and optional keys):
+**Minimum variables** (see **[Configuration reference](guide/technical/configuration-reference.md)** for the full list and optional keys):
 
 | Variable | Role |
 |----------|------|
@@ -47,7 +47,7 @@ A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, op
 
 **Edge case**: if you open **only** `http://localhost:8000` in the browser, leave `GOOGLE_OAUTH_REDIRECT_BASE_URL` unset and register `http://localhost:8000/auth/google/callback` and `http://localhost:8000/icici-return` instead. This is not the recommended setup for the modern UI.
 
-Diagrams for login, broker return, and deploy paths: **[User and system flows](docs/flows.md)**.
+Diagrams for login, broker return, and deploy paths: **[User and system flows](guide/technical/flows.md)**.
 
 ---
 
@@ -83,9 +83,11 @@ Manual equivalent: run uvicorn from `backend/` with `PYTHONPATH=./src`, and `npm
 
 | Topic | Document |
 |-------|----------|
-| Screens, features, API surface | [docs/functionality.md](docs/functionality.md) |
-| Components, topologies, persistence | [docs/architecture.md](docs/architecture.md) |
-| Why the stack is shaped this way | [docs/design-decisions.md](docs/design-decisions.md) |
-| Flow diagrams (auth, data, CI/CD) | [docs/flows.md](docs/flows.md) |
-| Every environment variable | [docs/configuration-reference.md](docs/configuration-reference.md) |
-| GitHub Actions + EC2 + GHCR | [docs/aws-deployment.md](docs/aws-deployment.md) |
+| Using the app, screen by screen (published at `/guide`) | [guide/user/](guide/user/) |
+| Simplified architecture, to send to customers on request | [guide/technical/technical-overview.md](guide/technical/technical-overview.md) |
+| Screens, features, API surface | [guide/technical/functionality.md](guide/technical/functionality.md) |
+| Components, topologies, persistence | [guide/technical/architecture.md](guide/technical/architecture.md) |
+| Why the stack is shaped this way | [guide/technical/design-decisions.md](guide/technical/design-decisions.md) |
+| Flow diagrams (auth, data, CI/CD) | [guide/technical/flows.md](guide/technical/flows.md) |
+| Every environment variable | [guide/technical/configuration-reference.md](guide/technical/configuration-reference.md) |
+| GitHub Actions + EC2 + GHCR | [guide/technical/aws-deployment.md](guide/technical/aws-deployment.md) |

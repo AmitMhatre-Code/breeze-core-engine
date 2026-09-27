@@ -18,6 +18,18 @@ export function HelpTopicBody({
           {paragraph}
         </p>
       ))}
+      {topic.guide ? (
+        <p>
+          <a
+            href={`/guide/${topic.guide}`}
+            target="_blank"
+            rel="noopener"
+            className="app-link text-xs font-medium"
+          >
+            Read more in the user guide ↗
+          </a>
+        </p>
+      ) : null}
       {showRelated && topic.relatedTopicIds && topic.relatedTopicIds.length > 0 ? (
         <div className="border-t border-zinc-100 pt-2 dark:border-zinc-800">
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">

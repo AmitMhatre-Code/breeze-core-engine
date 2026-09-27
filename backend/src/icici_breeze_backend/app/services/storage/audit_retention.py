@@ -7,7 +7,7 @@ stays open, not with trading -- the UI polls. What they give that the rotating l
 is history past its 7-day / ~40 MB window, and a record of polling the sink deliberately drops
 (`core/logging.QuietAccessPathFilter`), i.e. whether a tab was open at a given minute.
 
-So the two kinds are kept for different lengths (docs/design-decisions.md #45):
+So the two kinds are kept for different lengths (guide/technical/design-decisions.md #45):
 
 * request and page-view rows -- `NOISE_KEEP_DAYS`, and deletable by date on the Storage screen;
 * every other row (orders, square-off rules, GTT exits, bots, logins) -- `EVENT_KEEP_DAYS`, and

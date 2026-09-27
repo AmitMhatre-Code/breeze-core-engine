@@ -1225,7 +1225,7 @@ Source for this product lives in the **`breeze-core-engine`** repository (engine
 
 A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, option strategies, margin and scrip tools, and optional AI-assisted market outlook. Users sign in with **Google** (application identity) and **ICICI** (broker session). The stack is a **Next.js** front end and a **FastAPI** backend that calls ICICI through **`breeze_connect`**, with **SQLite** and local files under `backend/data/`.
 
-**Documentation**: deeper material lives in **[`docs/`](./docs/README.md)**—functionality, architecture, design decisions, flow diagrams, full configuration reference, and AWS deployment.
+**Documentation**: deeper material lives in **[`docs/`](./guide/README.md)**—functionality, architecture, design decisions, flow diagrams, full configuration reference, and AWS deployment.
 
 ---
 
@@ -1243,7 +1243,7 @@ A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, op
 - **Docker and Docker Compose** *or*, for `./dev.sh`, Python venv under `backend/.venv` and Node for the frontend
 - A **repo-root `.env`** file (same file for Docker backend service and local uvicorn). **Do not commit** real secrets.
 
-**Minimum variables** (see **[Configuration reference](docs/configuration-reference.md)** for the full list and optional keys):
+**Minimum variables** (see **[Configuration reference](guide/technical/configuration-reference.md)** for the full list and optional keys):
 
 | Variable | Role |
 |----------|------|
@@ -1268,7 +1268,7 @@ A **browser-based dashboard** for **ICICI Direct Breeze**: portfolio, orders, op
 
 **Edge case**: if you open **only** `http://localhost:8000` in the browser, leave `GOOGLE_OAUTH_REDIRECT_BASE_URL` unset and register `http://localhost:8000/auth/google/callback` and `http://localhost:8000/icici-return` instead. This is not the recommended setup for the modern UI.
 
-Diagrams for login, broker return, and deploy paths: **[User and system flows](docs/flows.md)**.
+Diagrams for login, broker return, and deploy paths: **[User and system flows](guide/technical/flows.md)**.
 
 ---
 
@@ -1304,12 +1304,12 @@ Manual equivalent: run uvicorn from `backend/` with `PYTHONPATH=./src`, and `npm
 
 | Topic | Document |
 |-------|----------|
-| Screens, features, API surface | [docs/functionality.md](docs/functionality.md) |
-| Components, topologies, persistence | [docs/architecture.md](docs/architecture.md) |
-| Why the stack is shaped this way | [docs/design-decisions.md](docs/design-decisions.md) |
-| Flow diagrams (auth, data, CI/CD) | [docs/flows.md](docs/flows.md) |
-| Every environment variable | [docs/configuration-reference.md](docs/configuration-reference.md) |
-| GitHub Actions + EC2 + GHCR | [docs/aws-deployment.md](docs/aws-deployment.md) |
+| Screens, features, API surface | [guide/technical/functionality.md](guide/technical/functionality.md) |
+| Components, topologies, persistence | [guide/technical/architecture.md](guide/technical/architecture.md) |
+| Why the stack is shaped this way | [guide/technical/design-decisions.md](guide/technical/design-decisions.md) |
+| Flow diagrams (auth, data, CI/CD) | [guide/technical/flows.md](guide/technical/flows.md) |
+| Every environment variable | [guide/technical/configuration-reference.md](guide/technical/configuration-reference.md) |
+| GitHub Actions + EC2 + GHCR | [guide/technical/aws-deployment.md](guide/technical/aws-deployment.md) |
 ```
 
 ## backend/src/icici_breeze_backend/__init__.py

@@ -12,7 +12,7 @@ for root, and counting them as free would let the volume reach "100% full" at 95
 The threshold is a setting, not a constant, and lives in `users.sqlite3` beside the other
 singleton settings (the `backtest_budget_settings` pattern). One level does both jobs: at or past
 it the app shows a banner on every page, refuses new backtests, and halts the parts of a running
-backtest that write to the volume (docs/design-decisions.md #44).
+backtest that write to the volume (guide/technical/design-decisions.md #44).
 """
 from __future__ import annotations
 

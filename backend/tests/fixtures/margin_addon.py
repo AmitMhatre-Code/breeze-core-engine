@@ -1,7 +1,7 @@
 """Make the portal's ICICI margin add-on current for a test.
 
 Every SPAN-file margin path fails closed to ICICI's margin_calculator when no add-on has been
-received from the portal (docs/design-decisions.md #48). Tests that exercise a SPAN-file path
+received from the portal (guide/technical/design-decisions.md #48). Tests that exercise a SPAN-file path
 wrap themselves in `active_margin_addon()`; with the default zero rates the add-on is 0, so
 their expected figures are exactly the SPAN file's own.
 """

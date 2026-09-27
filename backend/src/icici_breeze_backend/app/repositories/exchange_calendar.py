@@ -2,7 +2,7 @@
 
 Market operating hours and the holiday list are a physical fact about the
 exchange, not a per-user preference — this table has exactly one row
-(id = 1). See docs/design-decisions.md for why this replaced a per-user
+(id = 1). See guide/technical/design-decisions.md for why this replaced a per-user
 table.
 """
 from __future__ import annotations

@@ -1,7 +1,7 @@
 # Strategy Builder — portfolio-aware (incremental) margin
 
 Implementation spec. Status: **shipped.** All phases (1, 2, 3, 5.1, 5.2, 6) implemented and
-tested; `docs/design-decisions.md` #23 records the summarized decision. See the progress log
+tested; `guide/technical/design-decisions.md` #23 records the summarized decision. See the progress log
 below for what each phase actually did (including several corrections to this original spec,
 made during implementation and called out explicitly where they matter) and the one open
 production-validation gate (§12) that still needs a real ICICI session before full release.
@@ -740,4 +740,4 @@ lot; this is the accepted price of D3.
 4. Phase 3 engine sizing + shrink check + tests. **Largest and riskiest — keep it isolated.**
 5. Phase 5.2 shorts scan.
 6. Phase 6 frontend display + banners.
-7. Docs: add a numbered entry to `docs/design-decisions.md` recording D1–D10.
+7. Docs: add a numbered entry to `guide/technical/design-decisions.md` recording D1–D10.

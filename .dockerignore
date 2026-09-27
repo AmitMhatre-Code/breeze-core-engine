@@ -15,6 +15,9 @@
 .github
 legacy
 docs
+# Only the user guide (guide/user) is a build input; guide/technical is repo-only.
+guide/*
+!guide/user
 scripts/*
 !scripts/changelog-latest-version.mjs
 dev.sh

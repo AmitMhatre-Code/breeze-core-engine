@@ -2,8 +2,8 @@
 
 Manual regression checklist for a **post-release smoke test** of Breeze Modern. Intended
 audience: the deployment owner (or a delegated tester), run against a real deployment
-after shipping a new image — not an automated suite. See `docs/functionality.md` for the
-full feature map and `docs/architecture.md` for how the pieces fit together.
+after shipping a new image — not an automated suite. See `guide/technical/functionality.md` for the
+full feature map and `guide/technical/architecture.md` for how the pieces fit together.
 
 ## Why this is split by market hours
 
@@ -38,7 +38,7 @@ they don't need to happen in the same session.
 - [ ] Confirm which build/tag is deployed (compare against the release you're validating).
 - [ ] Confirm license status is `active` (`/settings` or the top banner) — a lapsed/revoked
       license puts the app in read-only mode and every mutation case in Section B/C will
-      403 by design, not by bug (see `docs/functionality.md` — license/read-only mode).
+      403 by design, not by bug (see `guide/technical/functionality.md` — license/read-only mode).
 - [ ] Have one ICICI-linked test account ready (or the account you're comfortable placing a
       small real/mock order with).
 - [ ] Open only the app's single public origin (e.g. `https://<host>:3000` or your nginx
@@ -124,7 +124,7 @@ wrong thing (parking, not execution).
 | B10 | Cancel a live order | Cancel the order placed in B5 (or another open one) if still working | Cancels successfully via the broker, disappears/updates status in `/orders` |
 
 > If your license is not `active`, B5/B9/B10 (and any other mutation) will correctly 403
-> with a read-only message — that's expected per `docs/functionality.md`, not a failure of
+> with a read-only message — that's expected per `guide/technical/functionality.md`, not a failure of
 > this test; verify the *message*, not that the order actually placed.
 
 ---

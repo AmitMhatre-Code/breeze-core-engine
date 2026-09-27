@@ -353,7 +353,7 @@ def advisory_headroom(user_id: str) -> int:
     counter (`backtest_budget`), which knows nothing about what the rest of the deployment has
     already spent -- so without this it plans for calls that will be shed on arrival, and
     spends its own budget discovering that one refusal at a time
-    (docs/design-decisions.md #42).
+    (guide/technical/design-decisions.md #42).
     """
     return max(0, AMBER_MAX - get_today_count(user_id))
 

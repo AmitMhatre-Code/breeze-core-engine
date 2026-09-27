@@ -21,6 +21,10 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm ci --no-audit --fund=false
 
 COPY frontend/ ./
+# User guide source: read at build time from ../guide/user (= /guide/user here) and baked into the
+# statically generated /guide pages. Only guide/user is in the build context (.dockerignore);
+# guide/technical is repo-only and must never be copied into the image.
+COPY guide/user /guide/user
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DOCKER_BUILD=1

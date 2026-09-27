@@ -107,6 +107,14 @@ export function HelpDialog({
               </kbd>{" "}
               anytime.
             </p>
+            <a
+              href="/guide"
+              target="_blank"
+              rel="noopener"
+              className="app-link mt-1.5 inline-block text-xs font-semibold"
+            >
+              Open the full user guide ↗
+            </a>
           </div>
           <button
             type="button"

@@ -376,7 +376,7 @@ def _series_key(choice: Any, index: str) -> Any:
 #:
 #: Holding all six instead was the run's largest term by far once a period got long: a series is
 #: roughly 80 MB over nine months, so six is ~490 MB carried to the end where two is ~160 MB
-#: (docs/design-decisions.md #41). `rebuilt` is the tripwire if this reasoning ever stops
+#: (guide/technical/design-decisions.md #41). `rebuilt` is the tripwire if this reasoning ever stops
 #: holding.
 KEEP_SERIES = 2
 

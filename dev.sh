@@ -7,7 +7,7 @@
 #
 # Local test mode (no real ICICI broker, no static IP): set MOCK_MARKET_MODE=LIVE or
 # MOCK_MARKET_MODE=OFF_MARKET in .env to switch the whole environment between simulated
-# market-hours and after-market-hours behavior -- see docs/configuration-reference.md's
+# market-hours and after-market-hours behavior -- see guide/technical/configuration-reference.md's
 # MARKET_HOURS_OVERRIDE entry for what each mode actually drives.
 
 set -euo pipefail

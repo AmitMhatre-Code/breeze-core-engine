@@ -215,6 +215,9 @@ export function AppShell({
             );
           })}
         </nav>
+        <div className="mx-2 mt-2 border-t border-border-soft pt-2 text-sm">
+          <UserGuideNavLink className="relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-heading text-muted transition hover:bg-panel2 hover:text-foreground" />
+        </div>
         <div className="mt-auto space-y-1.5 border-t border-border-soft px-4 py-3">
           <div className="text-body font-semibold uppercase tracking-[0.2em] text-faint">
             Session
@@ -327,6 +330,16 @@ export function AppShell({
             >
               {latestVersionLabel || "Version"}
             </button>
+            <a
+              href="/guide"
+              target="_blank"
+              rel="noopener"
+              title="User guide (opens in a new tab)"
+              aria-label="Open the user guide in a new tab"
+              className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-border-soft hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              <GuideIcon />
+            </a>
             <ThemeToggle />
             <button
               type="button"
@@ -414,6 +427,12 @@ export function AppShell({
                     </Link>
                   );
                 })}
+                <div className="mt-2 border-t border-border-soft pt-2">
+                  <UserGuideNavLink
+                    className="relative flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-muted transition hover:bg-panel2 hover:text-foreground"
+                    onClick={closeMobileNav}
+                  />
+                </div>
               </nav>
             </div>
         </Modal>
@@ -550,6 +569,60 @@ function BrandWordmark() {
         Terminal
       </div>
     </div>
+  );
+}
+
+/** Opens the public user guide (/guide) in its own tab so it can sit beside the app. */
+function UserGuideNavLink({ className, onClick }: { className: string; onClick?: () => void }) {
+  return (
+    <a href="/guide" target="_blank" rel="noopener" className={className} onClick={onClick}>
+      <GuideIcon />
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span className="truncate">User Guide</span>
+      </span>
+      <ExternalLinkIcon />
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
+  );
+}
+
+function GuideIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z" />
+      <path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="shrink-0 text-faint"
+    >
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
   );
 }
 

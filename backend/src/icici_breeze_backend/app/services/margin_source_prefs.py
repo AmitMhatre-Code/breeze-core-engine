@@ -1,4 +1,4 @@
-"""Per-user "use the SPAN file for margins" choices, one per scope (docs/design-decisions.md #48).
+"""Per-user "use the SPAN file for margins" choices, one per scope (guide/technical/design-decisions.md #48).
 
 - ``strategy_builder`` -- the Strategy Builder page only (its builds, proposals, basket margin
   and covered-shorts scan).

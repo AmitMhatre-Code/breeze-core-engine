@@ -1,0 +1,46 @@
+{
+  "title": "Breeze Modern User Guide",
+  "reviewed": "2026-09-27",
+  "parts": [
+    {
+      "title": "Getting started",
+      "sections": [
+        { "slug": "welcome", "title": "Welcome to Breeze Modern", "summary": "What the app does, what it doesn't, and how this guide is organised." },
+        { "slug": "before-you-begin", "title": "Before you begin", "summary": "The ICICI Breeze API app, static IP and redirect URL you need first." },
+        { "slug": "registering", "title": "Registering your account", "summary": "Creating your app login and storing your ICICI API credentials." },
+        { "slug": "signing-in", "title": "Signing in", "summary": "App login, the ICICI hand-off, the challenge page, the risk disclosure and signing out." },
+        { "slug": "account-recovery", "title": "Passwords and credentials", "summary": "Forgotten app password, changed ICICI credentials, and deleting your account." },
+        { "slug": "finding-your-way", "title": "Finding your way around", "summary": "The sidebar, the header bar, banners, pause screens, Help, shortcuts and quote badges." }
+      ]
+    },
+    {
+      "title": "The pages",
+      "sections": [
+        { "slug": "dashboard", "title": "Dashboard", "summary": "Your account at a glance: indices, P&L, margin, VIX and the market outlook." },
+        { "slug": "portfolio", "title": "Portfolio", "summary": "Open positions and holdings, payoff, hedges, square-off and automated exits." },
+        { "slug": "performance", "title": "Performance", "summary": "Realised P&L by week, month and financial year." },
+        { "slug": "order-book", "title": "Order Book", "summary": "Orders, trades, parked orders, modify, cancel, clone and square-off." },
+        { "slug": "place-order", "title": "Place Order", "summary": "Placing a single order: scrip search, option chain, order types, chunking and aggressive limits." },
+        { "slug": "basket-order", "title": "Basket Order", "summary": "Building and placing a multi-leg order with a combined payoff and margin." },
+        { "slug": "strategy-builder", "title": "Strategy Builder", "summary": "Proposed option strategies for your outlook, with PoP, margin, payoff and one-click execution." },
+        { "slug": "signals", "title": "Signals", "summary": "The NIFTY and SENSEX direction readings, their backtests and the 30-day gate." },
+        { "slug": "bots", "title": "Bots", "summary": "The five automated strategies: modes, settings, runs and backtests." },
+        { "slug": "settings-trading", "title": "Settings: trading setup", "summary": "Broker credentials, quantity limits, trading costs and API usage." },
+        { "slug": "settings-automation", "title": "Settings: automation and alerts", "summary": "Reference data loads, exchange calendar, Telegram alerts and engine settings." },
+        { "slug": "settings-diagnostics", "title": "Settings: diagnostics", "summary": "Audit logs, bot audit logs, application logs and storage." },
+        { "slug": "settings-danger-zone", "title": "Settings: danger zone", "summary": "The Breeze API Playground and deleting your account." }
+      ]
+    },
+    {
+      "title": "Topics",
+      "sections": [
+        { "slug": "margins", "title": "Margins", "summary": "ICICI's figure vs the SPAN-file figure, ELM, the ICICI add-on, and the margin comparison harness." },
+        { "slug": "backtests", "title": "Backtests", "summary": "Running signal and bot backtests, fetching history, and reading the results." },
+        { "slug": "api-limits", "title": "ICICI API limits", "summary": "The daily call budget, the per-minute throttle, and why orders go out one at a time." },
+        { "slug": "read-only-mode", "title": "Read-only mode and your license", "summary": "What the license banner means and what still works when trading is blocked." },
+        { "slug": "troubleshooting", "title": "Troubleshooting and FAQ", "summary": "Common problems, what causes them and what to do." },
+        { "slug": "glossary", "title": "Glossary", "summary": "Terms used in the app and in this guide." }
+      ]
+    }
+  ]
+}

@@ -208,7 +208,7 @@ def decisions_member(combo: Combo) -> str:
 
     Written by the caller as each setting finishes rather than returned from `zip_members`:
     decisions are by far the biggest thing a run produces, and holding every setting's until the
-    end is what used to exhaust the container (docs/design-decisions.md #41)."""
+    end is what used to exhaust the container (guide/technical/design-decisions.md #41)."""
     return f"{combo.id}/decisions.csv"
 
 

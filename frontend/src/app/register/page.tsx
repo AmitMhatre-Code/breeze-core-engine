@@ -142,6 +142,10 @@ export default function RegisterPage() {
           <Link href="/login" className="app-link">
             Back to login
           </Link>
+          <span aria-hidden className="mx-2">·</span>
+          <a href="/guide/registering" target="_blank" rel="noopener" className="app-link">
+            Registration guide ↗
+          </a>
         </p>
       </div>
     </div>
