@@ -517,6 +517,13 @@ MODE_SWEEP = "sweep"
 #: shared advisory shed at 4,500 calls/day (api_usage) still applies on top.
 DEFAULT_SWEEP_MAX_CALLS = 1000
 
+#: The harness keeps its own calls below this many in the trailing minute, under the pacer's
+#: 90 (and ICICI's ~100), so the rest of the app -- WS reconnects, a user placing an order --
+#: always finds room. Harness calls are advisory: the pacer refuses rather than queues them
+#: when the window is full, so the harness has to wait for headroom itself.
+_HARNESS_WINDOW_CALLS = 60
+_THROTTLE_RETRY_WAIT_SEC = 65.0
+
 _cancel = threading.Event()
 
 
@@ -661,6 +668,31 @@ def resume_harness_run(run_id: str, user_id: str) -> dict[str, Any]:
     )
 
 
+def _await_headroom(user_id: str) -> None:
+    """Block until the trailing minute has room for one more harness call (or a stop)."""
+    import time
+
+    from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiPacer
+
+    while GlobalIciciApiPacer.calls_in_window(user_id) >= _HARNESS_WINDOW_CALLS:
+        if _cancel.wait(1.0):
+            return
+
+
+def _throttled(icici: dict[str, Any]) -> bool:
+    """ICICI's per-minute refusal, or the pacer shedding an advisory call."""
+    from icici_breeze_backend.app.services.icici_api_pacing import is_icici_daily_limit_exceeded
+
+    raw = icici.get("raw") if isinstance(icici.get("raw"), dict) else {}
+    text = f"{icici.get('error') or ''} {raw.get('Error') or ''}".lower()
+    return (
+        "api call per minute" in text
+        or "shed" in text
+        or bool(raw.get("advisory_shed"))
+        or (is_icici_daily_limit_exceeded(text) and "per minute" in text)
+    )
+
+
 def _execute(
     run_id: str,
     user_id: str,
@@ -673,7 +705,33 @@ def _execute(
     failed: int = 0,
     broker_calls: int = 0,
 ) -> dict[str, Any]:
-    """Price cases from the first one without a stored result; stop, pause or finish."""
+    """Price cases from the first one without a stored result; stop, pause or finish.
+
+    Runs inside the user's ICICI scope. Without it the pacer cannot tell whose calls these
+    are, and skips the per-minute window, the per-user lock and usage counting altogether:
+    sweep 6350d21b fired 547 calls back to back and ICICI refused 105 of them.
+    """
+    from icici_breeze_backend.app.services.icici_api_pacing import icici_user_scope
+
+    with icici_user_scope(user_id):
+        return _execute_scoped(
+            run_id, user_id, breeze, cases, meta,
+            started_at=started_at, priced=priced, failed=failed, broker_calls=broker_calls,
+        )
+
+
+def _execute_scoped(
+    run_id: str,
+    user_id: str,
+    breeze: Any,
+    cases: list[HarnessCase],
+    meta: dict[str, Any],
+    *,
+    started_at: str,
+    priced: int,
+    failed: int,
+    broker_calls: int,
+) -> dict[str, Any]:
     mode = meta.get("mode") or MODE_STANDARD
     addon_rates = _rates_from_meta(meta)
     max_calls = meta.get("max_calls")
@@ -694,21 +752,32 @@ def _execute(
                 )
                 return {"ok": False, "run_id": run_id, "status": "paused"}
             case = cases[idx]
-            raw: dict[str, Any] | None = None
-            error: str | None = None
-            try:
-                # Serialized and paced by the shared client; never parallelised.
-                with advisory_calls():
-                    raw = breeze.margin_calculator(
-                        _margin_input(case), exchange_code=case.exchange_code
-                    )
-                broker_calls += 1
-                session_calls += 1
-            except Exception as exc:
-                error = str(exc)
-            icici = _icici_figures(raw)
-            if error:
-                icici = {"ok": False, "error": error, "raw": None}
+            icici: dict[str, Any] = {}
+            # A throttled case is retried once after the minute clears, not recorded as a
+            # failure: it says nothing about margin, only about pace.
+            for attempt in range(2):
+                _await_headroom(user_id)
+                raw: dict[str, Any] | None = None
+                error: str | None = None
+                try:
+                    # Serialized and paced by the shared client; never parallelised.
+                    with advisory_calls():
+                        raw = breeze.margin_calculator(
+                            _margin_input(case), exchange_code=case.exchange_code
+                        )
+                    broker_calls += 1
+                    session_calls += 1
+                except Exception as exc:
+                    error = str(exc)
+                icici = _icici_figures(raw)
+                if error:
+                    icici = {"ok": False, "error": error, "raw": raw}
+                elif not icici.get("ok"):
+                    icici = {**icici, "error": (raw or {}).get("Error") if isinstance(raw, dict) else None}
+                if icici.get("ok") or attempt == 1 or not _throttled(icici) or _cancel.is_set():
+                    break
+                _logger.warning("Harness: ICICI throttled %s; retrying after the minute clears", case.id)
+                _cancel.wait(_THROTTLE_RETRY_WAIT_SEC)
             if icici.get("ok"):
                 priced += 1
             else:

@@ -210,3 +210,34 @@ def test_a_run_left_running_by_a_restart_is_marked_interrupted(harness_db):
     assert store.reap_interrupted_runs() == 1
     run = [r for r in store.list_runs() if r["id"] == "r4"][0]
     assert run["status"] == "interrupted" and run["resumable"] is True
+
+
+def test_harness_calls_run_in_the_users_icici_scope(harness_db, fake_eval):
+    """Sweep 6350d21b: with no user in scope the pacer skipped its minute window and lock,
+    fired 547 calls back to back, and ICICI refused 105."""
+    from icici_breeze_backend.app.services.icici_api_pacing import GlobalIciciApiLimiter
+
+    seen: list[str | None] = []
+    b = MagicMock()
+
+    def _call(*a, **k):
+        seen.append(GlobalIciciApiLimiter.resolve_user_id(None))
+        return {"Status": 200, "Success": {"span_margin_required": "1"}}
+
+    b.margin_calculator.side_effect = _call
+    cases = _cases(2)
+    runner._execute("r5", "u1", b, cases, _start("r5", cases), started_at="t")
+    assert seen == ["u1", "u1"]
+
+
+def test_a_throttled_case_is_retried_not_recorded_as_failed(harness_db, fake_eval, monkeypatch):
+    monkeypatch.setattr(runner, "_THROTTLE_RETRY_WAIT_SEC", 0.0)
+    b = MagicMock()
+    b.margin_calculator.side_effect = [
+        {"Status": 5, "Error": "Limit exceed: API call per minute:Try after some time"},
+        {"Status": 200, "Success": {"span_margin_required": "1"}},
+    ]
+    cases = _cases(1)
+    runner._execute("r6", "u1", b, cases, _start("r6", cases), started_at="t")
+    run = store.get_run("r6")
+    assert run["priced_count"] == 1 and run["failed_count"] == 0 and run["broker_calls"] == 2
