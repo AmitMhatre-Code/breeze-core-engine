@@ -70,6 +70,9 @@ class HarnessCase:
     som_rate: float | None
     legs: list[CaseLeg] = field(default_factory=list)
     notes: str = ""
+    # Calibration-sweep annotations (sweep.py): grid, per-leg moneyness and traded flags, and
+    # the underlying's market features. Empty for the standard run.
+    features: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {**asdict(self), "legs": [asdict(leg) for leg in self.legs]}

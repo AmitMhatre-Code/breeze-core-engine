@@ -189,6 +189,15 @@ def _app_margin(
         out["pct_vs_icici_total"] = (
             round(100.0 * diff / reference_total, 3) if reference_total else None
         )
+        # What ICICI actually charged above the SPAN file, per rupee of gross short notional --
+        # the quantity the add-on rates are calibrated to.
+        short_notional = spot * sum(
+            l.quantity for l in case.legs if str(l.action).strip().lower() == "sell"
+        )
+        if short_notional > 0:
+            out["implied_addon_rate"] = round(
+                (reference_total - span_out["span_margin"]) / short_notional, 6
+            )
     return out
 
 
@@ -391,10 +400,32 @@ def _summarise_app_method(results: list[dict[str, Any]]) -> dict[str, Any]:
         if app.get("pct_vs_icici_total") is None or app.get("short_sides") == "long_only":
             continue
         case = res.get("case") or {}
-        rows.append((case, app["short_sides"], float(app["pct_vs_icici_total"])))
+        rows.append((case, app["short_sides"], float(app["pct_vs_icici_total"]), app.get("implied_addon_rate")))
 
     def group(pred) -> dict[str, Any]:
-        return _error_stats([p for case, sides, p in rows if pred(case, sides)])
+        return _error_stats([p for case, sides, p, _r in rows if pred(case, sides)])
+
+    def implied_median(members: list) -> float | None:
+        rates = sorted(r for _c, _s, _p, r in members if r is not None)
+        if not rates:
+            return None
+        n = len(rates)
+        return round(rates[n // 2] if n % 2 else (rates[n // 2 - 1] + rates[n // 2]) / 2, 6)
+
+    by_underlying: dict[str, dict[str, Any]] = {}
+    keys = sorted({f"{c.get('exchange_code')}:{c.get('stock_code')}" for c, _s, _p, _r in rows})
+    for key in keys:
+        members = [x for x in rows if f"{x[0].get('exchange_code')}:{x[0].get('stock_code')}" == key]
+        singles = [x for x in members if len(x[0].get("legs") or []) == 1]
+        by_underlying[key] = {
+            **_error_stats([p for _c, _s, p, _r in members]),
+            "is_index": bool(members[0][0].get("is_index")),
+            # Single short legs only: a multi-leg case's rate mixes two strikes' charges.
+            "implied_addon_rate_median": implied_median(singles),
+            "implied_addon_rate_median_calls": implied_median([x for x in singles if x[1] == "calls"]),
+            "implied_addon_rate_median_puts": implied_median([x for x in singles if x[1] == "puts"]),
+        }
+    grids = sorted({str((c.get("features") or {}).get("grid") or "standard") for c, _s, _p, _r in rows})
 
     return {
         "id": "span_file_plus_icici_addon",
@@ -410,6 +441,11 @@ def _summarise_app_method(results: list[dict[str, Any]]) -> dict[str, Any]:
             "short_puts": group(lambda c, s: s == "puts"),
             "short_both_sides": group(lambda c, s: s == "both"),
         },
+        "by_grid": {
+            g: group(lambda c, s, g=g: str((c.get("features") or {}).get("grid") or "standard") == g)
+            for g in grids
+        },
+        "by_underlying": by_underlying,
         "unavailable_reasons": sorted(unavailable),
     }
 
@@ -474,42 +510,111 @@ def _fetch_open_positions(user_id: str) -> list[dict[str, Any]]:
     return []
 
 
-def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[str, Any]:
+MODE_STANDARD = "standard"
+MODE_SWEEP = "sweep"
+
+#: Default cap on broker calls one sweep session may spend before pausing (resumable). The
+#: shared advisory shed at 4,500 calls/day (api_usage) still applies on top.
+DEFAULT_SWEEP_MAX_CALLS = 1000
+
+_cancel = threading.Event()
+
+
+def _session(user_id: str) -> tuple[Any, str | None]:
+    from icici_breeze_backend.app.services.processor import processor
+
+    if str(cfg.ICICI_BROKER_MODE or "").strip().lower() != "live":
+        return None, (
+            "The margin harness needs live broker calls. This instance is running in "
+            f"'{cfg.ICICI_BROKER_MODE}' mode, where margin figures are fabricated."
+        )
+    try:
+        breeze = processor().get_session_breeze(user_id)
+    except Exception as exc:
+        return None, f"No active ICICI session: {exc}"
+    if breeze is None:
+        return None, "No active ICICI session. Log in to the broker and retry."
+    return breeze, None
+
+
+def build_sweep_context() -> dict[str, Any]:
+    """NSE market data for the latest session's close, and the ban list ICICI is enforcing."""
+    from icici_breeze_backend.app.services.margin_harness.market_context import (
+        fetch_market_context,
+    )
+    from icici_breeze_backend.app.services.reference_data.span_freshness import latest_trading_day
+    from icici_breeze_backend.app.services.reference_data.span_sources import next_trading_day
+
+    today = now_ist().date()
+    trade_date = latest_trading_day(today)
+    ban_date = next_trading_day(trade_date) if trade_date != today or now_ist().hour >= 16 else today
+    return fetch_market_context(trade_date, ban_date=ban_date)
+
+
+def plan_sweep() -> dict[str, Any]:
+    """The sweep's case set and cost, without any broker call."""
+    from icici_breeze_backend.app.services.margin_harness.sweep import build_sweep_cases, sweep_plan
+
+    context = build_sweep_context()
+    cases = build_sweep_cases(context)
+    return {**sweep_plan(cases), "market_context_errors": context.get("errors") or []}
+
+
+def _cases_from_meta(meta: dict[str, Any]) -> list[HarnessCase]:
+    from icici_breeze_backend.app.services.margin_harness.cases import CaseLeg
+
+    out = []
+    for raw in meta.get("cases") or []:
+        legs = [CaseLeg(**leg) for leg in raw.get("legs") or []]
+        out.append(HarnessCase(**{**raw, "legs": legs}))
+    return out
+
+
+def _rates_from_meta(meta: dict[str, Any]) -> Any:
+    from icici_breeze_backend.app.services.margin_addon import parse_rates
+
+    status = meta.get("icici_addon") or {}
+    if not status.get("available") or not status.get("rates"):
+        return None
+    return parse_rates(status["rates"])
+
+
+def run_harness(
+    user_id: str,
+    *,
+    include_open_positions: bool = True,
+    mode: str = MODE_STANDARD,
+    max_calls: int | None = None,
+) -> dict[str, Any]:
     """Price every case with ICICI and with every local method. Blocking; call off-thread."""
+    from icici_breeze_backend.app.services import margin_addon
     from icici_breeze_backend.app.services.nsccl_baseline import (
         ensure_exchange_margin_baseline_table,
     )
-    from icici_breeze_backend.app.services.processor import processor
 
     ensure_exchange_margin_baseline_table()
     run_id = str(uuid.uuid4())
     started_at = now_ist().isoformat(timespec="seconds")
 
-    if str(cfg.ICICI_BROKER_MODE or "").strip().lower() != "live":
-        return {
-            "ok": False,
-            "error": (
-                "The margin harness needs live broker calls. This instance is running in "
-                f"'{cfg.ICICI_BROKER_MODE}' mode, where margin figures are fabricated."
-            ),
-        }
+    breeze, problem = _session(user_id)
+    if problem:
+        return {"ok": False, "error": problem}
 
-    try:
-        breeze = processor().get_session_breeze(user_id)
-    except Exception as exc:
-        return {"ok": False, "error": f"No active ICICI session: {exc}"}
-    if breeze is None:
-        return {"ok": False, "error": "No active ICICI session. Log in to the broker and retry."}
+    context: dict[str, Any] | None = None
+    if mode == MODE_SWEEP:
+        from icici_breeze_backend.app.services.margin_harness.sweep import build_sweep_cases
 
-    cases = build_generated_cases()
-    broker_calls = 0
-    if include_open_positions:
-        # get_positions also runs its own netted margin_calculator calls per group, so this
-        # costs a handful of broker calls rather than one; `broker_calls` below counts only
-        # the harness's own pricing calls.
-        with advisory_calls():
-            positions = _fetch_open_positions(user_id)
-        cases = cases + build_open_position_cases(positions)
+        context = build_sweep_context()
+        cases = build_sweep_cases(context)
+    else:
+        cases = build_generated_cases()
+        if include_open_positions:
+            # get_positions also runs its own netted margin_calculator calls per group, so this
+            # costs a handful of broker calls rather than one; `broker_calls` below counts only
+            # the harness's own pricing calls.
+            with advisory_calls():
+                positions = _fetch_open_positions(user_id)
+            cases = cases + build_open_position_cases(positions)
 
     if not cases:
         return {
@@ -520,18 +625,75 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
             ),
         }
 
-    # The add-on the app is using right now; recorded so the export says which rates were scored.
-    from icici_breeze_backend.app.services import margin_addon
+    # The add-on the app is using right now; recorded so the export says which rates were
+    # scored, and so a resumed run scores the rest of its cases with the same rates.
+    meta = {
+        "mode": mode,
+        "max_calls": max_calls,
+        "include_open_positions": include_open_positions,
+        "icici_addon": margin_addon.status(),
+        "market_context": context,
+        "cases": [c.as_dict() for c in cases],
+    }
+    store.create_run(run_id, user_id, started_at, len(cases), mode=mode, meta=meta)
+    return _execute(run_id, user_id, breeze, cases, meta, started_at=started_at)
 
-    addon_rates = margin_addon.get_active_rates()
-    addon_status = margin_addon.status()
 
-    store.create_run(run_id, user_id, started_at, len(cases))
-    results: list[dict[str, Any]] = []
-    priced = failed = 0
+def resume_harness_run(run_id: str, user_id: str) -> dict[str, Any]:
+    run = store.get_run(run_id)
+    if not run or not run.get("meta"):
+        return {"ok": False, "error": "Run not found or cannot be resumed."}
+    breeze, problem = _session(user_id)
+    if problem:
+        return {"ok": False, "error": problem}
+    store.set_status(run_id, "running")
+    meta = run["meta"]
+    return _execute(
+        run_id,
+        user_id,
+        breeze,
+        _cases_from_meta(meta),
+        meta,
+        started_at=run["started_at"],
+        priced=int(run.get("priced_count") or 0),
+        failed=int(run.get("failed_count") or 0),
+        broker_calls=int(run.get("broker_calls") or 0),
+    )
+
+
+def _execute(
+    run_id: str,
+    user_id: str,
+    breeze: Any,
+    cases: list[HarnessCase],
+    meta: dict[str, Any],
+    *,
+    started_at: str,
+    priced: int = 0,
+    failed: int = 0,
+    broker_calls: int = 0,
+) -> dict[str, Any]:
+    """Price cases from the first one without a stored result; stop, pause or finish."""
+    mode = meta.get("mode") or MODE_STANDARD
+    addon_rates = _rates_from_meta(meta)
+    max_calls = meta.get("max_calls")
+    start = store.result_count(run_id)
+    session_calls = 0
+    _cancel.clear()
 
     try:
-        for case in cases:
+        for idx in range(start, len(cases)):
+            if _cancel.is_set():
+                store.set_status(run_id, "stopped", error="Stopped at your request; resume to continue.")
+                return {"ok": False, "run_id": run_id, "status": "stopped"}
+            if max_calls and session_calls >= int(max_calls):
+                store.set_status(
+                    run_id,
+                    "paused",
+                    error=f"Paused after {session_calls} broker calls (the run's cap); resume to continue.",
+                )
+                return {"ok": False, "run_id": run_id, "status": "paused"}
+            case = cases[idx]
             raw: dict[str, Any] | None = None
             error: str | None = None
             try:
@@ -541,6 +703,7 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
                         _margin_input(case), exchange_code=case.exchange_code
                     )
                 broker_calls += 1
+                session_calls += 1
             except Exception as exc:
                 error = str(exc)
             icici = _icici_figures(raw)
@@ -550,29 +713,21 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
                 priced += 1
             else:
                 failed += 1
-            results.append(_evaluate_case(case, icici, addon_rates))
+            store.append_result(run_id, idx, _evaluate_case(case, icici, addon_rates))
             store.update_progress(
                 run_id, priced_count=priced, failed_count=failed, broker_calls=broker_calls
             )
     except Exception as exc:
         _logger.exception("Margin harness run failed")
-        store.finish_run(
-            run_id,
-            status="failed",
-            finished_at=now_ist().isoformat(timespec="seconds"),
-            priced_count=priced,
-            failed_count=failed,
-            broker_calls=broker_calls,
-            summary={},
-            payload=None,
-            error=str(exc),
-        )
+        store.set_status(run_id, "interrupted", error=f"{exc}; resume to continue.")
         return {"ok": False, "error": str(exc), "run_id": run_id}
 
+    results = store.load_results(run_id)
     summary = _summarise(results)
     payload = {
         "schema_version": HARNESS_SCHEMA_VERSION,
         "run_id": run_id,
+        "mode": mode,
         "started_at": started_at,
         "finished_at": now_ist().isoformat(timespec="seconds"),
         "broker_mode": cfg.ICICI_BROKER_MODE,
@@ -582,7 +737,8 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
         "broker_calls": broker_calls,
         # Embedded so an exported file stays interpretable after the code has moved on.
         "method_catalog": method_catalog(),
-        "icici_addon": addon_status,
+        "icici_addon": meta.get("icici_addon"),
+        "market_context": meta.get("market_context"),
         "summary": summary,
         "results": results,
     }
@@ -595,31 +751,64 @@ def run_harness(user_id: str, *, include_open_positions: bool = True) -> dict[st
         broker_calls=broker_calls,
         summary=summary,
         payload=payload,
+        compress=mode == MODE_SWEEP,
     )
+    store.clear_results(run_id)
     return {"ok": True, "run_id": run_id, "summary": summary}
 
 
-def start_harness_run(user_id: str, *, include_open_positions: bool = True) -> dict[str, Any]:
-    """Kick the run off in the background; a full run takes a minute or two of paced calls."""
+def _launch(target) -> dict[str, Any]:
     global _thread
     with _lock:
         if _thread and _thread.is_alive():
             return {"started": False, "reason": "already_running"}
-        if store.active_run_id():
-            return {"started": False, "reason": "already_running"}
+        # No live thread, so any 'running' row was cut off by a restart.
+        store.reap_interrupted_runs()
 
-    def _run() -> None:
-        global _thread
-        try:
-            run_harness(user_id, include_open_positions=include_open_positions)
-        finally:
-            _thread = None
+        def _run() -> None:
+            global _thread
+            try:
+                target()
+            finally:
+                _thread = None
 
-    t = threading.Thread(target=_run, name="margin-harness", daemon=True)
-    with _lock:
+        t = threading.Thread(target=_run, name="margin-harness", daemon=True)
         _thread = t
-    t.start()
+        t.start()
     return {"started": True}
+
+
+def start_harness_run(
+    user_id: str,
+    *,
+    include_open_positions: bool = True,
+    mode: str = MODE_STANDARD,
+    max_calls: int | None = None,
+) -> dict[str, Any]:
+    """Kick the run off in the background; a standard run takes a minute or two of paced
+    calls, a sweep an hour or more."""
+    return _launch(
+        lambda: run_harness(
+            user_id, include_open_positions=include_open_positions, mode=mode, max_calls=max_calls
+        )
+    )
+
+
+def start_resume(run_id: str, user_id: str) -> dict[str, Any]:
+    run = store.get_run(run_id)
+    if not run:
+        return {"started": False, "reason": "not_found"}
+    if run.get("status") not in store.RESUMABLE_STATUSES:
+        return {"started": False, "reason": "not_resumable"}
+    return _launch(lambda: resume_harness_run(run_id, user_id))
+
+
+def request_stop() -> bool:
+    """Ask the running harness to stop after its current case (resumable)."""
+    if not is_running():
+        return False
+    _cancel.set()
+    return True
 
 
 def is_running() -> bool:

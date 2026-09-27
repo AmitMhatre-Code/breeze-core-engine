@@ -829,3 +829,26 @@ Every writer follows the same rule: the autonomous sweep (`bots/scheduler`), bot
 - Live bots (Bot 2, iron fly, holdings, proposals): always ICICI. They size real orders, and an under-estimate is a rejected order.
 
 **Schema.** Each scope is its own `user_account` column defaulting to the SPAN file. Adding a column with a default fills existing rows too, so every existing user starts on the SPAN file without a data migration. The old `strategy_builder_margin_source` column (default `breeze_api`) is left unread, so an older image still finds the schema it expects. Every SPAN-file response carries `span_file_margin`, `icici_addon` and `icici_addon_version`, so a figure read later says which rates produced it.
+
+## 49. A calibration sweep measures ICICI's add-on across underlyings, from one instance, outside market hours
+
+**Decision** (2026-09-27). The margin harness has a second mode, the **calibration sweep** (pilot), in `margin_harness/sweep.py`. It samples wide rather than deep:
+- **core** — every NSE and BSE index (two expiries) and 20 stocks spread evenly across volatility (nearest expiry). Short calls and puts at 5% ITM, ATM, 5% and 10% OTM and just past the deep-OTM line (12% index, 32% stock), plus a bull put, bear call, short strangle and iron condor.
+- **dense** — a 1%-step ladder from 5% ITM to 15% OTM on NIFTY, BANKNIFTY, SENSEX and the lowest-, middle- and highest-volatility stocks.
+- **quantity** — ATM calls and 5%-OTM puts at 10 and 50 lots on the same few names.
+
+On the 25-Sep-2026 files that is 548 cases (548 ICICI calls) over 27 underlyings. Each case records the per-underlying inputs a correlation needs, all read from NSE's public archives (`market_context.py`), never from ICICI:
+- India VIX;
+- the stock's applicable volatility (`FOVOLT`) and cash-market VaR/ELM rates (`C_VAR1`);
+- whether it is in the F&O ban (`fo_secban`);
+- each leg's distance from spot and whether it traded (bhavcopy open > 0).
+
+The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short notional) by underlying, by grid and by side.
+
+**Why sampled, not exhaustive.** Every strike on every F&O underlying is about 11,000 calls, two days of ICICI's quota, and most of it would re-measure the same per-underlying rate. The residual so far varies by underlying, side and a few distance bands, not strike by strike. The dense and quantity grids exist to check that assumption on a few names, not to be the dataset.
+
+**Why only outside market hours, capped and resumable.** A sweep's hundreds of calls belong to trading during the session, so the route refuses it while the market is open. It pauses after a per-session cap (default 1,000). The shared advisory shed at 4,500 calls/day still applies on top. It stops on request after the current case, and each case's result is written as it is priced (`margin_harness_results`). A pause, a stop or a restart therefore loses nothing: the run resumes from its next unpriced case, with the case list and add-on rates it started with. A run left `running` by a restart is now marked `interrupted` rather than blocking every later run; that was already a latent bug for the standard run. Resume in the same session window: the case list is fixed at start, so a resume the next day prices yesterday's strikes against a newer SPAN file (each case still records its file).
+
+**Why one instance, not every customer.** ICICI's rules are the same for everyone, so a sweep's findings are fleet-wide. They are meant to feed the portal's add-on rates, not each deployment's own. There is no role gate, because no account holds `admin` by default; the Settings copy marks it as an operator tool.
+
+**What it does not decide.** A single sweep is one market state. Whether a per-underlying rate is stable, or explained by volatility, VaR or VIX, needs sweeps on several days, checked on stocks and days the rates were not fitted on, before any rate reaches the portal.

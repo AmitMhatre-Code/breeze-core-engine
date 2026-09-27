@@ -8,7 +8,11 @@ import { formatApiDateTime } from "@/lib/format-iso-date";
 import {
   downloadMarginHarnessRun,
   fetchMarginHarnessRuns,
+  fetchMarginSweepPlan,
+  resumeMarginHarnessRun,
   startMarginHarnessRun,
+  startMarginSweep,
+  stopMarginHarness,
   type MarginHarnessErrorStats,
   type MarginHarnessRun,
 } from "@/lib/settings/margin-harness";
@@ -75,6 +79,7 @@ export function MarginHarnessPanel() {
   const [includeOpenPositions, setIncludeOpenPositions] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [sweepMaxCalls, setSweepMaxCalls] = useState(1000);
 
   const q = useQuery({
     queryKey: ["margin-harness-runs"],
@@ -91,6 +96,18 @@ export function MarginHarnessPanel() {
     },
     onError: (e) => setError(e instanceof Error ? e.message : "Could not start the run"),
   });
+
+  const planMut = useMutation({ mutationFn: fetchMarginSweepPlan });
+  const onDone = {
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["margin-harness-runs"] });
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : "Request failed"),
+  };
+  const sweepMut = useMutation({ mutationFn: () => startMarginSweep(sweepMaxCalls), ...onDone });
+  const stopMut = useMutation({ mutationFn: stopMarginHarness, ...onDone });
+  const resumeMut = useMutation({ mutationFn: resumeMarginHarnessRun, ...onDone });
 
   const state = q.data;
   const isLive = (state?.broker_mode ?? "").toLowerCase() === "live";
@@ -160,6 +177,80 @@ export function MarginHarnessPanel() {
         ) : null}
       </div>
 
+      <div className="space-y-2 border-t border-border-soft pt-3">
+        <div className="text-sm font-medium text-foreground">Calibration sweep (pilot)</div>
+        <p className="text-xs leading-relaxed text-muted">
+          Operator tool. Prices every NSE and BSE index and about 20 stocks spread across
+          volatility: short calls and puts from 5% ITM to past the deep-OTM line, four multi-leg
+          structures, a 1% strike ladder and 10- and 50-lot sizes on a few names. Records India VIX
+          and each stock&apos;s volatility, VaR/ELM rates and ban status from NSE&apos;s files. One
+          broker call per case; runs only outside market hours, pauses at the cap below and can be
+          stopped and resumed. Download is a compressed .json.gz.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <button
+            type="button"
+            className="app-btn-outline"
+            disabled={planMut.isPending}
+            onClick={() => planMut.mutate()}
+          >
+            <AsyncLabelSpan busy={planMut.isPending} busyLabel="Estimating…" idleLabel="Estimate cost" />
+          </button>
+          <label className="block text-xs">
+            <span className="text-muted">Pause after (broker calls)</span>
+            <input
+              type="number"
+              min={1}
+              max={4000}
+              step={50}
+              className="app-input mt-1 block w-28 tabular-nums"
+              value={sweepMaxCalls}
+              disabled={running}
+              onChange={(e) => {
+                const n = Number.parseInt(e.target.value, 10);
+                if (Number.isFinite(n)) setSweepMaxCalls(Math.min(4000, Math.max(1, n)));
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="app-btn-primary"
+            disabled={running || sweepMut.isPending || !isLive}
+            onClick={() => sweepMut.mutate()}
+          >
+            <AsyncLabelSpan busy={sweepMut.isPending} busyLabel="Starting…" idleLabel="Start sweep" />
+          </button>
+          {running ? (
+            <button
+              type="button"
+              className="app-btn-outline"
+              disabled={stopMut.isPending}
+              onClick={() => stopMut.mutate()}
+            >
+              Stop after current case
+            </button>
+          ) : null}
+        </div>
+        {planMut.data ? (
+          <p className="text-xs text-muted">
+            {planMut.data.case_count} cases = {planMut.data.broker_calls} broker calls across{" "}
+            {planMut.data.underlying_count} underlyings (
+            {Object.entries(planMut.data.by_grid)
+              .map(([g, n]) => `${g} ${n}`)
+              .join(", ")}
+            ).
+            {planMut.data.market_context_errors.length > 0
+              ? ` NSE data missing: ${planMut.data.market_context_errors.join("; ")}.`
+              : ""}
+          </p>
+        ) : null}
+        {planMut.error ? (
+          <p className="text-xs text-down">
+            {planMut.error instanceof Error ? planMut.error.message : "Could not estimate"}
+          </p>
+        ) : null}
+      </div>
+
       {runs.length === 0 ? (
         <p className="text-xs text-muted">
           No comparison runs yet. Run this on an ordinary trading day and again on an expiry
@@ -203,10 +294,23 @@ export function MarginHarnessPanel() {
                     >
                       {run.status}
                     </span>
+                    {run.mode === "sweep" ? (
+                      <span className="ml-1 text-xs text-muted">(sweep)</span>
+                    ) : null}
                     {run.error ? (
                       <span className="ml-1 text-muted" title={run.error}>
                         ⓘ
                       </span>
+                    ) : null}
+                    {run.resumable && !running ? (
+                      <button
+                        type="button"
+                        className="ml-2 text-xs font-medium text-accent-strong hover:underline disabled:opacity-50"
+                        disabled={resumeMut.isPending}
+                        onClick={() => resumeMut.mutate(run.id)}
+                      >
+                        Resume
+                      </button>
                     ) : null}
                   </td>
                   <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-foreground">

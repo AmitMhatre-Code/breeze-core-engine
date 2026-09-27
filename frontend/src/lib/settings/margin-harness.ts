@@ -62,7 +62,42 @@ export type MarginHarnessRun = {
   broker_calls: number;
   error: string | null;
   summary: MarginHarnessSummary;
+  /** "standard" | "sweep" (calibration sweep). Older rows report "standard". */
+  mode?: string;
+  /** Stopped, paused (call cap) or interrupted (restart): can continue from its next case. */
+  resumable?: boolean;
 };
+
+export type MarginSweepPlan = {
+  case_count: number;
+  broker_calls: number;
+  by_grid: Record<string, number>;
+  underlyings: Record<string, number>;
+  underlying_count: number;
+  market_context_errors: string[];
+};
+
+export async function fetchMarginSweepPlan(): Promise<MarginSweepPlan> {
+  return apiClient.get<MarginSweepPlan>("/api/settings/margin-harness/sweep/plan");
+}
+
+export async function startMarginSweep(maxCalls: number): Promise<{ ok: boolean; message: string }> {
+  return apiClient.post<{ ok: boolean; message: string }>(
+    `/api/settings/margin-harness/sweep?max_calls=${encodeURIComponent(String(maxCalls))}`,
+    {},
+  );
+}
+
+export async function stopMarginHarness(): Promise<{ ok: boolean; message: string }> {
+  return apiClient.post<{ ok: boolean; message: string }>("/api/settings/margin-harness/stop", {});
+}
+
+export async function resumeMarginHarnessRun(runId: string): Promise<{ ok: boolean; message: string }> {
+  return apiClient.post<{ ok: boolean; message: string }>(
+    `/api/settings/margin-harness/runs/${encodeURIComponent(runId)}/resume`,
+    {},
+  );
+}
 
 export type MarginHarnessState = {
   running: boolean;

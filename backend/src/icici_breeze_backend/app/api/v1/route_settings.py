@@ -556,11 +556,27 @@ async def margin_harness_run(
                 f"'{cfg.ICICI_BROKER_MODE}' mode."
             ),
         )
-    # Checked here, not only in the run thread: a run that fails before its first case stores
-    # nothing, so an error raised inside the thread never reached the screen and the button
-    # looked dead. Off the event loop: generate_session is a paced broker call.
+    await _require_harness_session(ctx)
+    out = runner.start_harness_run(ctx.user_id, include_open_positions=include_open_positions)
+    if not out.get("started"):
+        raise HTTPException(status_code=409, detail="A margin harness run is already in progress.")
+    return JSONResponse({"ok": True, "message": "Margin comparison run started."})
+
+
+async def _require_harness_session(ctx: RequestContext) -> None:
+    """Checked in the route, not only in the run thread: a run that fails before its first case
+    stores nothing, so an error raised inside the thread never reached the screen and the
+    button looked dead. Off the event loop: generate_session is a paced broker call."""
     import asyncio
 
+    if str(cfg.ICICI_BROKER_MODE or "").strip().lower() != "live":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Margin harness needs live broker calls; this instance is in "
+                f"'{cfg.ICICI_BROKER_MODE}' mode."
+            ),
+        )
     try:
         session = await asyncio.to_thread(breeze.get_session_breeze, ctx.user_id)
     except Exception:  # noqa: BLE001 - reported below as "no session"
@@ -574,10 +590,77 @@ async def margin_harness_run(
                 "down."
             ),
         )
-    out = runner.start_harness_run(ctx.user_id, include_open_positions=include_open_positions)
+
+
+def _refuse_sweep_in_market_hours() -> None:
+    """A sweep spends hundreds of calls; during the session those belong to trading."""
+    from icici_breeze_backend.app.services.market_calendar import is_market_open
+
+    if is_market_open():
+        raise HTTPException(
+            status_code=409,
+            detail="A calibration sweep runs only outside market hours. Start it after the close or at the weekend.",
+        )
+
+
+@router.get("/margin-harness/sweep/plan")
+async def margin_harness_sweep_plan(ctx: RequestContext = Depends(get_request_context)):
+    """The sweep's case set and call cost, built without calling ICICI."""
+    import asyncio
+
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    return JSONResponse(await asyncio.to_thread(runner.plan_sweep))
+
+
+@router.post("/margin-harness/sweep")
+async def margin_harness_sweep(
+    max_calls: int = 1000,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """Start a calibration sweep (pilot). Pauses after `max_calls` broker calls; resumable."""
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    if not (1 <= int(max_calls) <= 4000):
+        raise HTTPException(status_code=400, detail="max_calls must be between 1 and 4000")
+    _refuse_sweep_in_market_hours()
+    await _require_harness_session(ctx)
+    out = runner.start_harness_run(ctx.user_id, mode=runner.MODE_SWEEP, max_calls=int(max_calls))
     if not out.get("started"):
         raise HTTPException(status_code=409, detail="A margin harness run is already in progress.")
-    return JSONResponse({"ok": True, "message": "Margin comparison run started."})
+    return JSONResponse({"ok": True, "message": "Calibration sweep started."})
+
+
+@router.post("/margin-harness/stop")
+async def margin_harness_stop(ctx: RequestContext = Depends(get_request_context)):
+    """Stop the running harness after its current case. The run stays resumable."""
+    from icici_breeze_backend.app.services.margin_harness import runner
+
+    if not runner.request_stop():
+        raise HTTPException(status_code=409, detail="No margin harness run is in progress.")
+    return JSONResponse({"ok": True, "message": "Stopping after the current case."})
+
+
+@router.post("/margin-harness/runs/{run_id}/resume")
+async def margin_harness_resume(run_id: str, ctx: RequestContext = Depends(get_request_context)):
+    """Continue a stopped, paused or interrupted run from its next unpriced case."""
+    from icici_breeze_backend.app.services.margin_harness import runner, store
+
+    run = store.get_run(run_id.strip())
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("mode") == runner.MODE_SWEEP:
+        _refuse_sweep_in_market_hours()
+    await _require_harness_session(ctx)
+    out = runner.start_resume(run_id.strip(), ctx.user_id)
+    if not out.get("started"):
+        reason = out.get("reason")
+        detail = {
+            "already_running": "A margin harness run is already in progress.",
+            "not_resumable": "Only a stopped, paused or interrupted run can be resumed.",
+        }.get(str(reason), "The run cannot be resumed.")
+        raise HTTPException(status_code=409, detail=detail)
+    return JSONResponse({"ok": True, "message": "Run resumed."})
 
 
 @router.get("/margin-harness/runs/{run_id}/download")
@@ -593,6 +676,19 @@ async def margin_harness_download(
     payload = store.get_run_payload(run_id.strip())
     if payload is None:
         raise HTTPException(status_code=404, detail="Run not found or produced no payload")
+    if payload.get("mode") == "sweep":
+        # ~700 cases is several MB of JSON; ship it gzipped (a .json.gz file, not
+        # transfer-encoded, so it lands on disk compressed).
+        import gzip as _gzip
+
+        return Response(
+            content=_gzip.compress(_json.dumps(payload, default=str).encode("utf-8")),
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="margin-sweep-{run_id[:8]}.json.gz"',
+                "Cache-Control": "no-store",
+            },
+        )
     return Response(
         content=_json.dumps(payload, indent=2, default=str),
         media_type="application/json",
