@@ -66,12 +66,14 @@ function appCell(run: MarginHarnessRun): { text: string; title: string } {
   };
 }
 
-function bestLabel(run: MarginHarnessRun): string {
-  const best = run.summary?.best_combination;
-  if (!best) return "—";
-  const span = SPAN_METHOD_LABELS[best.span_method] ?? best.span_method;
-  const elm = ELM_METHOD_LABELS[best.elm_method] ?? best.elm_method;
-  return `${span} + ${elm}`;
+/** Splits `formatApiDateTime`'s output ("27 Sep 2026 at 12:56 PM IST" / "27 Sep 2026, 12:56 pm IST")
+ *  into a date part and a time part so the two can be stacked on separate lines. */
+function splitStarted(formatted: string): [date: string, time: string] {
+  const atIdx = formatted.lastIndexOf(" at ");
+  if (atIdx !== -1) return [formatted.slice(0, atIdx), formatted.slice(atIdx + 4)];
+  const commaIdx = formatted.lastIndexOf(", ");
+  if (commaIdx !== -1) return [formatted.slice(0, commaIdx), formatted.slice(commaIdx + 2)];
+  return [formatted, ""];
 }
 
 export function MarginHarnessPanel() {
@@ -271,16 +273,19 @@ export function MarginHarnessPanel() {
                 >
                   App err (mean / median)
                 </th>
-                <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Closest other method</th>
-                <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Its mean err</th>
-                <th className="px-2.5 py-2 font-semibold whitespace-nowrap">JSON</th>
+                <th className="px-2.5 py-2 font-semibold whitespace-nowrap">
+                  <span className="sr-only">Download</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => (
+              {runs.map((run) => {
+                const [startedDate, startedTime] = splitStarted(formatApiDateTime(run.started_at));
+                return (
                 <tr key={run.id} className="app-table-row">
                   <td className="px-2.5 py-2 whitespace-nowrap text-foreground">
-                    {formatApiDateTime(run.started_at)}
+                    <div>{startedDate}</div>
+                    {startedTime ? <div className="text-muted">{startedTime}</div> : null}
                   </td>
                   <td className="px-2.5 py-2 whitespace-nowrap">
                     <span
@@ -314,9 +319,11 @@ export function MarginHarnessPanel() {
                     ) : null}
                   </td>
                   <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-foreground">
-                    {run.priced_count}/{run.case_count}
+                    <div>
+                      {run.priced_count}/{run.case_count}
+                    </div>
                     {run.failed_count > 0 ? (
-                      <span className="text-down"> (+{run.failed_count} failed)</span>
+                      <div className="text-down">+{run.failed_count} failed</div>
                     ) : null}
                   </td>
                   <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-muted">
@@ -328,28 +335,61 @@ export function MarginHarnessPanel() {
                   >
                     {appCell(run).text}
                   </td>
-                  <td className="px-2.5 py-2 text-foreground">{bestLabel(run)}</td>
-                  <td className="px-2.5 py-2 text-right font-mono tabular-nums whitespace-nowrap text-foreground">
-                    {run.summary?.best_combination
-                      ? `${run.summary.best_combination.mean_abs_pct.toFixed(2)}%`
-                      : "—"}
-                  </td>
                   <td className="px-2.5 py-2 whitespace-nowrap">
                     {run.status === "completed" ? (
                       <button
                         type="button"
-                        className="text-xs font-medium text-accent-strong hover:underline disabled:opacity-50"
+                        className="text-accent-strong transition-colors hover:text-accent disabled:opacity-40 disabled:pointer-events-none"
                         disabled={downloadingId === run.id}
                         onClick={() => void onDownload(run.id)}
+                        aria-label={downloadingId === run.id ? "Preparing download" : "Download run JSON (.json.gz)"}
+                        title={downloadingId === run.id ? "Preparing…" : "Download JSON (.json.gz)"}
                       >
-                        {downloadingId === run.id ? "Preparing…" : "Download"}
+                        {downloadingId === run.id ? (
+                          <svg
+                            className="h-4 w-4 animate-spin"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="9"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7V3z"
+                            />
+                          </svg>
+                        ) : (
+                          <svg
+                            className="h-4 w-4"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 3v12" />
+                            <path d="M7 10l5 5 5-5" />
+                            <path d="M4 21h16" />
+                          </svg>
+                        )}
                       </button>
                     ) : (
-                      <span className="text-xs text-muted">—</span>
+                      <span className="text-muted">—</span>
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
