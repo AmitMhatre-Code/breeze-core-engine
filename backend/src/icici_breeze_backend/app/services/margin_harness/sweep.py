@@ -41,6 +41,7 @@ from icici_breeze_backend.app.services.reference_data.span_baseline_store import
 from icici_breeze_backend.app.services.reference_data.symbol_registry import (
     KIND_INDEX,
     aliases_for,
+    resolve,
     underlyings,
 )
 
@@ -243,16 +244,54 @@ def _quantity_specs(strikes, spot: float) -> list[tuple[str, str, list[tuple]]]:
     return specs
 
 
-def build_sweep_cases(context: dict[str, Any]) -> list[HarnessCase]:
+def resolve_underlyings(raw: str | list[str] | None) -> tuple[list[tuple[str, str, bool]], list[str]]:
+    """A typed list of underlyings -> ([(ICICI short name, segment, is_index)], unrecognised).
+
+    Any spelling the registry knows is accepted (YESBAN, YESBANK, "YES BANK LIMITED"), so a list
+    can be pasted straight from the haircut file or from NSE's symbols. Duplicates collapse.
+    """
+    if isinstance(raw, str):
+        raw = [p for p in raw.replace("\n", ",").split(",")]
+    out: list[tuple[str, str, bool]] = []
+    unknown: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw or []:
+        name = str(item or "").strip()
+        if not name:
+            continue
+        sym = resolve(name, cfg.NFO) or resolve(name, cfg.BFO)
+        if sym is None:
+            unknown.append(name)
+            continue
+        key = (sym.short_name, sym.segment)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((sym.short_name, sym.segment, sym.kind == KIND_INDEX))
+    return out, unknown
+
+
+def build_sweep_cases(
+    context: dict[str, Any],
+    *,
+    only: list[tuple[str, str, bool]] | None = None,
+) -> list[HarnessCase]:
+    """The pilot grid, or with `only`, a targeted sweep: the core grid on exactly those
+    underlyings (nearest expiry), no dense ladder and no quantity cases -- the shape for testing
+    one hypothesis on a chosen set of names cheaply."""
     cases: list[HarnessCase] = []
     with _scrip_conn() as conn:
-        stocks = _stock_targets(conn, context, STOCK_COUNT)
-        targets = [(name, seg, True, _INDEX_EXPIRIES) for name, seg in _index_targets()]
-        targets += [(name, cfg.NFO, False, _STOCK_EXPIRIES) for name in stocks]
-        # Dense and quantity grids: the headline indices plus the lowest-, middle- and
-        # highest-volatility stocks (`stocks` is sorted by volatility).
-        picks = [stocks[round(i * (len(stocks) - 1) / max(1, DENSE_STOCK_COUNT - 1))] for i in range(DENSE_STOCK_COUNT)] if stocks else []
-        dense_names = {"NIFTY", "CNXBAN", "BSESEN", *picks}
+        if only:
+            targets = [(name, seg, is_index, 1) for name, seg, is_index in only]
+            dense_names: set[str] = set()
+        else:
+            stocks = _stock_targets(conn, context, STOCK_COUNT)
+            targets = [(name, seg, True, _INDEX_EXPIRIES) for name, seg in _index_targets()]
+            targets += [(name, cfg.NFO, False, _STOCK_EXPIRIES) for name in stocks]
+            # Dense and quantity grids: the headline indices plus the lowest-, middle- and
+            # highest-volatility stocks (`stocks` is sorted by volatility).
+            picks = [stocks[round(i * (len(stocks) - 1) / max(1, DENSE_STOCK_COUNT - 1))] for i in range(DENSE_STOCK_COUNT)] if stocks else []
+            dense_names = {"NIFTY", "CNXBAN", "BSESEN", *picks}
 
         for stock_code, exchange, is_index, expiry_count in targets:
             facts = get_underlying_facts_for(exchange, stock_code) or {}

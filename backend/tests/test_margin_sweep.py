@@ -241,3 +241,36 @@ def test_a_throttled_case_is_retried_not_recorded_as_failed(harness_db, fake_eva
     runner._execute("r6", "u1", b, cases, _start("r6", cases), started_at="t")
     run = store.get_run("r6")
     assert run["priced_count"] == 1 and run["failed_count"] == 0 and run["broker_calls"] == 2
+
+
+# --- targeted sweep ---------------------------------------------------------------------------------
+
+
+def test_targeted_list_resolves_any_spelling_and_reports_unknowns(monkeypatch):
+    from types import SimpleNamespace
+
+    known = {
+        "YESBAN": SimpleNamespace(short_name="YESBAN", segment="NFO", kind="stock"),
+        "YESBANK": SimpleNamespace(short_name="YESBAN", segment="NFO", kind="stock"),
+        "SENSEX": SimpleNamespace(short_name="BSESEN", segment="BFO", kind="index"),
+    }
+    def fake_resolve(name, segment=None):
+        sym = known.get(str(name).upper())
+        return sym if sym is not None and sym.segment == segment else None
+
+    monkeypatch.setattr(sweep, "resolve", fake_resolve)
+    only, unknown = sweep.resolve_underlyings("YESBAN, yesbank,\nSENSEX, NOSUCH, ")
+    assert only == [("YESBAN", "NFO", False), ("BSESEN", "BFO", True)]  # duplicates collapse
+    assert unknown == ["NOSUCH"]
+
+
+def test_sweep_route_refuses_names_it_cannot_place(monkeypatch):
+    from fastapi import HTTPException
+
+    from icici_breeze_backend.app.api.v1 import route_settings as rs
+
+    monkeypatch.setattr(sweep, "resolve", lambda name, seg=None: None)
+    with pytest.raises(HTTPException) as exc:
+        rs._sweep_targets("NOSUCH")
+    assert exc.value.status_code == 400 and "NOSUCH" in exc.value.detail
+    assert rs._sweep_targets("  ") is None  # empty means the full pilot grid

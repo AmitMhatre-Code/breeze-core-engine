@@ -558,12 +558,12 @@ def build_sweep_context() -> dict[str, Any]:
     return fetch_market_context(trade_date, ban_date=ban_date)
 
 
-def plan_sweep() -> dict[str, Any]:
+def plan_sweep(only: list[tuple[str, str, bool]] | None = None) -> dict[str, Any]:
     """The sweep's case set and cost, without any broker call."""
     from icici_breeze_backend.app.services.margin_harness.sweep import build_sweep_cases, sweep_plan
 
     context = build_sweep_context()
-    cases = build_sweep_cases(context)
+    cases = build_sweep_cases(context, only=only)
     return {**sweep_plan(cases), "market_context_errors": context.get("errors") or []}
 
 
@@ -592,6 +592,7 @@ def run_harness(
     include_open_positions: bool = True,
     mode: str = MODE_STANDARD,
     max_calls: int | None = None,
+    only: list[tuple[str, str, bool]] | None = None,
 ) -> dict[str, Any]:
     """Price every case with ICICI and with every local method. Blocking; call off-thread."""
     from icici_breeze_backend.app.services import margin_addon
@@ -612,7 +613,7 @@ def run_harness(
         from icici_breeze_backend.app.services.margin_harness.sweep import build_sweep_cases
 
         context = build_sweep_context()
-        cases = build_sweep_cases(context)
+        cases = build_sweep_cases(context, only=only)
     else:
         cases = build_generated_cases()
         if include_open_positions:
@@ -638,6 +639,8 @@ def run_harness(
         "mode": mode,
         "max_calls": max_calls,
         "include_open_positions": include_open_positions,
+        # A targeted sweep's chosen underlyings; None for the full pilot grid.
+        "only_underlyings": [list(t) for t in only] if only else None,
         "icici_addon": margin_addon.status(),
         "market_context": context,
         "cases": [c.as_dict() for c in cases],
@@ -853,12 +856,17 @@ def start_harness_run(
     include_open_positions: bool = True,
     mode: str = MODE_STANDARD,
     max_calls: int | None = None,
+    only: list[tuple[str, str, bool]] | None = None,
 ) -> dict[str, Any]:
     """Kick the run off in the background; a standard run takes a minute or two of paced
-    calls, a sweep an hour or more."""
+    calls, a full sweep ten minutes or so."""
     return _launch(
         lambda: run_harness(
-            user_id, include_open_positions=include_open_positions, mode=mode, max_calls=max_calls
+            user_id,
+            include_open_positions=include_open_positions,
+            mode=mode,
+            max_calls=max_calls,
+            only=only,
         )
     )
 

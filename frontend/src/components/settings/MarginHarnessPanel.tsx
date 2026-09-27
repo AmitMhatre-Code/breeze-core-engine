@@ -82,6 +82,7 @@ export function MarginHarnessPanel() {
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [sweepMaxCalls, setSweepMaxCalls] = useState(1000);
+  const [sweepUnderlyings, setSweepUnderlyings] = useState("");
 
   const q = useQuery({
     queryKey: ["margin-harness-runs"],
@@ -99,7 +100,7 @@ export function MarginHarnessPanel() {
     onError: (e) => setError(e instanceof Error ? e.message : "Could not start the run"),
   });
 
-  const planMut = useMutation({ mutationFn: fetchMarginSweepPlan });
+  const planMut = useMutation({ mutationFn: () => fetchMarginSweepPlan(sweepUnderlyings) });
   const onDone = {
     onSuccess: () => {
       setError(null);
@@ -107,7 +108,10 @@ export function MarginHarnessPanel() {
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : "Request failed"),
   };
-  const sweepMut = useMutation({ mutationFn: () => startMarginSweep(sweepMaxCalls), ...onDone });
+  const sweepMut = useMutation({
+    mutationFn: () => startMarginSweep(sweepMaxCalls, sweepUnderlyings),
+    ...onDone,
+  });
   const stopMut = useMutation({ mutationFn: stopMarginHarness, ...onDone });
   const resumeMut = useMutation({ mutationFn: resumeMarginHarnessRun, ...onDone });
 
@@ -189,6 +193,24 @@ export function MarginHarnessPanel() {
           broker call per case; runs only outside market hours, pauses at the cap below and can be
           stopped and resumed. Download is a compressed .json.gz.
         </p>
+        <label className="block text-xs">
+          <span className="text-muted">
+            Only these underlyings (optional) — a targeted sweep: the main grid on just these
+            names, nearest expiry, no ladder or quantity cases. Comma-separated; ICICI codes
+            (YESBAN) or NSE symbols (YESBANK) both work.
+          </span>
+          <textarea
+            rows={2}
+            className="app-input mt-1 block w-full font-mono text-xs"
+            value={sweepUnderlyings}
+            disabled={running}
+            placeholder="Leave empty for the full pilot grid"
+            onChange={(e) => {
+              setSweepUnderlyings(e.target.value);
+              planMut.reset();
+            }}
+          />
+        </label>
         <div className="flex flex-wrap items-end gap-3">
           <button
             type="button"

@@ -77,13 +77,20 @@ export type MarginSweepPlan = {
   market_context_errors: string[];
 };
 
-export async function fetchMarginSweepPlan(): Promise<MarginSweepPlan> {
-  return apiClient.get<MarginSweepPlan>("/api/settings/margin-harness/sweep/plan");
+/** `underlyings`: optional comma-separated names (any spelling) for a targeted sweep. */
+export async function fetchMarginSweepPlan(underlyings = ""): Promise<MarginSweepPlan> {
+  const q = underlyings.trim() ? `?underlyings=${encodeURIComponent(underlyings.trim())}` : "";
+  return apiClient.get<MarginSweepPlan>(`/api/settings/margin-harness/sweep/plan${q}`);
 }
 
-export async function startMarginSweep(maxCalls: number): Promise<{ ok: boolean; message: string }> {
+export async function startMarginSweep(
+  maxCalls: number,
+  underlyings = "",
+): Promise<{ ok: boolean; message: string }> {
+  const params = new URLSearchParams({ max_calls: String(maxCalls) });
+  if (underlyings.trim()) params.set("underlyings", underlyings.trim());
   return apiClient.post<{ ok: boolean; message: string }>(
-    `/api/settings/margin-harness/sweep?max_calls=${encodeURIComponent(String(maxCalls))}`,
+    `/api/settings/margin-harness/sweep?${params.toString()}`,
     {},
   );
 }

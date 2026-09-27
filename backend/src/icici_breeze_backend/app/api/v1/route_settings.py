@@ -603,29 +603,57 @@ def _refuse_sweep_in_market_hours() -> None:
         )
 
 
+def _sweep_targets(underlyings: Optional[str]) -> list[tuple[str, str, bool]] | None:
+    """Parse the optional targeted-sweep list; a name the registry doesn't know is a 400."""
+    from icici_breeze_backend.app.services.margin_harness.sweep import resolve_underlyings
+
+    if not (underlyings or "").strip():
+        return None
+    only, unknown = resolve_underlyings(underlyings)
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"Not recognised as F&O underlyings: {', '.join(unknown)}"
+        )
+    if not only:
+        return None
+    if len(only) > 60:
+        raise HTTPException(status_code=400, detail="A targeted sweep takes at most 60 underlyings.")
+    return only
+
+
 @router.get("/margin-harness/sweep/plan")
-async def margin_harness_sweep_plan(ctx: RequestContext = Depends(get_request_context)):
-    """The sweep's case set and call cost, built without calling ICICI."""
+async def margin_harness_sweep_plan(
+    underlyings: Optional[str] = None,
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """The sweep's case set and call cost, built without calling ICICI. `underlyings`
+    (comma-separated, any spelling) makes it a targeted sweep of just those names."""
     import asyncio
 
     from icici_breeze_backend.app.services.margin_harness import runner
 
-    return JSONResponse(await asyncio.to_thread(runner.plan_sweep))
+    only = _sweep_targets(underlyings)
+    return JSONResponse(await asyncio.to_thread(runner.plan_sweep, only))
 
 
 @router.post("/margin-harness/sweep")
 async def margin_harness_sweep(
     max_calls: int = 1000,
+    underlyings: Optional[str] = None,
     ctx: RequestContext = Depends(get_request_context),
 ):
-    """Start a calibration sweep (pilot). Pauses after `max_calls` broker calls; resumable."""
+    """Start a calibration sweep. Pauses after `max_calls` broker calls; resumable.
+    `underlyings` makes it a targeted sweep: the core grid on just those names."""
     from icici_breeze_backend.app.services.margin_harness import runner
 
     if not (1 <= int(max_calls) <= 4000):
         raise HTTPException(status_code=400, detail="max_calls must be between 1 and 4000")
+    only = _sweep_targets(underlyings)
     _refuse_sweep_in_market_hours()
     await _require_harness_session(ctx)
-    out = runner.start_harness_run(ctx.user_id, mode=runner.MODE_SWEEP, max_calls=int(max_calls))
+    out = runner.start_harness_run(
+        ctx.user_id, mode=runner.MODE_SWEEP, max_calls=int(max_calls), only=only
+    )
     if not out.get("started"):
         raise HTTPException(status_code=409, detail="A margin harness run is already in progress.")
     return JSONResponse({"ok": True, "message": "Calibration sweep started."})
