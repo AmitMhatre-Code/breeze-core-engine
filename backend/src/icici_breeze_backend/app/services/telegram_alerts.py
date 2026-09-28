@@ -295,52 +295,150 @@ def notify_protection_resumed(user_id: str, rules: list[Any]) -> None:
     _notify(user_id, _format_protection_resumed_message(rules), kind="protection resumed")
 
 
-def _format_futures_feed_down_message(index_label: str, silent_since: str, minutes: int) -> str:
-    """The signal's input is gone, not the bot's stops -- said in that order, because the
-    worry a trader has on reading "feed down" is whether an open position is unprotected."""
+def _format_rule_prices_stale_message(states: list[dict[str, Any]], *, hold_minutes: int) -> str:
+    """Leads with "unmonitored" because the app still shows these rules as Armed. It must not
+    ask for a re-arm: each rule resumes by itself the moment its prices are fresh again."""
     return "\n".join(
         [
-            f"⚠️ *{index_label} futures feed down*",
+            "🛑 *PB/SL rules unmonitored*",
             "",
-            f"No {index_label} futures ticks for {minutes} min (since {silent_since} IST), "
-            "and re-subscribing has not brought them back.",
+            "Feed from ICICI is stopped and therefore these PB/SL rules are currently "
+            "unmonitored:",
+            *_state_lines(states),
             "",
-            f"Signals built on {index_label} read *unavailable* until it recovers, so bots "
-            "using them will not open new trades. Open bot positions are unaffected: their "
-            "stops watch option prices, not this feed.",
-            "",
-            "The app keeps re-subscribing; you'll get a message here when it's back.",
+            "Watch these positions yourself. The rules resume on their own when the feed "
+            f"returns; you'll get a message here once it has worked for {hold_minutes} min.",
         ]
     )
 
 
-def _format_futures_feed_restored_message(index_label: str, resumed_at: str, minutes: int) -> str:
+def _format_rule_prices_restored_message(states: list[dict[str, Any]], *, hold_minutes: int) -> str:
     return "\n".join(
         [
-            f"✅ *{index_label} futures feed back*",
+            "✅ *PB/SL rules monitored again*",
             "",
-            f"Ticks resumed at {resumed_at} IST after {minutes} min of silence. Signals "
-            "recover as fresh candles close.",
+            f"Feed from ICICI has worked for {hold_minutes} min. These PB/SL rules are "
+            "monitored again:",
+            *_state_lines(states),
         ]
     )
 
 
-def notify_futures_feed_down(user_id: str, index_label: str, silent_since: str, minutes: int) -> None:
-    """Once per outage, and only one a re-subscribe could not heal (2026-09-24: NIFTY sat
-    silent from 13:34 to the close and the only trace was a run log read after the fact)."""
+def _state_lines(states: list[dict[str, Any]]) -> list[str]:
+    return [f"• {s['stock_code']} · {s['expiry_display']}" for s in states]
+
+
+def notify_rule_prices_stale(
+    user_id: str, states: list[dict[str, Any]], *, hold_minutes: int
+) -> None:
+    """Once per incident per rule; see `squareoff_protection_guard.check_rule_feed_staleness`."""
     _notify(
         user_id,
-        _format_futures_feed_down_message(index_label, silent_since, minutes),
-        kind="futures feed down",
+        _format_rule_prices_stale_message(states, hold_minutes=hold_minutes),
+        kind="rule prices stale",
     )
 
 
-def notify_futures_feed_restored(user_id: str, index_label: str, resumed_at: str, minutes: int) -> None:
-    """Closes the loop on `notify_futures_feed_down`; never sent without one before it."""
+def notify_rule_prices_restored(
+    user_id: str, states: list[dict[str, Any]], *, hold_minutes: int
+) -> None:
+    """Closes the loop on `notify_rule_prices_stale`; never sent without one before it."""
     _notify(
         user_id,
-        _format_futures_feed_restored_message(index_label, resumed_at, minutes),
-        kind="futures feed restored",
+        _format_rule_prices_restored_message(states, hold_minutes=hold_minutes),
+        kind="rule prices restored",
+    )
+
+
+def bot_label(bot_type: str) -> str:
+    return _BOT_LABEL.get(bot_type, bot_type.replace("_", " ").title())
+
+
+def _format_bot_feed_down_message(
+    paused: list[str], unmonitored: list[str], *, hold_minutes: int
+) -> str:
+    """Two versions, because "unmonitored" is only true when a feed the bots' exits read has
+    stopped. A dead futures feed pauses entries while every open bot position is still watched,
+    and telling the user otherwise sends them to close positions that are protected."""
+    footer = f"You'll get a message here once the feed has worked for {hold_minutes} min."
+    if unmonitored:
+        return "\n".join(
+            [
+                "🛑 *ICICI feed stopped — bots paused*",
+                "",
+                "Feed from ICICI is stopped and therefore the bots have been paused and any "
+                "open positions created by the bots are currently unmonitored.",
+                "",
+                f"Paused: {', '.join(paused)}",
+                f"Unmonitored positions: {', '.join(unmonitored)}",
+                "",
+                f"Watch those positions yourself. {footer}",
+            ]
+        )
+    return "\n".join(
+        [
+            "⚠️ *ICICI feed stopped — bots paused*",
+            "",
+            "Feed from ICICI is stopped and therefore these bots have been paused: "
+            f"{', '.join(paused)}. Their open positions are still monitored.",
+            "",
+            footer,
+        ]
+    )
+
+
+def _format_bot_feed_back_message(
+    *,
+    entries_back: bool,
+    positions_back: bool,
+    still_paused: bool,
+    still_unmonitored: bool,
+    hold_minutes: int,
+) -> str:
+    lines = ["✅ *ICICI feed back*", "", f"Feed from ICICI has worked for {hold_minutes} min."]
+    if entries_back and positions_back:
+        lines.append("The bots have resumed and their open positions are monitored again.")
+    elif positions_back:
+        lines.append("Open positions created by the bots are monitored again.")
+        if still_paused:
+            lines.append("The bots stay paused until the rest of the feed is back.")
+    else:
+        lines.append("The bots have resumed.")
+        if still_unmonitored:
+            lines.append("Their open positions are still unmonitored.")
+    return "\n".join(lines)
+
+
+def notify_bot_feed_down(
+    user_id: str, *, paused: list[str], unmonitored: list[str], hold_minutes: int
+) -> None:
+    _notify(
+        user_id,
+        _format_bot_feed_down_message(paused, unmonitored, hold_minutes=hold_minutes),
+        kind="bot feed down",
+    )
+
+
+def notify_bot_feed_back(
+    user_id: str,
+    *,
+    entries_back: bool,
+    positions_back: bool,
+    still_paused: bool,
+    still_unmonitored: bool,
+    hold_minutes: int,
+) -> None:
+    """Closes the loop on `notify_bot_feed_down`; never sent without one before it."""
+    _notify(
+        user_id,
+        _format_bot_feed_back_message(
+            entries_back=entries_back,
+            positions_back=positions_back,
+            still_paused=still_paused,
+            still_unmonitored=still_unmonitored,
+            hold_minutes=hold_minutes,
+        ),
+        kind="bot feed back",
     )
 
 
@@ -402,6 +500,7 @@ _BOT_LABEL = {
     "expiry_index_writer": "Expiry-Day Index Writer",
     "momentum_long_scalper": "Long Scalper",
     "iron_fly_scalper": "Intraday Iron Fly",
+    "cas_bingo": "CAS Bingo",
 }
 
 

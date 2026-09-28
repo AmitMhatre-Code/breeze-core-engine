@@ -1304,6 +1304,31 @@ def assemble_payoff_quote_with_router(
     return chain_fetch_error_response(exchange_code, stock_code, expiry_display)
 
 
+LIVE_QUOTE_SOURCE = "websocket"
+
+
+def rows_with_source(response: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The rows of an ICICI-shaped response, each carrying its own `quote_source`.
+
+    A chain assembled cell by cell stamps every cell, but a whole-websocket chain only stamps
+    the response, so a row read on its own cannot tell a live quote from a stand-in."""
+    if not isinstance(response, dict):
+        return []
+    fallback = response.get("quote_source")
+    return [
+        {**row, "quote_source": row.get("quote_source") or fallback}
+        for row in (response.get("Success") or [])
+        if isinstance(row, dict)
+    ]
+
+
+def row_is_live(row: dict[str, Any]) -> bool:
+    """Priced by the websocket feed. Mid-session the router answers a feed miss from
+    snapshot, bhavcopy or REST stand-ins, one of which can be the previous session's price;
+    no bot may open or mark a position on one."""
+    return row.get("quote_source") == LIVE_QUOTE_SOURCE
+
+
 def fetch_chain_side_icici_response(
     proc: "Processor",
     user_id: str,

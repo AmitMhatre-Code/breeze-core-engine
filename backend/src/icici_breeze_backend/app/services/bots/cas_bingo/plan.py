@@ -179,7 +179,9 @@ def _leg(row: Optional[dict[str, Any]], right: str, action: str) -> Optional[Pla
         return None
     strike = parse_strike(row.get("strike_price"))
     quote = _row_quote(row)
-    if strike is None or not quote.priceable:
+    # Live only: a stand-in quote (snapshot, bhavcopy, REST) can be the previous session's
+    # price, and the bot pauses rather than open on one.
+    if strike is None or not quote.priceable or not quote.live:
         return None
     return PlanLeg(right=right, strike=float(strike), action=action, quote=quote)
 
@@ -219,13 +221,13 @@ def _strikes(
         ce = _leg(market.pick_strike(calls, up(s.call_pct), outward_up=True), "call", cfg.BUY)
         pe = _leg(market.pick_strike(puts, down(s.put_pct), outward_up=False), "put", cfg.BUY)
         if ce is None or pe is None:
-            return None, (ReasonCode.QUOTE_UNAVAILABLE, "No two-sided quote at the strangle's strikes.")
+            return None, (ReasonCode.QUOTE_UNAVAILABLE, "No live two-sided quote at the strangle's strikes.")
         return (ce, pe), None
 
     if buy is None or sell is None:
         return None, (
             ReasonCode.QUOTE_UNAVAILABLE,
-            f"No two-sided quote at the {STRUCTURE_LABEL[structure].lower()}'s strikes.",
+            f"No live two-sided quote at the {STRUCTURE_LABEL[structure].lower()}'s strikes.",
         )
     if buy.strike == sell.strike:
         # Both distances snapped onto one listed strike: that is no spread at all.

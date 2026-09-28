@@ -63,7 +63,7 @@ The calendar is shared by everyone on this deployment. A wrong calendar causes w
 
 ## Telegram Alerts
 
-Links a Telegram chat so you get a message the moment a Profit Booking / Stop Loss rule fires, and so semi-auto bots can ask for your approval.
+Links a Telegram chat so you get a message the moment a Profit Booking / Stop Loss rule fires, or pauses for lack of prices (see [Profit Booking / Stop Loss](portfolio.md#profit-booking--stop-loss)), and so semi-auto bots can ask for your approval.
 
 ![Linking Telegram](images/dark/settings-telegram.png)
 

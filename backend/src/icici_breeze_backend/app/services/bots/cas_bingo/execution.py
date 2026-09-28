@@ -88,11 +88,14 @@ def close_value_per_unit(
     legs: list[dict[str, Any]], quotes: dict[tuple[str, float], Quote]
 ) -> Optional[float]:
     """What closing yields per unit: longs sold at the bid, shorts bought back at the ask.
-    Mid would report a profit the exit then fails to realise (Bot 4's lesson)."""
+    Mid would report a profit the exit then fails to realise (Bot 4's lesson).
+
+    None -- hold, judge nothing -- unless every leg is priced by the live feed: a stop marked
+    against a stand-in fires on a price nobody can trade at (the paper fly of 2026-09-28)."""
     total = 0.0
     for leg in legs:
         quote = quotes.get(_key(leg))
-        if quote is None:
+        if quote is None or not quote.live:
             return None
         if leg.get("action") == cfg.SELL:
             if not quote.ask:

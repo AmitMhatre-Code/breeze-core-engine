@@ -108,6 +108,8 @@ If you have not linked Telegram, the dialog offers a **Register** link. With Tel
 > [!WARNING]
 > **This is best-effort protection, not a guaranteed stop-loss.** Your server does the watching, not ICICI. A rule can only fire while your server is running, connected to the live quote feed, signed in to ICICI for the day and licensed. If any of those is not true at the moment the threshold is crossed, no exit orders are placed. The target and loss limit are **triggers**, not guaranteed exit prices: in a fast market the limit orders may fill partly, at a worse price, or not at all.
 
+A rule is only checked while **every leg** in its group has a recent price. If any leg goes about two minutes without one, the rule **pauses**: it still shows as armed, but it is not checked. This happens when a far strike has not traded or quoted, or when the price feed drops. The rule starts checking again by itself as soon as every leg has a fresh price, so you do not need to re-arm it. With Telegram linked, a pause of more than about 30 seconds sends a **PB/SL rules unmonitored** message naming the rules. Watch those positions yourself until **PB/SL rules monitored again** arrives. That message is sent only once the feed has worked for 5 minutes in a row, so a feed that keeps dropping does not flood you. A new stop after that message is always reported straight away.
+
 Remember that **logging out ends your ICICI session and stops every rule**. Close the browser tab instead; rules keep working without it until midnight IST. See [Signing out](signing-in.md#signing-out).
 
 Armed rules and the orders they place are also listed on the [Order Book](order-book.md#profit-booking--stop-loss) page, under **Profit Booking / Stop Loss**.

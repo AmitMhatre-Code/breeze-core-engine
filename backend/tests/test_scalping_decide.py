@@ -98,6 +98,10 @@ def test_all_gates_clear_gives_the_bot_specific_layer_its_turn():
         ({"api_calls_remaining": 5}, ReasonCode.API_BUDGET_LOW),
         ({"feed": FeedHealth(warm=True, stale=True, stale_seconds=12.0)}, ReasonCode.STALE_FEED),
         ({"feed": FeedHealth(warm=False, stale=False)}, ReasonCode.NOT_WARM),
+        (
+            {"feed": FeedHealth(warm=True, stale=False, entry_block="NIFTY futures feed stopped")},
+            ReasonCode.STALE_FEED,
+        ),
     ],
 )
 def test_each_entry_gate_blocks_with_its_own_reason(override, code):
@@ -150,6 +154,7 @@ def test_an_open_position_is_never_stranded_by_an_entry_gate():
         {"sg_rule_conflict": True},
         {"totals": ScalperDayTotals(consecutive_losses=9, last_closed_at="2026-09-08 09:59:00")},
         {"feed": FeedHealth(warm=False, stale=False)},
+        {"feed": FeedHealth(warm=True, stale=False, entry_block="NIFTY futures feed stopped")},
     ):
         d = decide(_snap(has_open_position=True, **override), CFG)
         assert d.action == "idle", f"{override} stranded the position: {d}"
@@ -248,3 +253,17 @@ def test_an_entry_hold_never_blocks_an_exit():
         FLY,
     )
     assert d.action == "exit" and d.reason_code == ReasonCode.TRAILING_STOP
+
+
+def test_the_iron_fly_pauses_when_its_futures_candles_stop_updating():
+    """Warm stays warm once 20 candles exist, so the futures feed's own last tick decides."""
+    from icici_breeze_backend.app.services.bots.scalping.runtime import _futures_block
+    from icici_breeze_backend.app.services.feed_alerts import FUTURES_DOWN_SECONDS
+
+    class _Feed:
+        def __init__(self, last):
+            self.last_tick_at = last
+
+    assert _futures_block(_Feed(1_000.0), now=1_000.0 + FUTURES_DOWN_SECONDS - 1) is None
+    assert "futures feed stopped" in _futures_block(_Feed(1_000.0), now=1_000.0 + FUTURES_DOWN_SECONDS)
+    assert "futures feed stopped" in _futures_block(_Feed(None), now=1_000.0)

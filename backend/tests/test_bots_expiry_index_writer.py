@@ -305,6 +305,7 @@ def patch_chain(monkeypatch):
             return {
                 "Status": 200,
                 "Error": None,
+                "quote_source": "websocket",
                 "Success": [
                     {"strike_price": s, "spot_price": proc.spot, "spot_source": "live",
                      "best_bid_price": proc.bid_for(right), "ltp": proc.bid_for(right) + 1}
@@ -358,6 +359,25 @@ def fire(proc, *, available=1_000_000.0, **cfg_kw):
         available_margin=available,
         margin_source="breeze_api",
     )
+
+
+def test_a_stand_in_chain_pauses_the_writer_and_is_retried(patch_chain, no_arm, monkeypatch):
+    """The feed stopped and the router filled the chain from a snapshot: nothing is sold into
+    it, and the skip is transient so the bot tries again once live quotes are back."""
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+    from icici_breeze_backend.app.domain.bots import TRANSIENT_REASON_CODES
+
+    proc = FakeProc(span_per_lot=120000.0)
+    patch_chain(proc)
+    live = qsr.fetch_chain_side_icici_response
+    monkeypatch.setattr(
+        qsr, "fetch_chain_side_icici_response", lambda *a: {**live(*a), "quote_source": "snapshot"}
+    )
+    result = fire(proc)
+    assert not result.ok and result.lots == 0
+    assert result.reason_code == ReasonCode.QUOTE_UNAVAILABLE
+    assert "no live quote (priced from snapshot)" in (result.error or "")
+    assert ReasonCode.QUOTE_UNAVAILABLE in TRANSIENT_REASON_CODES
 
 
 def test_lots_are_sized_against_the_per_index_cap(patch_chain, no_arm):

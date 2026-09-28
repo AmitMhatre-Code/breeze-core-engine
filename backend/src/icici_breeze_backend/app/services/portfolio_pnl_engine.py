@@ -28,7 +28,7 @@ from typing import Any, Callable
 import numpy as np
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.core.strike import Strike, parse_strike
+from icici_breeze_backend.app.core.strike import Strike, parse_strike, strike_key
 from icici_breeze_backend.app.db.redis_client import get_redis
 from icici_breeze_backend.app.services import ws_tick_pipeline
 from icici_breeze_backend.app.services.reference_data.keys import pnl_quote_key
@@ -130,6 +130,24 @@ def _group_key(stock_code: str, expiry_display: str) -> str:
 
 
 _group_rules: dict[str, dict[str, GroupRule]] = {}
+
+
+@dataclass(frozen=True)
+class _GroupFeedState:
+    """Whether the engine could judge a group rule on its latest tick, and since when.
+
+    `blind_since` and `evaluable_since` carry over across ticks so the alerting layer can
+    ask "continuously, for how long" -- the only question that tells a dead feed from a
+    thin strike that ticks every couple of minutes."""
+
+    observed_at: float
+    blind_since: float | None
+    evaluable_since: float | None
+    stale_legs: tuple[dict[str, Any], ...]
+
+
+_feed_state_lock = threading.Lock()
+_group_feed: dict[tuple[str, str], _GroupFeedState] = {}
 
 
 def register_positions(user_id: str, legs: list[PositionLeg]) -> None:
@@ -377,6 +395,63 @@ def armed_rule_feed_health() -> dict[str, int]:
         armed += len(covered)
         unevaluable += sum(1 for key in covered if not evaluable.get(key, False))
     return {"armed_legs": armed, "unevaluable_legs": unevaluable}
+
+
+def _note_group_feed(user_id: str, rule_id: str, matching: list[dict[str, Any]], now: float) -> None:
+    stale = tuple(
+        {
+            "label": (
+                f"{r['stock_code']} {strike_key(r['strike'])} "
+                f"{'CE' if r['right'] == 'call' else 'PE'}"
+            ),
+            "last_quote_at": (
+                now - r["quote_age_seconds"]
+                if r["has_live_quote"] and r["quote_age_seconds"] is not None
+                else None
+            ),
+        }
+        for r in matching
+        if not r["rule_evaluable"]
+    )
+    key = (user_id, rule_id)
+    with _feed_state_lock:
+        prev = _group_feed.get(key)
+        if stale:
+            since = prev.blind_since if prev and prev.blind_since is not None else now
+            _group_feed[key] = _GroupFeedState(now, since, None, stale)
+        else:
+            since = prev.evaluable_since if prev and prev.evaluable_since is not None else now
+            _group_feed[key] = _GroupFeedState(now, None, since, ())
+
+
+def group_rule_feed_states(user_id: str) -> list[dict[str, Any]]:
+    """Feed state of every group rule currently armed in the engine for this user.
+
+    Rules no longer registered (fired, reset, cleared) are pruned here: their own
+    messages already told the user what happened to them."""
+    with _registry_lock:
+        rules = list(_group_rules.get(user_id, {}).values())
+    live_ids = {r.rule_id for r in rules}
+    out: list[dict[str, Any]] = []
+    with _feed_state_lock:
+        for key in [k for k in _group_feed if k[0] == user_id and k[1] not in live_ids]:
+            del _group_feed[key]
+        for rule in rules:
+            state = _group_feed.get((user_id, rule.rule_id))
+            if state is None:
+                continue
+            out.append(
+                {
+                    "rule_id": rule.rule_id,
+                    "stock_code": rule.stock_code,
+                    "expiry_display": rule.expiry_display,
+                    "observed_at": state.observed_at,
+                    "blind_since": state.blind_since,
+                    "evaluable_since": state.evaluable_since,
+                    "stale_legs": [dict(leg) for leg in state.stale_legs],
+                }
+            )
+    return out
 
 
 def _stale_after_seconds() -> float:
@@ -704,6 +779,7 @@ def _evaluate_rules(snapshot: dict[str, Any], legs_by_key: dict[str, PositionLeg
         # needs prices -- and needs all of them, since one unpriced leg makes the group
         # total wrong and a group square-off exits every leg. Left armed when it can't
         # be judged; the health status reports it as unevaluable.
+        _note_group_feed(user_id, group_rule.rule_id, matching, snapshot["computed_at"])
         if not all(r["rule_evaluable"] for r in matching):
             continue
         group_total = sum(r["pnl"] for r in matching)

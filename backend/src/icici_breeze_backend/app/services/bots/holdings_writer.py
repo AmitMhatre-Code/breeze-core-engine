@@ -32,7 +32,9 @@ from icici_breeze_backend.app.domain.bots import (
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import _otm_elm_rate
 from icici_breeze_backend.app.services.quote_source_router import (
     fetch_chain_side_icici_response,
+    row_is_live,
     row_spot,
+    rows_with_source,
 )
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
     _expiry_api_to_display,
@@ -168,6 +170,9 @@ def _premium(row: dict) -> tuple[float, str]:
     used as a clearly-labelled **indicative** price for planning, and `approve` refuses to
     place any leg that is still indicative when it re-prices. The user can plan on a Sunday;
     they cannot sell into a book that does not exist.
+
+    A bid counts only when the websocket feed priced it. Mid-session a stopped feed is
+    answered from snapshot or REST stand-ins, so a bid there is as indicative as an LTP.
     """
     def _f(key: str) -> float:
         try:
@@ -176,11 +181,13 @@ def _premium(row: dict) -> tuple[float, str]:
             return 0.0
 
     bid = _f("best_bid_price")
-    if bid > 0:
+    if bid > 0 and row_is_live(row):
         return bid, "bid"
     ltp = _f("ltp")
     if ltp > 0:
         return ltp, "ltp_indicative"
+    if bid > 0:
+        return bid, "ltp_indicative"
     return 0.0, "bid"
 
 
@@ -347,7 +354,7 @@ def _build_leg(
             SkippedScrip(label, "chain_unavailable", "No option chain available.")
         )
         return None
-    rows = [r for r in chain["Success"] if isinstance(r, dict)]
+    rows = rows_with_source(chain)
 
     # Live only. A stand-in -- the previous close, most often -- puts the strike the wrong
     # distance from the market, and the holdings row's price is not known to be intraday.
@@ -837,7 +844,7 @@ def price_contract(
     )
     if (chain or {}).get("Status") != 200 or not chain.get("Success"):
         return None
-    rows = [r for r in chain["Success"] if isinstance(r, dict)]
+    rows = rows_with_source(chain)
 
     reading = row_spot(rows)
     if reading is None or not reading.live:

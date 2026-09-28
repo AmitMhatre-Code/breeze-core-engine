@@ -119,7 +119,23 @@ def _feed_health(bot_type: str, config: Any) -> FeedHealth:
         stale=is_tick_stream_stale(),
         stale_seconds=float(age) if age is not None else float("inf"),
         detail=status,
+        entry_block=None if bot_type == BOT_MOMENTUM_LONG_SCALPER else _futures_block(feed),
     )
+
+
+def _futures_block(feed: Any, now: Optional[float] = None) -> Optional[str]:
+    """Bot 4 judges "has spot settled?" on today's futures candles. Once warm it stays warm, so
+    a futures feed that died after warm-up would have it re-centre flies on candles that
+    stopped updating. It pauses instead, at the point the feed alert calls the feed stopped
+    (Bot 3 needs no gate of its own: its signal already reads `unavailable` by then)."""
+    from icici_breeze_backend.app.services.feed_alerts import FUTURES_DOWN_SECONDS
+
+    last = feed.last_tick_at
+    silent = None if last is None else (time.time() if now is None else now) - last
+    if silent is not None and silent < FUTURES_DOWN_SECONDS:
+        return None
+    since = "any" if silent is None else f"{silent:.0f}s of"
+    return f"NIFTY futures feed stopped ({since} silence); its candles are not current, so no new fly."
 
 
 def _trading_allowed() -> bool:

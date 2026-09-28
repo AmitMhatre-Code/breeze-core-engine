@@ -87,7 +87,7 @@ def patch_chain(monkeypatch):
             rows = rows_by_right.get(right)
             if rows is None:
                 return {"Status": 500, "Error": "no chain", "Success": None}
-            return {"Status": 200, "Error": None, "Success": rows}
+            return {"Status": 200, "Error": None, "Success": rows, "quote_source": "websocket"}
 
         monkeypatch.setattr(hw, "fetch_chain_side_icici_response", fake)
         return calls
@@ -290,6 +290,15 @@ def test_a_real_bid_is_marked_as_such(patch_chain):
     patch_chain({cfg.CALL: chain_rows(1000.0, [1050], bid=4.25, ltp=99.0)})
     proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
     assert run_scan(proc).legs[0].premium_basis == "bid"
+
+
+def test_a_bid_from_a_stand_in_quote_is_only_indicative(patch_chain):
+    """Mid-session a stopped feed is answered from snapshot or REST; that bid may be hours old,
+    so it is planning information that neither approval nor the auto run will sell into."""
+    rows = [dict(r, quote_source="snapshot") for r in chain_rows(1000.0, [1050], bid=4.25, ltp=99.0)]
+    patch_chain({cfg.CALL: rows})
+    proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+    assert run_scan(proc).legs[0].premium_basis == "ltp_indicative"
 
 
 def test_absent_bid_falls_back_to_an_indicative_ltp(patch_chain):

@@ -37,6 +37,9 @@ class FeedHealth:
     stale: bool
     stale_seconds: float = 0.0
     detail: dict[str, Any] = field(default_factory=dict)
+    # Why a feed this bot's *entries* read has stopped, or None. Entries only: a feed an
+    # exit does not read must never flatten a position.
+    entry_block: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -281,6 +284,9 @@ def _decide_entry(snapshot: Snapshot, config: Any) -> Decision:
             ReasonCode.STALE_FEED,
             f"Tick feed is stale ({snapshot.feed.stale_seconds:.0f}s); not opening anything.",
         )
+
+    if snapshot.feed.entry_block:
+        return Decision("idle", ReasonCode.STALE_FEED, snapshot.feed.entry_block)
 
     if not snapshot.feed.warm:
         return Decision(

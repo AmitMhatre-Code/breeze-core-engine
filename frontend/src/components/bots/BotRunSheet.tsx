@@ -196,7 +196,7 @@ function LegRow({
         ) : (
           // Amber is the only in-row cue now that the "ind." suffix is gone (legend below);
           // the title and the off-screen word keep it from being colour-only.
-          <span className="text-amber-on-tint" title="Indicative — priced off the last trade">
+          <span className="text-amber-on-tint" title="Indicative — no live bid from the ICICI feed">
             {leg.premium_per_share}
             <span className="sr-only"> (indicative)</span>
           </span>
@@ -545,9 +545,9 @@ export function BotRunSheet({
               0.00
             </span>
             <p>
-              Bids in this colour are indicative — priced off the last trade because the
-              market is closed and there is no live bid. You can plan now, but placing needs
-              an open market.
+              Bids in this colour are indicative: there is no live bid, because the market
+              is closed or the ICICI feed for that strike has stopped. You can plan now, but
+              placing needs a live bid.
             </p>
           </div>
         )}

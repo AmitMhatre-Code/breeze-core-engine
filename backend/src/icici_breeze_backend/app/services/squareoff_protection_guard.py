@@ -29,6 +29,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST, now_ist
 from icici_breeze_backend.app.repositories import squareoff_protection as state_repo
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
+from icici_breeze_backend.app.services.feed_alerts import RECOVERY_HOLD_SECONDS, FeedIncidents
 
 _logger = logging.getLogger(__name__)
 
@@ -192,6 +193,76 @@ def _handle_recovered(user_id: str) -> None:
         notify_protection_resumed(user_id, rules)
 
 
+# Stale-price alerting. The engine already stands a rule down once a leg's quote passes
+# PNL_RULE_MAX_QUOTE_AGE_SECONDS; these only decide when that becomes a message.
+# Grace: past the 120s quote age, so ~2.5 min without a price before we speak.
+_FEED_ALERT_GRACE_SECONDS = 30.0
+# Older than this, the engine is not evaluating the user at all (cold registry) -- the
+# suspended alert's case, not ours. Above the engine's 30s maximum tick interval.
+_FEED_OBSERVATION_MAX_AGE_SECONDS = 90.0
+
+# Keyed "user_id|rule_id". Down alerts at once; back only after the shared recovery hold.
+_rule_incidents = FeedIncidents()
+
+
+def _blind_clock_floor(now: datetime) -> float | None:
+    """Blindness only counts from the point a fresh quote could have arrived after the
+    open; yesterday's quotes are stale at 09:15 by definition."""
+    try:
+        from icici_breeze_backend.app.services.market_calendar import get_calendar_config
+
+        open_at = get_calendar_config().open_time(now)
+        return open_at.timestamp() + float(getattr(cfg, "PNL_RULE_MAX_QUOTE_AGE_SECONDS", 120.0))
+    except Exception:  # noqa: BLE001 — never let a calendar hiccup block the alert
+        _logger.debug("Could not resolve market open for the stale-price clock", exc_info=True)
+        return None
+
+
+def check_rule_feed_staleness(user_id: str, now: float, blind_floor: float | None) -> None:
+    """Tell the user when an armed rule has had no usable price for long enough to matter,
+    and once more when that has been over for the recovery hold."""
+    from icici_breeze_backend.app.services import telegram_alerts
+    from icici_breeze_backend.app.services.portfolio_pnl_engine import group_rule_feed_states
+
+    states = group_rule_feed_states(user_id)
+    live = {f"{user_id}|{s['rule_id']}" for s in states}
+    for key in _rule_incidents.keys():
+        if key.startswith(f"{user_id}|") and key not in live:
+            _rule_incidents.forget(key)  # fired, reset or disarmed: its own message covers it
+
+    down: list[dict] = []
+    back: list[dict] = []
+    for s in states:
+        if now - s["observed_at"] > _FEED_OBSERVATION_MAX_AGE_SECONDS:
+            continue
+        key = f"{user_id}|{s['rule_id']}"
+        if s["blind_since"] is not None:
+            since = max(s["blind_since"], blind_floor) if blind_floor else s["blind_since"]
+            if not _rule_incidents.is_down(key) and now - since < _FEED_ALERT_GRACE_SECONDS:
+                continue
+            if _rule_incidents.update(key, down=True, now=now) == "down":
+                down.append(s)
+        elif (
+            _rule_incidents.update(key, down=False, now=now, healthy_since=s["evaluable_since"])
+            == "back"
+        ):
+            back.append(s)
+
+    hold_minutes = int(RECOVERY_HOLD_SECONDS // 60)
+    if down:
+        _logger.warning(
+            "PB/SL rules without fresh prices for user_id=%s: %s",
+            user_id,
+            [s["rule_id"] for s in down],
+        )
+        telegram_alerts.notify_rule_prices_stale(user_id, down, hold_minutes=hold_minutes)
+    if back:
+        _logger.info(
+            "PB/SL rules priced again for user_id=%s: %s", user_id, [s["rule_id"] for s in back]
+        )
+        telegram_alerts.notify_rule_prices_restored(user_id, back, hold_minutes=hold_minutes)
+
+
 def protection_guard_tick() -> None:
     """One sweep over every user holding live SGs.
 
@@ -203,8 +274,12 @@ def protection_guard_tick() -> None:
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
     if not is_market_open():
+        # Every quote goes stale at the close; an open incident ends with the session,
+        # not with a "back" message the next morning.
+        _rule_incidents.clear()
         return
     now = now_ist()
+    blind_floor = _blind_clock_floor(now)
     for user_id in _users_with_live_rules():
         try:
             if warm_positions_for_user(user_id):
@@ -213,6 +288,7 @@ def protection_guard_tick() -> None:
                 # unknown. Costs no extra broker call — it reads the registry the warm
                 # just refreshed.
                 reconcile_fully_closed_groups(user_id)
+                check_rule_feed_staleness(user_id, now.timestamp(), blind_floor)
             else:
                 _handle_suspended(user_id, now)
         except Exception:  # noqa: BLE001 — one user must not stop the sweep

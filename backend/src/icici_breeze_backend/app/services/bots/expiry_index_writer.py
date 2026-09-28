@@ -213,6 +213,7 @@ def _chain_side(
     so a bhavcopy miss and a REST-fallback miss don't read the same in the run log."""
     from icici_breeze_backend.app.services.quote_source_router import (
         fetch_chain_side_icici_response,
+        rows_with_source,
     )
 
     chain = fetch_chain_side_icici_response(proc, user_id, index_code, exchange, expiry, right)
@@ -220,7 +221,7 @@ def _chain_side(
         return [], "chain fetch returned nothing"
     if chain.get("Status") != 200:
         return [], f"chain fetch status {chain.get('Status')}: {chain.get('Error') or 'no error text'}"
-    rows = [r for r in (chain.get("Success") or []) if isinstance(r, dict)]
+    rows = rows_with_source(chain)
     if not rows:
         return [], "chain fetch returned no rows"
     return rows, None
@@ -367,6 +368,8 @@ def build_candidates(
     missing strike, an empty book and a refused margin call alike, and each needs a
     different fix.
     """
+    from icici_breeze_backend.app.services.quote_source_router import row_is_live
+
     # CE before PE, so the same failure always reads the same way in the run log.
     rights_needed = [
         r for r in (cfg.CALL, cfg.PUT)
@@ -412,6 +415,14 @@ def build_candidates(
             leg_failures.append(
                 f"{_side(right)} {strike:g}: no bid (best_bid_price "
                 f"{row.get('best_bid_price')!r}, ltp {row.get('ltp')!r})"
+            )
+            continue
+        if not row_is_live(row):
+            # The feed for this strike has stopped and the router filled in a stand-in: the
+            # bot pauses (a transient skip, retried) rather than sell into a stale price.
+            leg_failures.append(
+                f"{_side(right)} {strike:g}: no live quote (priced from "
+                f"{row.get('quote_source') or 'an unknown source'})"
             )
             continue
         picked[right] = CandidateLeg(right=right, strike_price=strike, bid=bid)

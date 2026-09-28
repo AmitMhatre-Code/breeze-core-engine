@@ -331,9 +331,11 @@ def fetch_book(
     quotes: dict[tuple[str, float], Quote] = {}
     for leg in book:
         if leg.action == cfg.SELL:
-            quotes[(leg.right, leg.strike)] = market.live_quote(
+            quote = market.live_quote(
                 proc, user_id, index_code, expiry_display, leg.strike, leg.right
             )
+            # A short is only bought back against a live ask; a stand-in reads as no ask.
+            quotes[(leg.right, leg.strike)] = quote if quote.live else Quote(None, None, None)
     return book, quotes, None
 
 

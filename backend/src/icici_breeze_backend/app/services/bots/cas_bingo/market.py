@@ -48,6 +48,7 @@ def chain_rows(
 ) -> list[dict[str, Any]]:
     from icici_breeze_backend.app.services.quote_source_router import (
         fetch_chain_side_icici_response,
+        rows_with_source,
     )
 
     chain = fetch_chain_side_icici_response(
@@ -55,7 +56,7 @@ def chain_rows(
     )
     if (chain or {}).get("Status") != 200 or not chain.get("Success"):
         return []
-    return [r for r in chain["Success"] if isinstance(r, dict)]
+    return rows_with_source(chain)
 
 
 def index_spot(index_code: str, *, now: Optional[float] = None) -> Optional[float]:
@@ -109,7 +110,7 @@ def live_quote(
     rows = (response or {}).get("Success") or []
     if (response or {}).get("Status") != 200 or not rows:
         return Quote(None, None, None)
-    return _row_quote(rows[0])
+    return _row_quote(rows[0], response.get("quote_source"))
 
 
 def lot_size(proc: Any, index_code: str, expiry_display: str) -> int:

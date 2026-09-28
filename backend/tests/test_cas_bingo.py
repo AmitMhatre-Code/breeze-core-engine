@@ -189,6 +189,7 @@ def _chain(right, spot=24000.0):
             "spot_price": spot,
             "best_bid_price": _price(s, spot, right) - 0.5,
             "best_offer_price": _price(s, spot, right) + 0.5,
+            "quote_source": "websocket",
         }
         for s in range(23500, 24550, 50)
     ]
@@ -414,8 +415,25 @@ def test_debit_stop_is_a_share_of_the_debit():
 
 def test_close_value_uses_bid_for_longs_and_ask_for_shorts():
     legs = _legs(("call", 24300.0, cfg.BUY), ("call", 24150.0, cfg.SELL))
-    quotes = {("call", 24300.0): Quote(4.0, 5.0, 4.5), ("call", 24150.0): Quote(9.0, 10.0, 9.5)}
+    quotes = {("call", 24300.0): Quote(4.0, 5.0, 4.5, "websocket"), ("call", 24150.0): Quote(9.0, 10.0, 9.5, "websocket")}
     assert execution.close_value_per_unit(legs, quotes) == -6.0
+
+
+def test_a_stand_in_quote_holds_the_exit_instead_of_judging_it():
+    """A stop marked against a snapshot or REST price fires on a price nobody can trade at."""
+    legs = _legs(("call", 24300.0, cfg.BUY), ("call", 24150.0, cfg.SELL))
+    quotes = {
+        ("call", 24300.0): Quote(4.0, 5.0, 4.5, "websocket"),
+        ("call", 24150.0): Quote(9.0, 10.0, 9.5, "snapshot"),
+    }
+    assert execution.close_value_per_unit(legs, quotes) is None
+
+
+def test_a_stand_in_quote_is_never_a_plan_leg():
+    row = {"strike_price": 24000.0, "best_bid_price": 10.0, "best_offer_price": 11.0}
+    assert plan._leg({**row, "quote_source": "websocket"}, "call", cfg.BUY) is not None
+    assert plan._leg({**row, "quote_source": "snapshot"}, "call", cfg.BUY) is None
+    assert plan._leg(row, "call", cfg.BUY) is None, "an unknown source is not live"
 
 
 def test_settlement_is_intrinsic_at_the_last_level():
@@ -471,7 +489,7 @@ def test_live_sell_failure_unwinds_the_buy(db, monkeypatch):
     monkeypatch.setattr(live, "place_and_confirm", fake_place)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.bots.cas_bingo.market.live_quote",
-        lambda *a, **k: Quote(4.0, 5.0, 4.5),
+        lambda *a, **k: Quote(4.0, 5.0, 4.5, "websocket"),
     )
     run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
     outcome = execution.open_live(FakeProc(), USER, run_id, p, CasBingoConfig(), ChargesModel(), {})

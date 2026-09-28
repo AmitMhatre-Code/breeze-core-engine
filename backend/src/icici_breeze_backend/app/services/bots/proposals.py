@@ -234,6 +234,7 @@ def reprice_index_legs(
     attributed to the group's first leg exactly as `plan_to_legs` does.
     """
     from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
+    from icici_breeze_backend.app.services.quote_source_router import row_is_live
 
     legs = list(pending.legs)
 
@@ -267,7 +268,7 @@ def reprice_index_legs(
 
                 new_strike = parse_strike(picked.get("strike_price"))
                 new_bid = bot2._bid(picked)
-                if new_strike is not None and new_bid > 0:
+                if new_strike is not None and new_bid > 0 and row_is_live(picked):
                     strike = float(new_strike)
                     bid = new_bid
                     spot = round(fresh_spot, 2) if fresh_spot > 0 else spot
@@ -429,8 +430,8 @@ def _approve_holdings(
     if indicative:
         raise ApprovalRefused(
             "No live bid for " + ", ".join(indicative) + ". These premiums are "
-            "indicative (priced off the last trade because the market is closed), so "
-            "nothing was placed. Approve again while the market is open.",
+            "indicative (the market is closed, or the ICICI feed for these strikes has "
+            "stopped), so nothing was placed. Approve again once live prices are back.",
             status_code=409,
             reason_code=ReasonCode.QUOTE_UNAVAILABLE,
         )
