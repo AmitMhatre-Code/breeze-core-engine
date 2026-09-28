@@ -58,17 +58,6 @@ def chain_rows(
     return [r for r in chain["Success"] if isinstance(r, dict)]
 
 
-def spot_from(rows: list[dict[str, Any]]) -> Optional[float]:
-    for row in rows:
-        try:
-            spot = float(row.get("spot_price") or 0)
-        except (TypeError, ValueError):
-            continue
-        if spot > 0:
-            return spot
-    return None
-
-
 def index_spot(index_code: str, *, now: Optional[float] = None) -> Optional[float]:
     """The live index level from the index spot feed, or None when it is not a fresh tick.
 
@@ -174,3 +163,47 @@ def expiry_date(expiry_display: str) -> Optional[datetime.date]:
 
 def is_today(expiry_display: str) -> bool:
     return expiry_date(expiry_display) == now_ist().date()
+
+
+def auction_probe(index_code: str, expiry_display: str, *, now: Optional[float] = None) -> str:
+    """One log line on how fresh the live cache is around ATM: the index tick, and the ATM
+    call and put's WebSocket cells. Cache reads only -- no subscribe, no REST.
+
+    Whether index option quotes keep streaming through the 15:15-15:30 closing auction is
+    what decides if CAS Bingo can require live quotes; this is the evidence for it.
+    """
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+    from icici_breeze_backend.app.services.reference_data.keys import index_spot_key, ws_quote_key
+    from icici_breeze_backend.app.services.reference_data.tradable_contracts import (
+        list_tradeable_strikes,
+    )
+
+    ts = time.time() if now is None else now
+
+    def age(payload: Any) -> str:
+        try:
+            return f"{ts - float(payload['updated_at']):.0f}s"
+        except (TypeError, ValueError, KeyError):
+            return "none"
+
+    exchange = INDEX_EXCHANGE[index_code]
+    spot_payload = cache_get_json(index_spot_key(SIGNAL_LABEL[index_code]))
+    parts = [f"{INDEX_LABEL[index_code]} {expiry_display}", f"index tick age={age(spot_payload)}"]
+    try:
+        level = float((spot_payload or {}).get("ltp"))
+    except (TypeError, ValueError):
+        return " | ".join(parts + ["no index level to find ATM"])
+    strikes = [float(s) for s in list_tradeable_strikes(index_code, expiry_display, exchange_code=exchange) or []]
+    if not strikes:
+        return " | ".join(parts + ["no tradeable strikes"])
+    atm = min(strikes, key=lambda s: abs(s - level))
+    for right in ("call", "put"):
+        cell = cache_get_json(ws_quote_key(exchange, index_code, expiry_display, atm, right))
+        if not isinstance(cell, dict):
+            parts.append(f"{int(atm)} {right}: no ws cell")
+            continue
+        parts.append(
+            f"{int(atm)} {right}: bid={cell.get('best_bid_price')} ask={cell.get('best_offer_price')} "
+            f"ltp={cell.get('ltp')} age={age(cell)}"
+        )
+    return " | ".join(parts)

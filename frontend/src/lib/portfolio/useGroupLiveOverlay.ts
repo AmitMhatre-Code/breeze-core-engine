@@ -106,7 +106,16 @@ export function useGroupLiveOverlay(
         ? chainSuccess.spot_price
         : null;
     return group.rows.map((row) => {
-      const base = liveSpot != null ? { ...row, spot_price: liveSpot } : row;
+      // The chain's spot label travels with its spot, or a stand-in would pass as live.
+      const base =
+        liveSpot != null
+          ? {
+              ...row,
+              spot_price: liveSpot,
+              spot_source: chainSuccess.spot_source ?? null,
+              spot_as_of: chainSuccess.spot_as_of ?? null,
+            }
+          : row;
       const right = normRight(String(row.right ?? ""));
       const strike = parseNum(row.strike_price);
       if (!right || strike == null) return base;

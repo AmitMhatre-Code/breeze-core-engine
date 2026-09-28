@@ -618,6 +618,7 @@ def reconnect_ws() -> bool:
     """
     global _sdk, _sdk_user_id, _connected
     from icici_breeze_backend.app.services.index_spot_feed import (
+        resync_underlying_spot_subscriptions,
         sync_index_spot_subscriptions,
     )
     from icici_breeze_backend.app.services.processor import processor
@@ -647,6 +648,9 @@ def reconnect_ws() -> bool:
         tokens = sorted(_sub_meta.keys())
     tokens_ok = force_resubscribe_tokens(tokens) if tokens else True
     spot_ok = sync_index_spot_subscriptions(processor(), user_id, force=True)
+    # Stock spots subscribe outside `_sub_meta` too; without this every stock's spot sat
+    # at the previous close after the 2026-09-24 and 2026-09-28 rebuilds.
+    stock_spot_ok = resync_underlying_spot_subscriptions(processor(), user_id)
     # The index futures feeds subscribe outside `_sub_meta` and latch per day, so without this
     # the rebuilt socket leaves them silent until the close -- NIFTY from 13:34 on 2026-09-24,
     # with every signal reading `stale`.
@@ -657,11 +661,13 @@ def reconnect_ws() -> bool:
     except Exception:  # noqa: BLE001 -- the chain and spot replay above must still count
         _logger.warning("WS reconnect: futures feed re-subscribe failed", exc_info=True)
     _logger.info(
-        "WS reconnect: rebuilt for user_id=%s tokens=%s tokens_ok=%s index_spot_ok=%s",
+        "WS reconnect: rebuilt for user_id=%s tokens=%s tokens_ok=%s index_spot_ok=%s "
+        "stock_spot_ok=%s",
         user_id,
         len(tokens),
         tokens_ok,
         spot_ok,
+        stock_spot_ok,
     )
     return True
 

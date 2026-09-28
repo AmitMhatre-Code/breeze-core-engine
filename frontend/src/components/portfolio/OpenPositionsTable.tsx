@@ -53,6 +53,7 @@ import { useGroupPoP } from "@/lib/portfolio/useGroupPoP";
 import { useLegPoP } from "@/lib/portfolio/useLegPoP";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
+import { SPOT_STAND_IN_TITLE, spotSourceNote } from "@/lib/quote-source";
 
 export type PortfolioPositionsViewMode = "grouped" | "individual";
 
@@ -231,6 +232,24 @@ function formatSpot(raw: unknown): { text: string; className: string } {
     };
   }
   return { text: formatSpotPrice(raw), className: "font-mono tabular-nums" };
+}
+
+/** Beside a spot that is not a live tick -- mid-session a bare previous close reads as live. */
+function SpotSourceNote({ row }: { row: PortfolioPositionRecord | undefined }) {
+  const note = spotSourceNote(
+    row?.spot_source as string | null | undefined,
+    row?.spot_as_of as string | null | undefined,
+  );
+  if (!note) return null;
+  return (
+    <span
+      data-spot-note
+      className="ml-1 font-sans text-micro app-text-muted"
+      title={SPOT_STAND_IN_TITLE}
+    >
+      · {note}
+    </span>
+  );
 }
 
 /** PoP: muted "—" until the chain fetch resolves. */
@@ -919,6 +938,7 @@ function PortfolioGroupTableBlock({
         <td className={`${tdSummaryBase} text-right`}>—</td>
         <td className={`${tdSummaryBase} text-right font-mono tabular-nums ${spotAgg.className}`}>
           {spotAgg.text}
+          <SpotSourceNote row={liveRows[0]} />
         </td>
         <td className={`${tdSummaryShell} text-right font-mono tabular-nums font-medium ${gMtm.className}`}>
           {gMtm.text}
@@ -982,6 +1002,7 @@ function PortfolioGroupTableBlock({
                 </td>
                 <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
                   {spot.text}
+                  <SpotSourceNote row={row} />
                 </td>
                 <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${mtm.className}`}>
                   {mtm.text}
@@ -1119,6 +1140,7 @@ function PortfolioGroupCardBlock({
           <p>
             <span className="app-text-muted">Spot:</span>{" "}
             <span className={spotAgg.className}>{spotAgg.text}</span>
+            <SpotSourceNote row={liveRows[0]} />
           </p>
           <p>
             <span className="app-text-muted">MTM (sum):</span>{" "}
@@ -1205,6 +1227,7 @@ function PortfolioGroupCardBlock({
                   <p>
                     <span className="app-text-muted">Spot:</span>{" "}
                     <span className={spot.className}>{spot.text}</span>
+                    <SpotSourceNote row={row} />
                   </p>
                   <p>
                     <span className="app-text-muted">MTM:</span>{" "}
@@ -1309,6 +1332,7 @@ function PortfolioLegTableBlock({
         </td>
         <td className={`${tdBase} text-right font-mono tabular-nums ${spot.className}`}>
           {spot.text}
+          <SpotSourceNote row={row} />
         </td>
         <td className={`${tdShell} text-right font-mono tabular-nums font-medium ${mtm.className}`}>
           {mtm.text}
@@ -1421,6 +1445,7 @@ function PortfolioLegCardBlock({
           <p>
             <span className="app-text-muted">Spot:</span>{" "}
             <span className={spot.className}>{spot.text}</span>
+            <SpotSourceNote row={row} />
           </p>
           <p>
             <span className="app-text-muted">MTM:</span>{" "}

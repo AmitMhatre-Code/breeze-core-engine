@@ -63,7 +63,7 @@ def sheet(proc: Any, user_id: str, config: CasBingoConfig) -> dict[str, Any]:
         calls = market.chain_rows(proc, user_id, code, expiry, "call")
         puts = market.chain_rows(proc, user_id, code, expiry, "put")
         opening = runtime.day_open(code)
-        spot = market.index_spot(code) or market.spot_from(calls) or market.spot_from(puts)
+        spot = market.index_spot(code)
         state, value, _reason = runtime._signal(config, code)
 
         book: Optional[list[liq.BookLeg]] = None

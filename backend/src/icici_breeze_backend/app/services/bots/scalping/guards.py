@@ -149,13 +149,19 @@ def stop_breached_including_open(
     return (float(realized_net_pnl) + float(unrealized)) <= -abs(float(cumulative_stop_inr))
 
 
-def disarm_bot(user_id: str, bot_type: str, reason_text: str) -> None:
+def disarm_bot(user_id: str, bot_type: str, reason_text: str, *, paper: bool) -> None:
     """Switch the bot off after a daily-stop breach, so it cannot resume unattended.
 
     Decided 2026-09-06: a bot that has lost its daily limit does not trade again until a
     human has looked at why. The cost is real and worth stating -- one bad day stops the bot
     for every subsequent day until it is re-enabled by hand, which is a silence that has to be
     noticed. The run log and the Telegram alert are what make it noticeable.
+
+    `paper` is required, not defaulted, on purpose: this is the one disarm alert that can
+    fire for a bot that has placed no real orders at all (a paper day can breach its own
+    simulated stop), unlike the other `disarm_bot` call sites, which only ever run after a
+    real order failed. A silent default here is exactly how a Paper-mode loss reads as real
+    money.
     """
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
@@ -167,9 +173,14 @@ def disarm_bot(user_id: str, bot_type: str, reason_text: str) -> None:
         return
     _logger.warning("scalping: %s disarmed after breaching its daily loss limit", bot_type)
     display_name = _BOT_LABEL.get(bot_type, bot_type)
+    banner = (
+        "\U0001f9ea *SIMULATION (Paper mode) — no real money is involved.*\n\n"
+        if paper else ""
+    )
     try:
         _notify(
             user_id,
+            f"{banner}"
             "🛑 *Scalping bot stopped*\n\n"
             f"*{display_name}* hit its cumulative daily loss limit and has been "
             f"*disabled*.\n\n{reason_text}\n\n"

@@ -176,11 +176,28 @@ def test_breaching_the_stop_disarms_the_bot(db, sent):
     repo.get_or_create_bot(USER, BOT_MOMENTUM_LONG_SCALPER)
     repo.update_bot(USER, BOT_MOMENTUM_LONG_SCALPER, enabled=True)
 
-    guards.disarm_bot(USER, BOT_MOMENTUM_LONG_SCALPER, "Daily loss limit reached.")
+    guards.disarm_bot(
+        USER, BOT_MOMENTUM_LONG_SCALPER, "Daily loss limit reached.", paper=False,
+    )
 
     assert repo.get_or_create_bot(USER, BOT_MOMENTUM_LONG_SCALPER).enabled is False
     assert sent and sent[0][0] == "scalping_daily_stop"
     assert "re-enable" in sent[0][1]
+    assert "SIMULATION" not in sent[0][1]
+
+
+def test_breaching_the_stop_in_paper_mode_labels_the_alert_as_simulated(db, sent):
+    """A paper day's losses are not real money -- the alert must say so unmissably."""
+    repo.get_or_create_bot(USER, BOT_MOMENTUM_LONG_SCALPER)
+    repo.update_bot(USER, BOT_MOMENTUM_LONG_SCALPER, enabled=True)
+
+    guards.disarm_bot(
+        USER, BOT_MOMENTUM_LONG_SCALPER, "Daily loss limit reached.", paper=True,
+    )
+
+    assert sent and sent[0][0] == "scalping_daily_stop"
+    assert "SIMULATION" in sent[0][1]
+    assert "no real money" in sent[0][1]
 
 
 def test_the_stop_is_recomputed_from_rows_so_a_restart_cannot_reset_it(db):

@@ -77,6 +77,7 @@ How it decides:
 - Strikes are rounded **further** from spot, never closer. Premium is quoted at the **bid**, and margin is netted against your existing positions.
 - Stocks are funded in your priority order; one that does not fit is skipped and the rest still get written.
 - A proposal is re-priced at approval and not placed if the bid has moved materially.
+- It needs a **live spot** for each stock. If the stock has not ticked for over a minute, that stock is skipped with the reason ("No live spot price"), rather than placing strikes against an old price.
 - It arms **no automatic exit**: these are monthly positions you manage yourself.
 
 ### Expiry-Day Index Writer
@@ -89,7 +90,7 @@ Collects the rapid time decay of NIFTY and SENSEX options on their expiry day. I
 | **Schedule** | **Entry (IST)** (default 09:30), **Remind from (IST)**, **Until (IST)** (default 12:00; no session by then and it skips the day) and **Remind every (min)**. |
 | **Exits** | **Book at % of premium** (default 50%: buy back when the option has halved; 100% lets it expire with only the stop live) and **Stop at N × premium** (default 1: exit when the loss equals the premium collected). |
 
-With more than one strategy shortlisted, it picks the one that pays the most **premium per rupee of margin**, pricing a strangle's margin as one position. Size is confirmed with ICICI's margin calculator before any order goes out. The stop and target are armed the moment the fills are confirmed. On a strangle, profit is booked only when **both** legs have decayed.
+With more than one strategy shortlisted, it picks the one that pays the most **premium per rupee of margin**, pricing a strangle's margin as one position. Size is confirmed with ICICI's margin calculator before any order goes out. The stop and target are armed the moment the fills are confirmed. On a strangle, profit is booked only when **both** legs have decayed. It needs a **live index level** to place strikes; without one it skips that pass and says so in the Activity log.
 
 ### Long Scalper
 
@@ -118,6 +119,7 @@ How it trades:
 | Square-off | 15:15 | Exit |
 
 - **A call simply ending does not close the trade.** Only the stops, an opposite call, or the square-off do.
+- It trades only on **live prices**: the option's quote from the live feed and NIFTY from a live index tick. If either lapses, it opens nothing and holds any open position without moving its stop until prices return. The Activity log records these passes as "No live quote" or "No live NIFTY index tick".
 - A round trip on one NIFTY lot costs roughly ₹100, so costs matter a great deal to a scalper; every report shows them.
 
 ### Intraday Iron Fly
@@ -134,6 +136,8 @@ Earns premium from a calm midday NIFTY market with a strictly limited worst case
 | **Risk** | Daily loss cap, consecutive losses, cooldown and broker calls held back, as for the Long Scalper. |
 
 It places the **wings first**, then the short legs; if a wing will not fill, anything filled is unwound. Profit and loss are measured at what it would actually cost to close (shorts at the ask, wings at the bid). On exit it buys back the shorts first, then sells the wings.
+
+Like the Long Scalper, it needs **live prices** on all four legs and a live NIFTY index tick to open a fly, and it centres the fly on that live NIFTY level. A fly is never worth more than its widest wing, so a price that says otherwise is treated as bad data: it is ignored rather than counted towards the stops or the daily loss cap.
 
 ### CAS Bingo
 
@@ -155,7 +159,7 @@ The strategies:
 - **Credit spread, inside the auction** (from 15:20): no signal; it sells beyond the indicative index while the spread still pays a minimum credit.
 - **Long strangle**: at a set time, buys a call and a put out of the money.
 
-It buys the long leg first and sells only once that has filled; if the sell leg fails, the buy leg is unwound. If neither the target nor the stop fires, the position settles at expiry. It will not enter an index and expiry where a Profit Booking / Stop Loss rule is already armed.
+Every structure needs a **live index level**; without one it plans nothing that pass. It buys the long leg first and sells only once that has filled; if the sell leg fails, the buy leg is unwound. If neither the target nor the stop fires, the position settles at expiry. It will not enter an index and expiry where a Profit Booking / Stop Loss rule is already armed.
 
 > [!WARNING]
 > ICICI may square off your positions at an extreme loss if mark-to-market or margin requirements spike during the closing auction.

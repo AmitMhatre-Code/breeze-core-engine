@@ -11,7 +11,7 @@ This section also explains three things that every order in the app shares: [agg
 | Control | What it does |
 |---|---|
 | **Exchange** | Switches between **NSE** (NFO) and **BSE** (BFO). Changing it clears the form. |
-| **Underlying** | Search by name, for example `NIFTY` or `SBIN`. Press **/** anywhere on the page to jump here. Underlyings you traded recently are offered as quick picks beneath the box. The current spot price appears once one is chosen. |
+| **Underlying** | Search by name, for example `NIFTY` or `SBIN`. Press **/** anywhere on the page to jump here. Underlyings you traded recently are offered as quick picks beneath the box. The current spot price appears once one is chosen; a note such as **· last tick 11:28** or **· close 25-Sep** after it means the price is not a live tick. |
 | **Type** | Switches between **CE** (call) and **PE** (put). |
 | **Expiry** | The expiry dates available for the underlying. |
 | **Strike** | The strikes for that expiry. The at-the-money strike is marked **ATM** and chosen by default. |

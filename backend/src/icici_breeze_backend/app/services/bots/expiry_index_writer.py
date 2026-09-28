@@ -231,14 +231,23 @@ def _chain_rows(proc: Any, user_id: str, index_code: str, exchange: str, expiry:
 
 
 def _spot_from(rows: list[dict]) -> float:
-    for r in rows:
-        try:
-            spot = float(r.get("spot_price") or 0)
-        except (TypeError, ValueError):
-            continue
-        if spot > 0:
-            return spot
-    return 0.0
+    """The chain's spot only when a live tick set it; 0.0 for a stand-in such as the
+    previous close, which would put every strike the wrong distance from the market."""
+    from icici_breeze_backend.app.services.quote_source_router import row_spot
+
+    reading = row_spot(rows)
+    return reading.spot if reading is not None and reading.live else 0.0
+
+
+def _no_live_spot_reason(rows_by_right: dict[str, list[dict]]) -> str:
+    from icici_breeze_backend.app.services.quote_source_router import row_spot
+
+    for rows in rows_by_right.values():
+        reading = row_spot(rows)
+        if reading is not None:
+            return f"No live spot price; the chain only has {reading.describe()}."
+    counts = ", ".join(f"{len(rows)} {_side(r)}" for r, rows in rows_by_right.items())
+    return f"No spot price available (no spot_price on any of {counts} chain rows)."
 
 
 def _bid(row: dict) -> float:
@@ -377,13 +386,7 @@ def build_candidates(
         rows_by_right[right] = rows
         spot = spot or _spot_from(rows)
     if spot <= 0:
-        counts = ", ".join(f"{len(rows_by_right[r])} {_side(r)}" for r in rights_needed)
-        return (
-            [],
-            f"No spot price available (no spot_price on any of {counts} chain rows).",
-            0.0,
-            ReasonCode.QUOTE_UNAVAILABLE,
-        )
+        return [], _no_live_spot_reason(rows_by_right), 0.0, ReasonCode.QUOTE_UNAVAILABLE
 
     # Pick each side once and reuse it: a strangle's call leg is the same contract the
     # naked-CE candidate would sell, so pricing it twice would only invite them to drift.

@@ -99,8 +99,11 @@ def env(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
-        lambda p, u, s, e, exp, right, **k: {"Status": 200, "Success": _rows(right, proc)},
+        lambda p, u, s, e, exp, right, **k: {
+            "Status": 200, "Success": _rows(right, proc), "quote_source": "websocket",
+        },
     )
+    monkeypatch.setattr(fly, "live_index_spot", lambda: 24_010.0)
     return proc
 
 
@@ -264,10 +267,10 @@ def _legs():
 def test_close_cost_uses_the_ask_for_shorts_and_the_bid_for_longs():
     """Mid-priced decay books a profit the exit then fails to realise."""
     quotes = {
-        "call|24000.0": Quote(bid=50.0, ask=52.0, ltp=51.0),
-        "put|24000.0": Quote(bid=48.0, ask=50.0, ltp=49.0),
-        "call|24150.0": Quote(bid=8.0, ask=10.0, ltp=9.0),
-        "put|23850.0": Quote(bid=7.0, ask=9.0, ltp=8.0),
+        "call|24000.0": Quote(bid=50.0, ask=52.0, ltp=51.0, source="websocket"),
+        "put|24000.0": Quote(bid=48.0, ask=50.0, ltp=49.0, source="websocket"),
+        "call|24150.0": Quote(bid=8.0, ask=10.0, ltp=9.0, source="websocket"),
+        "put|23850.0": Quote(bid=7.0, ask=9.0, ltp=8.0, source="websocket"),
     }
     # buy back shorts at ask (52 + 50), sell wings at bid (8 + 7)
     assert fly.cost_to_close(_legs(), quotes) == pytest.approx(52 + 50 - 8 - 7)
@@ -276,6 +279,82 @@ def test_close_cost_uses_the_ask_for_shorts_and_the_bid_for_longs():
 def test_an_unpriceable_leg_makes_the_unwind_cost_unknown():
     quotes = {"call|24000.0": Quote(None, None, None)}
     assert fly.cost_to_close(_legs(), quotes) is None
+
+
+def test_a_stand_in_leg_makes_the_unwind_cost_unknown():
+    """A snapshot or bhavcopy price mid-session may be the previous session's."""
+    live = {"source": "websocket"}
+    quotes = {
+        "call|24000.0": Quote(bid=50.0, ask=52.0, ltp=51.0, **live),
+        "put|24000.0": Quote(bid=48.0, ask=50.0, ltp=49.0, source="bhavcopy"),
+        "call|24150.0": Quote(bid=8.0, ask=10.0, ltp=9.0, **live),
+        "put|23850.0": Quote(bid=7.0, ask=9.0, ltp=8.0, **live),
+    }
+    assert fly.cost_to_close(_legs(), quotes) is None
+
+
+def test_stand_in_quotes_never_open_a_fly(env, monkeypatch):
+    """The router answers a WebSocket miss from offline sources; each cell says which."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
+        lambda p, u, s, e, exp, right, **k: {
+            "Status": 200,
+            "quote_source": "snapshot",
+            "Success": [{**r, "quote_source": "snapshot"} for r in _rows(right, env)],
+        },
+    )
+    structure, problem = fly.build_structure(env, USER, IronFlyScalperConfig(), None)
+    assert structure is None
+    assert problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+    assert "No live quote" in problem[1]
+
+
+def test_a_fly_is_never_centred_on_a_stale_spot(env, monkeypatch):
+    """A chain row's spot can be the previous close; only a live index tick will do."""
+    monkeypatch.setattr(fly, "live_index_spot", lambda: None)
+    structure, problem = fly.build_structure(env, USER, IronFlyScalperConfig(), None)
+    assert structure is None
+    assert problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+    assert "index tick" in problem[1]
+
+
+def test_the_payout_is_the_widest_wing_after_snapping_outward():
+    legs = [("call", 24_000.0, True), ("put", 24_000.0, True),
+            ("call", 24_200.0, False), ("put", 23_850.0, False)]
+    assert fly.max_payout(legs) == 200.0
+
+
+def test_a_fly_value_outside_nothing_to_its_widest_wing_is_implausible():
+    assert fly.plausible_fly_value(0.0, 150.0)
+    assert fly.plausible_fly_value(150.0, 150.0)
+    assert fly.plausible_fly_value(160.0, 150.0)  # inside the spread slack
+    assert not fly.plausible_fly_value(316.0, 150.0)
+    assert not fly.plausible_fly_value(-40.0, 150.0)
+
+
+def test_an_impossible_mark_never_reaches_the_daily_stop(env, monkeypatch):
+    """A 150-point fly costing 316/unit to close is bad data, not a loss to stop on."""
+    run_id = repo.open_session_run(USER, BOT_IRON_FLY_SCALPER)
+    repo.open_cycle(
+        USER, BOT_IRON_FLY_SCALPER, run_id, structure="iron_fly", legs=_legs(), lots=1,
+        entry_value=100.0 * LOT, paper=True,
+        detail={"net_credit_per_unit": 100.0, "atm_strike": ATM, "wing_width": 150.0},
+    )
+    asks = {("put", ATM): 300.0, ("call", ATM): 20.0}
+
+    def _quote(p_, u_, stock, exch, expiry, right, strike, **k):
+        ask = asks.get((right, float(strike)), 3.0)
+        return {"Status": 200, "quote_source": "websocket", "Success": [{
+            "best_bid_price": 1.0 if (right, float(strike)) not in asks else ask - 1.0,
+            "best_offer_price": ask,
+        }]}
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_quote_icici_response", _quote
+    )
+    context = fly.inspect_position(env, USER, IronFlyScalperConfig(), BOT_IRON_FLY_SCALPER)
+    assert context.close_cost is None
+    assert runtime._unrealized_from(context) == 0.0
 
 
 def test_the_decay_target_books_the_position():
@@ -401,7 +480,7 @@ def _drive(monkeypatch, proc, now=datetime.datetime(2026, 9, 8, 12, 0)):
         # credit collected. A flat quote for every leg makes the fly look instantly
         # profitable and books it on the next pass.
         price = _price(float(strike), right)
-        return {"Status": 200, "Success": [{
+        return {"Status": 200, "quote_source": "websocket", "Success": [{
             "best_bid_price": round(price - 0.5, 2),
             "best_offer_price": round(price + 0.5, 2),
             "ltp": price,

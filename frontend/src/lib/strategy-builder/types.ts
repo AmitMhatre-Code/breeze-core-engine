@@ -30,8 +30,17 @@ export type ChainRow = {
 
 export type QuoteSource = "websocket" | "bhavcopy" | "icici_api" | "snapshot";
 
+/**
+ * Where a chain's spot came from. Only `live` is a tick from the last minute; the rest are
+ * stand-ins, and mid-session a `close` is the previous session's.
+ */
+export type SpotSource = "live" | "last_tick" | "close" | "icici_api";
+
 export type QuoteMeta = {
   quote_source: QuoteSource;
+  spot_source?: SpotSource | null;
+  /** ISO time for a tick, ISO date for a close. */
+  spot_as_of?: string | null;
   bhavcopy_date?: string | null;
   quote_as_of?: string | null;
   /** True once a trading session has opened after `bhavcopy_date` — EOD prices are known stale. */
@@ -47,6 +56,8 @@ export type QuoteMeta = {
 export type ChainSuccess = {
   chain_rows: ChainRow[];
   spot_price: number | null;
+  spot_source?: SpotSource | null;
+  spot_as_of?: string | null;
   atm_strike: number | null;
   expiry_display: string;
   stock_code: string;

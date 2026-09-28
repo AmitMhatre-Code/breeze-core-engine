@@ -497,11 +497,37 @@ def _config(raw: dict[str, Any]) -> CasBingoConfig:
         return CasBingoConfig()
 
 
+# Log-only, on every expiry day whether or not the bot is armed. See `market.auction_probe`.
+AUCTION_PROBE_WINDOW = ("15:10", "15:40")
+_last_probe_minute: Optional[str] = None
+
+
+def _probe_auction_quotes(now: datetime.datetime) -> None:
+    global _last_probe_minute
+    from icici_breeze_backend.app.services.market_calendar import is_trading_day
+    from icici_breeze_backend.app.services.processor import processor
+
+    minute = now.strftime("%Y-%m-%d %H:%M")
+    hhmm = now.strftime("%H:%M")
+    if not (AUCTION_PROBE_WINDOW[0] <= hhmm <= AUCTION_PROBE_WINDOW[1]) or minute == _last_probe_minute:
+        return
+    _last_probe_minute = minute
+    if not is_trading_day(now):
+        return
+    try:
+        expiring = market.expiring_today(processor())
+        for code, expiry in expiring.items():
+            _logger.info("cas bingo auction probe: %s", market.auction_probe(code, expiry))
+    except Exception:  # noqa: BLE001 -- evidence gathering must never disturb trading
+        _logger.debug("cas bingo: auction probe failed", exc_info=True)
+
+
 def tick() -> None:
     from icici_breeze_backend.app.services.market_calendar import has_market_opened
 
     if not has_market_opened(now_ist()):
         return
+    _probe_auction_quotes(now_ist())
     armed: set[str] = set()
     try:
         bots = repo.list_enabled_bots(BOT_CAS_BINGO)
@@ -577,6 +603,8 @@ def stop_cas_bingo_loop() -> None:
 
 
 def reset_state_for_tests() -> None:
+    global _last_probe_minute
+    _last_probe_minute = None
     _resolved.clear()
     _retry_after.clear()
     _last_published.clear()

@@ -36,7 +36,7 @@ The app remembers your choice.
 | **Qty** | Quantity in units. |
 | **Avg** | Your average price. |
 | **LTP** | Last traded price. **· prev close** or **· broker px** after the price means it is not a live tick: the previous session's closing price, or ICICI's own figure. |
-| **Spot** | The underlying's current level. |
+| **Spot** | The underlying's current level. **· last tick 11:28**, **· close 25-Sep** or **· ICICI quote** after it means no live tick has arrived for over a minute: it is the last price seen today, a closing price, or ICICI's own quote. |
 | **MTM** | Mark-to-market P&L. |
 | **Carry** | P&L if held to expiry, with its annualised return on margin underneath (group rows). |
 | **Span + ELM** | The group's margin: SPAN on top, the ELM buffer beneath. Shown for groups only, netted across the group's legs. |

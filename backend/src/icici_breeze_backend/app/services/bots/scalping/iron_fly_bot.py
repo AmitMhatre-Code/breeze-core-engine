@@ -33,11 +33,12 @@ from icici_breeze_backend.app.services.bots.scalping.margin import margin_for_mi
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import (
     INDEX_EXCHANGE,
     INDEX_STOCK_CODE,
+    SPOT_MAX_AGE_SECONDS,
     Quote,
     _chain_rows,
     _row_quote,
-    _spot_from,
     atm_strike,
+    live_index_spot,
     live_quote,
     nearest_expiry,
 )
@@ -49,6 +50,28 @@ _logger = logging.getLogger(__name__)
 # of one structure is very nearly N x the one-lot figure (the netting ratio is unchanged), so
 # one call sizes it and one more verifies. This caps the walk when that assumption frays.
 _MAX_SIZING_CALLS = 3
+
+# Room outside a fly's [0, widest wing] value range for four legs' bid/ask spread.
+_VALUE_SLACK_PCT_OF_WIDTH = 10.0
+
+
+def max_payout(legs: list[tuple[str, float, bool]]) -> float:
+    """The most the fly can ever be worth per unit: its widest wing. (right, strike, is_short)."""
+    shorts = {right: strike for right, strike, short in legs if short}
+    longs = {right: strike for right, strike, short in legs if not short}
+    return max((abs(longs[r] - shorts[r]) for r in shorts if r in longs), default=0.0)
+
+
+def plausible_fly_value(value_per_unit: float, width: float) -> bool:
+    """A fly is worth between nothing and its widest wing; a price far outside is bad data.
+
+    Marking on such a price is how a stand-in quote produced a loss several times the most
+    the structure could ever lose, and fired the daily stop on it.
+    """
+    if width <= 0:
+        return True
+    slack = width * _VALUE_SLACK_PCT_OF_WIDTH / 100.0
+    return -slack <= float(value_per_unit) <= width + slack
 
 
 @dataclass(frozen=True)
@@ -162,7 +185,13 @@ def build_structure(
     if not calls or not puts:
         return None, (ReasonCode.CHAIN_NOT_READY, f"Chain for {expiry} is not ready on both sides.")
 
-    spot = _spot_from(calls) or _spot_from(puts)
+    spot = live_index_spot()
+    if spot is None:
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            f"No live NIFTY index tick in the last {SPOT_MAX_AGE_SECONDS:.0f}s; not centring a "
+            f"fly on a stale spot.",
+        )
     atm = atm_strike(calls, spot)
     if atm is None:
         return None, (ReasonCode.QUOTE_UNAVAILABLE, "Could not resolve an ATM strike.")
@@ -183,6 +212,28 @@ def build_structure(
         return None, (
             ReasonCode.QUOTE_UNAVAILABLE,
             f"No two-sided quote on: {', '.join(missing)}. Skipping this cycle.",
+        )
+
+    stand_ins = [
+        name for name, leg in zip(("short CE", "short PE", "long CE", "long PE"), legs)
+        if not leg.quote.live
+    ]
+    if stand_ins:
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            f"No live quote on: {', '.join(stand_ins)}; the feed is serving stand-in prices. "
+            f"Skipping this cycle.",
+        )
+
+    credit = sum(l.quote.bid for l in legs if l.is_short) - sum(
+        l.quote.ask for l in legs if not l.is_short
+    )
+    payout = max_payout([(l.right, l.strike, l.is_short) for l in legs])
+    if not plausible_fly_value(credit, payout):
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            f"Quotes price the fly at {credit:.2f}/unit, outside what a {payout:.0f}-point fly "
+            f"can be worth. Skipping this cycle.",
         )
 
     for leg in legs:
@@ -336,11 +387,12 @@ def cost_to_close(legs: list[dict[str, Any]], quotes: dict[str, Quote]) -> Optio
 
     Shorts are bought back at the **ask** and longs sold at the **bid**. Using mid would
     report a decay the exit cannot realise -- booking a profit that evaporates on the way out.
+    None unless every leg has a live quote.
     """
     total = 0.0
     for leg in legs:
         quote = quotes.get(_leg_key(leg))
-        if quote is None:
+        if quote is None or not quote.live:
             return None
         if leg.get("action") == cfg.SELL:
             if quote.ask is None:
@@ -510,15 +562,6 @@ class FlyContext:
     spot: Optional[float]
 
 
-def _cycle_spot(proc: Any, user_id: str, cycle: Any) -> Optional[float]:
-    legs = cycle.legs or []
-    if not legs:
-        return None
-    rows = _chain_rows(proc, user_id, str(legs[0].get("expiry_display") or ""), "call")
-    spot = _spot_from(rows)
-    return spot or None
-
-
 def inspect_position(
     proc: Any, user_id: str, config: IronFlyScalperConfig, bot_type: str
 ) -> Optional[FlyContext]:
@@ -531,8 +574,21 @@ def inspect_position(
     legs = cycle.legs or []
     quotes = fetch_leg_quotes(proc, user_id, legs)
     close_cost = cost_to_close(legs, quotes)
+    payout = max_payout([
+        (str(l.get("right")), float(l.get("strike_price") or 0), l.get("action") == cfg.SELL)
+        for l in legs
+    ])
+    if close_cost is not None and not plausible_fly_value(close_cost, payout):
+        # Unpriced, not marked: an impossible number must not reach the stop or the daily total.
+        _logger.warning(
+            "iron fly: ignoring an impossible mark on cycle %s -- %.2f/unit to close a fly "
+            "worth at most %.0f",
+            cycle.cycle_no, close_cost, payout,
+        )
+        close_cost = None
     detail = cycle.detail or {}
-    spot = _cycle_spot(proc, user_id, cycle)
+    # None when the index tick is not live, which skips the drift stop for this pass.
+    spot = live_index_spot()
     verdict = evaluate_exit(
         config,
         net_credit_per_unit=float(detail.get("net_credit_per_unit") or 0),
@@ -815,7 +871,8 @@ def _open_live(
                 detail={"cancel_failed": True, "filled_legs": len(placed)},
             )
             guards.disarm_bot(
-                user_id, bot_type, result.error or "An order could not be cancelled."
+                user_id, bot_type, result.error or "An order could not be cancelled.",
+                paper=False,
             )
             _alert_stuck(user_id, "an order could not be cancelled mid-entry", result.error)
             return
@@ -880,7 +937,9 @@ def _abort_live_entry(
         # tidied away: the row stays OPEN so the exit loop keeps trying to manage it, the bot
         # is disarmed so it opens nothing else, and the user is told exactly what is live.
         repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
-        guards.disarm_bot(user_id, bot_type, "An entry could not be unwound cleanly.")
+        guards.disarm_bot(
+            user_id, bot_type, "An entry could not be unwound cleanly.", paper=False,
+        )
         _alert_stuck(
             user_id,
             "an entry failed and could not be fully unwound",
@@ -1050,7 +1109,9 @@ def _close_live(
         # more orders this pass into a market that just refused them buys nothing.
         detail["exit_partial"] = {"closed": closed, "stuck": stuck}
         repo.update_cycle_detail(context.cycle.id, detail)
-        guards.disarm_bot(user_id, context.cycle.bot_type, "A fly could not be fully closed.")
+        guards.disarm_bot(
+            user_id, context.cycle.bot_type, "A fly could not be fully closed.", paper=False,
+        )
         _alert_stuck(
             user_id, "a fly could not be fully closed",
             "; ".join(f"{s['right']} {int(s['strike'])} x{s['quantity']}" for s in stuck),

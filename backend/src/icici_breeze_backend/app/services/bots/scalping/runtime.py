@@ -541,7 +541,10 @@ def tick_bot(
     if decision.reason_code == ReasonCode.TERMINATED_FOR_DAY and not repo.open_cycles(
         user_id, bot_type
     ):
-        guards.disarm_bot(user_id, bot_type, decision.reason_text)
+        guards.disarm_bot(
+            user_id, bot_type, decision.reason_text,
+            paper=str(getattr(config, "mode", "paper") or "paper") != "live",
+        )
         guards.finalise_session(
             user_id, bot_type, run_id,
             reason_code=ReasonCode.TERMINATED_FOR_DAY, reason_text=decision.reason_text,

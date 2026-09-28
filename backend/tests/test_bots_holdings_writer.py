@@ -67,6 +67,7 @@ def chain_rows(spot, strikes, *, bid=5.0, ltp=9.99):
         {
             "strike_price": s,
             "spot_price": spot,
+            "spot_source": "live",
             "best_bid_price": bid,
             "best_offer_price": bid + 0.5,
             "ltp": ltp,
@@ -324,13 +325,29 @@ def test_per_scrip_safety_override_beats_the_default(patch_chain):
     assert result.legs[0].strike_price == 1150
 
 
-def test_holdings_cmp_is_used_when_the_chain_has_no_spot(patch_chain):
-    rows = chain_rows(0.0, [1050, 1100])
-    patch_chain({cfg.CALL: rows})
+def test_no_spot_on_the_chain_skips_the_scrip_rather_than_trusting_the_holdings_price(patch_chain):
+    """The holdings row's price is not known to be intraday, so it never stands in."""
+    patch_chain({cfg.CALL: chain_rows(0.0, [1050, 1100])})
     proc = FakeProcessor(
         [holding("NTPC", 3000, cmp_=1000.0)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500}
     )
-    assert run_scan(proc).legs[0].strike_price == 1050
+    result = run_scan(proc)
+    assert not result.legs
+    assert result.skipped[0].reason_code == "no_spot"
+
+
+def test_a_stand_in_spot_skips_the_scrip_and_says_which(patch_chain):
+    """Mid-session the chain's spot can be the previous close: strikes off it are mispriced."""
+    rows = [
+        {**r, "spot_source": "close", "spot_as_of": "2026-09-25"}
+        for r in chain_rows(1000.0, [1050, 1100])
+    ]
+    patch_chain({cfg.CALL: rows})
+    proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+    result = run_scan(proc)
+    assert not result.legs
+    assert result.skipped[0].reason_code == "no_spot"
+    assert "the close of 2026-09-25" in result.skipped[0].reason
 
 
 def test_chain_failure_skips_the_scrip_with_a_reason(patch_chain):

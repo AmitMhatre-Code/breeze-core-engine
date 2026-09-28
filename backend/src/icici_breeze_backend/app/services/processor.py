@@ -2198,8 +2198,8 @@ class processor():
                     if (d.get("product_type") == cfg.OPTIONS and d.get("exchange_code") in (cfg.NFO, cfg.BFO))
                 ]
                 from icici_breeze_backend.app.services.quote_source_router import (
-                    cached_chain_spot,
                     fetch_quote_icici_response,
+                    spot_reading_cached,
                 )
 
                 # Resolved once per response, not per leg, so every row in one payload
@@ -2225,6 +2225,8 @@ class processor():
                         quote = _icici_error(f"Error resolving quote via router({stock_code},{exchange_code},{expiry_date},{product_type},{right},{strike_price}): {e}")
                     quote_rows = _quote_success_rows(quote)
                     resolved_spot: float | None = None
+                    spot_source: str | None = None
+                    spot_as_of: str | None = None
                     # Explicit rather than probing `i` for the key afterwards: the row is
                     # the broker's dict, and inferring our own decision from its contents
                     # would silently skip the fallback if ICICI ever sent that field.
@@ -2236,6 +2238,8 @@ class processor():
                             row_spot = None
                         if row_spot is not None and row_spot > 0:
                             resolved_spot = row_spot
+                            spot_source = quote_rows[0].get("spot_source")
+                            spot_as_of = quote_rows[0].get("spot_as_of")
                         # ICICI's own get_portfolio_positions() ltp can be stale/wrong for
                         # illiquid contracts (observed post-close for BFO index options) --
                         # prefer the router's cache-first (WS -> bhavcopy -> REST) option ltp,
@@ -2284,13 +2288,17 @@ class processor():
 
                     # The per-option quote can miss (deep OTM/ITM strike with no cached
                     # cell, bhavcopy row, or REST quote) even while the underlying's spot
-                    # is live -- index_spot_feed keeps NIFTY/SENSEX index ticks warm in
-                    # the same cache `cached_chain_spot` reads. Use that before surfacing
-                    # "Err", so a healthy WS spot isn't hidden by an unrelated option-quote
-                    # miss. Only truly-unavailable spot falls through to "Err".
+                    # is ticking -- index_spot_feed keeps the underlying's ticks in the
+                    # cache `spot_reading_cached` reads. Use that before surfacing "Err",
+                    # so a healthy spot isn't hidden by an unrelated option-quote miss.
                     if resolved_spot is None:
-                        resolved_spot = cached_chain_spot(exchange_code, stock_code)
+                        reading = spot_reading_cached(exchange_code, stock_code)
+                        if reading is not None:
+                            resolved_spot = reading.spot
+                            spot_source, spot_as_of = reading.source, reading.as_of
                     i["spot_price"] = resolved_spot if resolved_spot is not None else "Err"
+                    i["spot_source"] = spot_source
+                    i["spot_as_of"] = spot_as_of
 
                     if i['product_type'] == cfg.OPTIONS:
                         i['option'] = i['stock_code']+"-"+i['expiry_date']+"-"+i['strike_price']+"-"+i['right']

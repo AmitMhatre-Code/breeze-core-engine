@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
+import { SPOT_STAND_IN_TITLE, spotSourceNote } from "@/lib/quote-source";
 import type { QuoteMeta, UnderlyingEntry } from "@/lib/strategy-builder/types";
 import {
   useComboboxBlurClose,
@@ -102,6 +103,7 @@ export function OptionChainUnderlyingSearch({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const spotNote = spotSourceNote(quoteMeta?.spot_source, quoteMeta?.spot_as_of);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -346,6 +348,15 @@ export function OptionChainUnderlyingSearch({
         ) : spot != null && Number.isFinite(spot) ? (
           <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-foreground">
             {formatSpot(spot)}
+            {spotNote ? (
+              <span
+                data-spot-note
+                className="ml-1 font-sans text-micro font-normal app-text-muted"
+                title={SPOT_STAND_IN_TITLE}
+              >
+                · {spotNote}
+              </span>
+            ) : null}
           </span>
         ) : chainBar ? null : (
           <span className="shrink-0 text-sm font-medium text-faint">—</span>

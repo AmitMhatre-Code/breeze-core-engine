@@ -25,7 +25,7 @@ from icici_breeze_backend.app.db.bots_migrate import BOT_CAS_BINGO, ensure_bots_
 from icici_breeze_backend.app.domain.bots import CasBingoConfig, ReasonCode
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots import charges as charges_mod
-from icici_breeze_backend.app.services.bots.cas_bingo import execution, liquidation, plan, runtime, triggers
+from icici_breeze_backend.app.services.bots.cas_bingo import execution, liquidation, market, plan, runtime, triggers
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping import live
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import Quote
@@ -272,6 +272,17 @@ def test_auction_credit_never_measures_from_a_chain_rows_spot(monkeypatch):
         FakeProc(), USER, CasBingoConfig(), index_code="NIFTY", expiry_display=EXPIRY,
         structure="bear_call_credit", day_open=24000.0, calls=_chain("call"),
         puts=_chain("put"), auction=True,
+    )
+    assert p is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+
+
+@pytest.mark.parametrize("structure", ["bull_call_debit", "bear_call_credit", "long_strangle"])
+def test_no_structure_is_planned_off_a_chain_rows_spot(monkeypatch, structure):
+    """Mid-session a chain row's spot can be the previous close."""
+    monkeypatch.setattr(plan.market, "index_spot", lambda code, **k: None)
+    p, problem = plan.build_plan(
+        FakeProc(), USER, CasBingoConfig(), index_code="NIFTY", expiry_display=EXPIRY,
+        structure=structure, day_open=24000.0, calls=_chain("call"), puts=_chain("put"),
     )
     assert p is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
 
@@ -651,3 +662,25 @@ def test_a_session_already_closed_is_not_closed_again(db):
     _close_the_day(run_id)
     runtime.reset_state_for_tests()
     assert _close_the_day(run_id)["reason_text"] == "No entry. NIFTY: why."
+
+
+def test_the_auction_probe_reports_how_old_the_atm_cells_are(monkeypatch):
+    from icici_breeze_backend.app.services.reference_data.keys import index_spot_key, ws_quote_key
+
+    store = {
+        index_spot_key("nifty"): {"ltp": 24_010.0, "updated_at": 1_000.0},
+        ws_quote_key(cfg.NFO, "NIFTY", EXPIRY, 24_000.0, "call"): {
+            "best_bid_price": 40.0, "best_offer_price": 41.0, "ltp": 40.5, "updated_at": 995.0,
+        },
+    }
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.db.redis_client.cache_get_json", lambda key: store.get(key)
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.reference_data.tradable_contracts.list_tradeable_strikes",
+        lambda *a, **k: [23_950.0, 24_000.0, 24_050.0],
+    )
+    line = market.auction_probe("NIFTY", EXPIRY, now=1_002.0)
+    assert "index tick age=2s" in line
+    assert "24000 call: bid=40.0 ask=41.0 ltp=40.5 age=7s" in line
+    assert "24000 put: no ws cell" in line

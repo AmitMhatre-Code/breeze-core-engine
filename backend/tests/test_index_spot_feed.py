@@ -251,6 +251,36 @@ def test_sync_underlying_spot_subscriptions_subscribes_and_dedups(monkeypatch):
     fake_sdk.get_stock_token_value.assert_not_called()
 
 
+def _stock_sdk(monkeypatch):
+    fake_sdk = MagicMock()
+    fake_sdk.get_stock_token_value.return_value = ("4.1!2885", False)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager._ensure_ws",
+        lambda proc, user_id: fake_sdk,
+    )
+    return fake_sdk
+
+
+def test_a_rebuilt_socket_gets_every_stock_spot_back(monkeypatch):
+    """A new socket has none of the old one's rooms; the dedup set must not skip them."""
+    fake_sdk = _stock_sdk(monkeypatch)
+    isf.sync_underlying_spot_subscriptions(MagicMock(), "u1", [("NSE", "RELIND", cfg.NFO, "RELIND")])
+    assert fake_sdk.subscribe_feeds.call_count == 1
+
+    assert isf.resync_underlying_spot_subscriptions(MagicMock(), "u1") is True
+    assert fake_sdk.subscribe_feeds.call_count == 2
+
+
+def test_stock_spots_are_subscribed_afresh_each_trading_day(monkeypatch):
+    fake_sdk = _stock_sdk(monkeypatch)
+    underlyings = [("NSE", "RELIND", cfg.NFO, "RELIND")]
+    isf.sync_underlying_spot_subscriptions(MagicMock(), "u1", underlyings)
+    isf._synced_underlying_date = _today() - timedelta(days=1)
+
+    isf.sync_underlying_spot_subscriptions(MagicMock(), "u1", underlyings)
+    assert fake_sdk.subscribe_feeds.call_count == 2
+
+
 def test_sync_underlying_skips_token_already_subscribed_by_index(monkeypatch):
     """A portfolio holding NIFTY must not double-subscribe the cash scrip the
     index feed already owns, nor shadow its navbar mapping."""

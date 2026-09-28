@@ -3,10 +3,13 @@ import datetime as dt
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.db.redis_client import cache_delete_pattern, get_redis
 from icici_breeze_backend.app.services.quote_source_router import (
+    SpotReading,
     _cell_to_icici_row,
     _enrich_quote_metadata,
     _flatten_chain_side_rows,
@@ -490,13 +493,14 @@ def test_fetch_chain_payload_routed_websocket_enriches_missing_spot(
     }
     proc = MagicMock()
     with patch(
-        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-        return_value=23946.25,
+        "icici_breeze_backend.app.services.quote_source_router._resolve_spot_reading",
+        return_value=SpotReading(23946.25, "live"),
     ) as mock_spot:
         payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
     assert payload is not None
     assert payload["quote_source"] == "websocket"
     assert payload["spot_price"] == 23946.25
+    assert payload["spot_source"] == "live"
     assert payload["atm_strike"] == 24000
     mock_spot.assert_called_once()
 
@@ -528,8 +532,8 @@ def test_fetch_chain_payload_routed_uses_icici_rest_fallback(
     }
     proc = MagicMock()
     with patch(
-        "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-        return_value=23946.25,
+        "icici_breeze_backend.app.services.quote_source_router._resolve_spot_reading",
+        return_value=SpotReading(23946.25, "live"),
     ):
         payload = fetch_chain_payload_routed(proc, "u1", "NIFTY", cfg.NFO, "30-Jun-2026")
     assert payload is not None
@@ -713,8 +717,8 @@ def test_get_full_option_chain_icici_rest_builds_full_skeleton(_mock_tradeable, 
 @patch("icici_breeze_backend.app.services.quote_source_router.resolve_quote_source", return_value="snapshot")
 @patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
 @patch(
-    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-    return_value=76391.39,
+    "icici_breeze_backend.app.services.quote_source_router._resolve_spot_reading",
+    return_value=SpotReading(76391.39, "live"),
 )
 @patch(
     "icici_breeze_backend.app.services.quote_source_router.offline_source_order",
@@ -798,8 +802,8 @@ def _bsesen_bhav_row(strike, right, ltp):
     return_value=None,
 )
 @patch(
-    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-    return_value=82000.0,
+    "icici_breeze_backend.app.services.quote_source_router._resolve_spot_reading",
+    return_value=SpotReading(82000.0, "live"),
 )
 @patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
 @patch("icici_breeze_backend.app.services.chain_readiness.list_tradeable_strikes_memory")
@@ -867,8 +871,8 @@ def test_offline_fallback_survives_untraded_wings(
     return_value=None,
 )
 @patch(
-    "icici_breeze_backend.app.services.quote_source_router._resolve_chain_spot",
-    return_value=82000.0,
+    "icici_breeze_backend.app.services.quote_source_router._resolve_spot_reading",
+    return_value=SpotReading(82000.0, "live"),
 )
 @patch("icici_breeze_backend.app.services.quote_source_router._resolve_chain_metadata")
 @patch("icici_breeze_backend.app.services.chain_readiness.list_tradeable_strikes_memory")
@@ -914,3 +918,72 @@ def test_offline_fallback_still_rejects_unquoted_atm_band(
         fetch_chain_payload_routed(MagicMock(), "u1", "BSESEN", cfg.BFO, "27-Aug-2026")
         is None
     )
+
+
+# --- spot provenance ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def spot_cache(monkeypatch):
+    """A dict standing in for Redis, so these tests neither read nor clobber the dev cache."""
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+
+    store: dict = {}
+    monkeypatch.setattr(qsr, "cache_get_json", lambda key: store.get(key))
+    monkeypatch.setattr(qsr, "cache_set_json", lambda key, value, ex=None: store.__setitem__(key, value))
+    return store
+
+
+def test_a_bhavcopy_spot_is_never_cached_as_live(spot_cache, monkeypatch):
+    """The previous close used to be written into the live key and served as live."""
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+
+    monkeypatch.setattr(qsr, "_spot_from_bhavcopy", lambda *a: 23_140.5)
+    monkeypatch.setattr(qsr, "get_bhavcopy_source_date", lambda ex: dt.date(2026, 9, 25))
+    reading = qsr._resolve_spot_reading(MagicMock(), "u1", "NIFTY", cfg.NFO, "29-Sep-2026", [23_100])
+    assert reading == SpotReading(23_140.5, "close", "2026-09-25")
+    assert qsr.live_chain_spot(cfg.NFO, "NIFTY") is None
+    assert qsr._cached_chain_spot(cfg.NFO, "NIFTY") is None
+
+
+def test_a_live_tick_outranks_the_chains_own_close(spot_cache):
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+
+    qsr.remember_chain_spot(cfg.NFO, "NIFTY", 22_830.0)
+    live = qsr.spot_reading_cached(cfg.NFO, "NIFTY")
+    assert live.source == "live" and live.spot == 22_830.0
+    payload = {"spot_price": 23_140.5, "spot_source": "close", "spot_as_of": "2026-09-25",
+               "chain_rows": []}
+    qsr._apply_chain_spot(payload, exchange_code=cfg.NFO, reading=live)
+    assert payload["spot_price"] == 22_830.0 and payload["spot_source"] == "live"
+
+
+def test_the_last_tick_stands_in_once_the_live_one_expires(spot_cache):
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+
+    qsr.remember_chain_spot(cfg.NFO, "RELIND", 1_402.0)
+    del spot_cache[qsr._spot_cache_key(cfg.NFO, "RELIND")]  # the 60 s live key lapsing
+    reading = qsr.spot_reading_cached(cfg.NFO, "RELIND")
+    assert reading.source == "last_tick" and reading.spot == 1_402.0 and reading.as_of
+    assert qsr.live_chain_spot(cfg.NFO, "RELIND") is None
+
+
+def test_yesterdays_last_tick_is_not_todays(spot_cache):
+    import icici_breeze_backend.app.services.quote_source_router as qsr
+
+    spot_cache[qsr._last_tick_spot_key(cfg.NFO, "RELIND")] = {
+        "spot_price": 1_390.0, "at": 1_000.0, "date": "2000-01-01",
+    }
+    assert qsr.spot_reading_cached(cfg.NFO, "RELIND") is None
+
+
+def test_flattened_rows_carry_the_spot_label():
+    payload = {
+        "spot_price": 22_830.0, "spot_source": "last_tick", "spot_as_of": "2026-09-28T11:28:00+05:30",
+        "exchange_code": cfg.NFO,
+        "chain_rows": [{"strike_price": 22_850, "call": {"strike_price": 22_850, "ltp": 90.0}}],
+    }
+    row = _flatten_chain_side_rows(payload, "call")[0]
+    assert row["spot_price"] == 22_830.0
+    assert row["spot_source"] == "last_tick"
+    assert row["spot_as_of"] == "2026-09-28T11:28:00+05:30"

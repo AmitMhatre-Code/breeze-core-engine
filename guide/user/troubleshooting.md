@@ -25,6 +25,9 @@ Check the **Session** dot at the bottom of the sidebar. Grey with **Market close
 **A price shows "· prev close" on Portfolio.**
 No live tick has arrived for that contract yet, so the previous close is shown. It is replaced as soon as a live price arrives.
 
+**A spot shows "· last tick", "· close" or "· ICICI quote".**
+The underlying has not ticked for over a minute, so the app shows the last price it saw today (with its time), or a closing price (with its date) if there was none today. It is replaced as soon as a live tick arrives. During market hours this usually means ICICI's live stream has dropped; the bots will not open trades until it is back.
+
 **The Bhavcopy badge is red.**
 The market has opened since that closing file's date, so its prices are out of date. Live prices take over once the stream is running; if they do not, check **Settings → Reference Data Loads**.
 

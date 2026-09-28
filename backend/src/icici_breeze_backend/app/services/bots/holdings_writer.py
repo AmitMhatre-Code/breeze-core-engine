@@ -32,6 +32,7 @@ from icici_breeze_backend.app.domain.bots import (
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import _otm_elm_rate
 from icici_breeze_backend.app.services.quote_source_router import (
     fetch_chain_side_icici_response,
+    row_spot,
 )
 from icici_breeze_backend.app.services.reference_data.scrip_master_sql import (
     _expiry_api_to_display,
@@ -348,21 +349,18 @@ def _build_leg(
         return None
     rows = [r for r in chain["Success"] if isinstance(r, dict)]
 
-    spot = 0.0
-    for r in rows:
-        try:
-            spot = float(r.get("spot_price") or 0)
-        except (TypeError, ValueError):
-            spot = 0.0
-        if spot > 0:
-            break
-    if spot <= 0:
-        # ICICI populates current_market_price on the holdings row, so a chain without a
-        # usable spot is recoverable rather than fatal.
-        spot = float(cand.get("current_market_price") or 0)
-    if spot <= 0:
-        result.skipped.append(SkippedScrip(label, "no_spot", "No spot price available."))
+    # Live only. A stand-in -- the previous close, most often -- puts the strike the wrong
+    # distance from the market, and the holdings row's price is not known to be intraday.
+    reading = row_spot(rows)
+    if reading is None or not reading.live:
+        text = (
+            f"No live spot price; the chain only has {reading.describe()}."
+            if reading is not None
+            else "No spot price available."
+        )
+        result.skipped.append(SkippedScrip(label, "no_spot", text))
         return None
+    spot = reading.spot
 
     row = _pick_strike(rows, spot, right, safety_pct)
     if row is None:
@@ -841,14 +839,10 @@ def price_contract(
         return None
     rows = [r for r in chain["Success"] if isinstance(r, dict)]
 
-    spot = 0.0
-    for r in rows:
-        try:
-            spot = float(r.get("spot_price") or 0)
-        except (TypeError, ValueError):
-            spot = 0.0
-        if spot > 0:
-            break
+    reading = row_spot(rows)
+    if reading is None or not reading.live:
+        return None  # its exposure margin and any distance edit are measured from spot
+    spot = reading.spot
 
     if distance_pct is not None:
         # Re-pick the strike the same way the scan does, so a distance the user typed lands

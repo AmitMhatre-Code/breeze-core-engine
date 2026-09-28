@@ -306,7 +306,7 @@ def patch_chain(monkeypatch):
                 "Status": 200,
                 "Error": None,
                 "Success": [
-                    {"strike_price": s, "spot_price": proc.spot,
+                    {"strike_price": s, "spot_price": proc.spot, "spot_source": "live",
                      "best_bid_price": proc.bid_for(right), "ltp": proc.bid_for(right) + 1}
                     for s in strikes
                 ],
@@ -458,6 +458,7 @@ def test_sizes_a_trade_from_a_live_websocket_chain(no_arm, monkeypatch):
     def routed(p, user_id, stock_code, exchange_code, expiry_display, **kw):
         return {
             "spot_price": 23640.3,  # resolved from the "4.1!NIFTY 50" index tick
+            "spot_source": "live",
             "quote_source": "websocket",
             "chain_rows": [
                 {
@@ -484,6 +485,33 @@ def test_sizes_a_trade_from_a_live_websocket_chain(no_arm, monkeypatch):
     assert result.spot == 23640.3
     assert result.lots >= 1
     assert proc.placed, "a live chain must produce a placeable trade"
+
+
+def test_a_stand_in_spot_refuses_to_trade_and_says_which(no_arm, monkeypatch):
+    """When index ticks lapse the chain's spot can be the previous close: strikes a safety
+    distance from it are the wrong distance from the market."""
+    proc = FakeProc(spot=23640.3, bid=15.6, lot=65)
+
+    def routed(p, user_id, stock_code, exchange_code, expiry_display, **kw):
+        return {
+            "spot_price": 23140.5, "spot_source": "close", "spot_as_of": "2026-09-25",
+            "quote_source": "websocket",
+            "chain_rows": [
+                {"strike_price": k,
+                 "call": {"strike_price": k, "ltp": 15.6, "best_bid_price": 15.6},
+                 "put": {"strike_price": k, "ltp": 15.6, "best_bid_price": 15.6}}
+                for k in range(22400, 25000, 50)
+            ],
+        }
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_payload_routed",
+        routed,
+    )
+    result = fire(proc)
+    assert result.reason_code == ReasonCode.QUOTE_UNAVAILABLE
+    assert "the close of 2026-09-25" in result.error
+    assert proc.placed == []
 
 
 def test_no_bid_refuses_to_trade(patch_chain, no_arm):

@@ -71,7 +71,15 @@ _subscribed_cash_tokens: set[str] = set()
 # (cash_exchange, cash_stock_code) pairs already processed by
 # `sync_underlying_spot_subscriptions` -- the hot-path dedup so a per-chain-build
 # trigger is a single set lookup and never re-resolves tokens or touches the SDK.
+# Valid for one socket on one day only: `_synced_underlying_date` clears it daily and
+# `resync_underlying_spot_subscriptions` clears it on a socket rebuild. Kept for the
+# process's life, it left every stock's spot at the previous close after the first
+# rebuild, because nothing ever subscribed them again.
 _synced_underlying_scrips: set[tuple[str, str]] = set()
+_synced_underlying_date: date | None = None
+# Every underlying ever asked for, so a rebuild can replay them:
+# scrip key -> (cash_exchange, cash_stock_code, opt_exchange, opt_stock_code).
+_known_underlyings: dict[tuple[str, str], tuple[str, str, str, str]] = {}
 
 
 def _extract_ltp(raw: dict[str, Any]) -> float | None:
@@ -393,10 +401,16 @@ def sync_underlying_spot_subscriptions(
     Returns False only when a subscribe was actually needed but there was no live
     broker session (mirrors `sync_index_spot_subscriptions`), so a caller gating a
     retry on the result doesn't treat a dead-session first call as done."""
+    global _synced_underlying_date
     pending: list[tuple[str, str, str, str]] = []
+    today = datetime.now(IST).date()
     with _lock:
+        if _synced_underlying_date != today:
+            _forget_underlying_subscriptions_locked()
+            _synced_underlying_date = today
         for cash_exchange, cash_stock_code, opt_exchange, opt_stock_code in underlyings:
             scrip_key = (cash_exchange.upper(), cash_stock_code.upper())
+            _known_underlyings[scrip_key] = (cash_exchange, cash_stock_code, opt_exchange, opt_stock_code)
             if scrip_key in _synced_underlying_scrips:
                 continue
             pending.append((cash_exchange, cash_stock_code, opt_exchange, opt_stock_code))
@@ -466,6 +480,25 @@ def sync_underlying_spot_subscriptions(
                 cash_exchange, cash_stock_code, exc_info=True,
             )
     return True
+
+
+def _forget_underlying_subscriptions_locked() -> None:
+    """Drop the stock-spot dedup state so the next sync subscribes afresh. Index tokens
+    are left alone: their own daily latch and forced re-subscribe cover them."""
+    _synced_underlying_scrips.clear()
+    for token in list(_underlying_targets):
+        _subscribed_cash_tokens.discard(token)
+
+
+def resync_underlying_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
+    """Re-subscribe every stock spot ever asked for. For a rebuilt socket, which has
+    none of the old one's subscriptions."""
+    with _lock:
+        _forget_underlying_subscriptions_locked()
+        known = list(_known_underlyings.values())
+    if not known:
+        return True
+    return sync_underlying_spot_subscriptions(proc, user_id, known)
 
 
 def ensure_underlying_spot_subscription(
@@ -585,9 +618,11 @@ def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
 
 def reset_state_for_tests() -> None:
     """Test-only: reset all module state back to a fresh-process baseline."""
-    global _subscribed_date, _listener_registered
+    global _subscribed_date, _listener_registered, _synced_underlying_date
     with _lock:
         _subscribed_date = None
+        _synced_underlying_date = None
+        _known_underlyings.clear()
         _listener_registered = False
         _symbol_to_label.clear()
         _previous_close.clear()

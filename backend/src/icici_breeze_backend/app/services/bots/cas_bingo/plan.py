@@ -307,13 +307,17 @@ def build_plan(
     if not calls or not puts:
         return None, (ReasonCode.CHAIN_NOT_READY, f"The {expiry_display} chain is not ready on both sides.")
 
-    live_level = spot or market.index_spot(index_code)
-    spot = live_level or market.spot_from(calls) or market.spot_from(puts)
+    # Never a chain row's spot: mid-session that can be the previous close. Refused for every
+    # structure, credit included -- liquidation's exposure margin is measured from it too.
+    spot = spot or market.index_spot(index_code)
+    if not spot:
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            "No live index level in the last 15s; not measuring from a stale one.",
+        )
     credit_pcts: Optional[tuple[float, float]] = None
     if family == "credit" and auction:
-        if not live_level:
-            return None, (ReasonCode.QUOTE_UNAVAILABLE, "No fresh indicative index level to measure from.")
-        reference, reference_kind = float(live_level), "indicative"
+        reference, reference_kind = float(spot), "indicative"
         c = config.credit
         credit_pcts = (c.auction_gap_pct, c.auction_gap_pct + (c.outer_pct - c.inner_pct))
     elif family == "credit":
@@ -324,8 +328,6 @@ def build_plan(
             )
         reference, reference_kind = float(day_open), "open"
     else:
-        if not spot:
-            return None, (ReasonCode.QUOTE_UNAVAILABLE, "No live index level to measure from.")
         reference, reference_kind = float(spot), "spot"
 
     legs, problem = _strikes(structure, config, calls, puts, reference, credit_pcts)

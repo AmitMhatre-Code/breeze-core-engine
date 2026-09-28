@@ -4,7 +4,9 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import threading
+import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 import icici_breeze_backend.app.core.config as cfg
@@ -171,11 +173,68 @@ def _spot_cache_key(exchange_code: str, stock_code: str) -> str:
     return f"quotes:spot:{exchange_code.upper()}:{stock_code.upper()}"
 
 
+def _last_tick_spot_key(exchange_code: str, stock_code: str) -> str:
+    return f"quotes:spot_last:{exchange_code.upper()}:{stock_code.upper()}"
+
+
+def _fallback_spot_key(exchange_code: str, stock_code: str) -> str:
+    return f"quotes:spot_fallback:{exchange_code.upper()}:{stock_code.upper()}"
+
+
 def _spot_cache_ttl_seconds() -> int:
     try:
         return max(30, int(getattr(cfg, "CHAIN_SPOT_CACHE_TTL_SECONDS", 60) or 60))
     except (TypeError, ValueError):
         return 60
+
+
+# Outlives the session so the close-time tick still answers in the evening; the reader
+# rejects one from an earlier date.
+_LAST_TICK_SPOT_TTL_SECONDS = 20 * 3600
+
+SPOT_LIVE = "live"
+SPOT_LAST_TICK = "last_tick"
+SPOT_CLOSE = "close"
+SPOT_ICICI_API = "icici_api"
+
+
+@dataclass(frozen=True)
+class SpotReading:
+    """A spot and where it came from.
+
+    Only `live` is a tick inside the last `CHAIN_SPOT_CACHE_TTL_SECONDS`. The rest are
+    stand-ins -- today's last tick, a bhavcopy close, a REST chain's spot -- and carry
+    `as_of` (an ISO time, or an ISO date for a close) so a screen can say how old they are.
+    """
+
+    spot: float
+    source: str
+    as_of: str | None = None
+
+    @property
+    def live(self) -> bool:
+        return self.source == SPOT_LIVE
+
+    def describe(self) -> str:
+        """For a skip reason, e.g. "the last tick at 11:28" or "the close of 2026-09-25"."""
+        if self.source == SPOT_LIVE:
+            return "a live tick"
+        if self.source == SPOT_LAST_TICK and self.as_of:
+            return f"the last tick at {self.as_of[11:16]}"
+        if self.source == SPOT_CLOSE and self.as_of:
+            return f"the close of {self.as_of}"
+        if self.source == SPOT_ICICI_API:
+            return "an ICICI REST quote"
+        return f"a {self.source} price"
+
+
+def row_spot(rows: Sequence[dict[str, Any]]) -> SpotReading | None:
+    """The labelled spot chain rows carry (`_flatten_chain_side_rows` stamps every row)."""
+    for row in rows:
+        spot = _parse_positive_spot(row.get("spot_price"))
+        if spot is not None:
+            return SpotReading(spot, str(row.get("spot_source") or "unknown"), row.get("spot_as_of"))
+    return None
 
 
 def _parse_positive_spot(raw: Any) -> float | None:
@@ -188,16 +247,8 @@ def _parse_positive_spot(raw: Any) -> float | None:
     return spot if spot > 0 else None
 
 
-def _remember_chain_spot(exchange_code: str, stock_code: str, spot: float | None) -> float | None:
-    parsed = _parse_positive_spot(spot)
-    if parsed is None:
-        return None
-    cache_set_json(
-        _spot_cache_key(exchange_code, stock_code),
-        {"spot_price": parsed},
-        ex=_spot_cache_ttl_seconds(),
-    )
-    return parsed
+def _iso_at(ts: float) -> str:
+    return dt.datetime.fromtimestamp(ts, tz=IST).isoformat(timespec="seconds")
 
 
 def _cached_chain_spot(exchange_code: str, stock_code: str) -> float | None:
@@ -207,13 +258,68 @@ def _cached_chain_spot(exchange_code: str, stock_code: str) -> float | None:
     return _parse_positive_spot(cached.get("spot_price"))
 
 
+def _live_or_last_tick_reading(exchange_code: str, stock_code: str) -> SpotReading | None:
+    """Cache reads only: a live tick, else today's last tick."""
+    live = cache_get_json(_spot_cache_key(exchange_code, stock_code))
+    if isinstance(live, dict):
+        spot = _parse_positive_spot(live.get("spot_price"))
+        if spot is not None:
+            at = live.get("at")
+            return SpotReading(spot, SPOT_LIVE, _iso_at(float(at)) if at else None)
+    last = cache_get_json(_last_tick_spot_key(exchange_code, stock_code))
+    if isinstance(last, dict) and last.get("date") == now_ist().date().isoformat():
+        spot = _parse_positive_spot(last.get("spot_price"))
+        at = last.get("at")
+        if spot is not None and at:
+            return SpotReading(spot, SPOT_LAST_TICK, _iso_at(float(at)))
+    return None
+
+
 def remember_chain_spot(exchange_code: str, stock_code: str, spot: float | None) -> float | None:
-    """Public entry point for external live-spot sources (e.g. `index_spot_feed`'s
-    NIFTY/SENSEX index ticks) to seed the same cache `_resolve_chain_spot` reads
-    first -- keeping it warm from a source that doesn't depend on bhavcopy/REST
-    lets `chain_readiness.is_chain_complete` reliably use its lenient ATM-window
-    gate instead of falling back to requiring every tradeable strike to tick."""
-    return _remember_chain_spot(exchange_code, stock_code, spot)
+    """Record a LIVE tick of an underlying (index or stock). Called only by
+    `index_spot_feed`; fallbacks must never be written here, or a previous close is
+    served as live until the key expires -- see `SpotReading`."""
+    parsed = _parse_positive_spot(spot)
+    if parsed is None:
+        return None
+    now = time.time()
+    cache_set_json(
+        _spot_cache_key(exchange_code, stock_code),
+        {"spot_price": parsed, "at": now},
+        ex=_spot_cache_ttl_seconds(),
+    )
+    cache_set_json(
+        _last_tick_spot_key(exchange_code, stock_code),
+        {"spot_price": parsed, "at": now, "date": now_ist().date().isoformat()},
+        ex=_LAST_TICK_SPOT_TTL_SECONDS,
+    )
+    return parsed
+
+
+def spot_reading_cached(exchange_code: str, stock_code: str) -> SpotReading | None:
+    """Live tick, else today's last tick, else a recently resolved fallback. No
+    bhavcopy scan or REST call -- for callers that have no expiry to scan."""
+    reading = _live_or_last_tick_reading(exchange_code, stock_code)
+    if reading is not None:
+        return reading
+    cached = cache_get_json(_fallback_spot_key(exchange_code, stock_code))
+    if isinstance(cached, dict):
+        spot = _parse_positive_spot(cached.get("spot_price"))
+        if spot is not None and cached.get("source"):
+            return SpotReading(spot, str(cached["source"]), cached.get("as_of"))
+    return None
+
+
+def live_chain_spot(exchange_code: str, stock_code: str) -> float | None:
+    """The underlying's spot only if a live tick set it; None otherwise. For anything
+    that places or proposes a trade."""
+    reading = _live_or_last_tick_reading(exchange_code, stock_code)
+    return reading.spot if reading is not None and reading.live else None
+
+
+def _close_reading(exchange_code: str, spot: float) -> SpotReading:
+    bhav_date = get_bhavcopy_source_date(exchange_code)
+    return SpotReading(spot, SPOT_CLOSE, bhav_date.isoformat() if bhav_date else None)
 
 
 def _spot_from_bhavcopy(
@@ -237,6 +343,46 @@ def _spot_from_bhavcopy(
     return None
 
 
+def _resolve_spot_reading(
+    proc: "Processor",
+    user_id: str,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strikes: list[Strike],
+) -> SpotReading | None:
+    """Live tick -> today's last tick -> bhavcopy close -> REST chain spot."""
+    reading = spot_reading_cached(exchange_code, stock_code)
+    if reading is not None:
+        return reading
+    reading = None
+    spot = _spot_from_bhavcopy(stock_code, expiry_display, exchange_code, strikes)
+    if spot is not None:
+        reading = _close_reading(exchange_code, spot)
+    elif _rest_fallback_allowed(exchange_code):
+        rest_payload = _get_or_build_icici_rest_chain(
+            proc,
+            user_id,
+            stock_code,
+            exchange_code,
+            expiry_display,
+            strikes,
+            lot_size=None,
+            freeze_quantity=None,
+        )
+        spot = _parse_positive_spot(rest_payload.get("spot_price")) if rest_payload else None
+        if spot is not None:
+            reading = SpotReading(spot, SPOT_ICICI_API)
+    if reading is not None:
+        # Its own key, never the live one: this only saves re-scanning the bhavcopy.
+        cache_set_json(
+            _fallback_spot_key(exchange_code, stock_code),
+            {"spot_price": reading.spot, "source": reading.source, "as_of": reading.as_of},
+            ex=_spot_cache_ttl_seconds(),
+        )
+    return reading
+
+
 def _resolve_chain_spot(
     proc: "Processor",
     user_id: str,
@@ -245,52 +391,42 @@ def _resolve_chain_spot(
     expiry_display: str,
     strikes: list[Strike],
 ) -> float | None:
-    spot = _cached_chain_spot(exchange_code, stock_code)
-    if spot is not None:
-        return spot
-    spot = _spot_from_bhavcopy(stock_code, expiry_display, exchange_code, strikes)
-    if spot is not None:
-        return _remember_chain_spot(exchange_code, stock_code, spot)
-    if not _rest_fallback_allowed(exchange_code):
+    reading = _resolve_spot_reading(proc, user_id, stock_code, exchange_code, expiry_display, strikes)
+    return reading.spot if reading is not None else None
+
+
+def _payload_own_spot(payload: dict[str, Any], exchange_code: str) -> SpotReading | None:
+    """The spot an offline chain carried in from its own cells, labelled by that cell."""
+    spot = _parse_positive_spot(payload.get("spot_price"))
+    if spot is None:
         return None
-    rest_payload = _get_or_build_icici_rest_chain(
-        proc,
-        user_id,
-        stock_code,
-        exchange_code,
-        expiry_display,
-        strikes,
-        lot_size=None,
-        freeze_quantity=None,
-    )
-    spot = _parse_positive_spot(rest_payload.get("spot_price")) if rest_payload else None
-    if spot is not None:
-        return _remember_chain_spot(exchange_code, stock_code, spot)
-    return None
+    if payload.get("spot_source"):
+        return SpotReading(spot, str(payload["spot_source"]), payload.get("spot_as_of"))
+    if payload.get("quote_source") == "icici_api":
+        return SpotReading(spot, SPOT_ICICI_API)
+    return _close_reading(exchange_code, spot)
+
+
+def _stamp_spot(payload: dict[str, Any], reading: SpotReading) -> None:
+    payload["spot_price"] = reading.spot
+    payload["spot_source"] = reading.source
+    payload["spot_as_of"] = reading.as_of
 
 
 def _apply_chain_spot(
     payload: dict[str, Any],
     *,
-    proc: "Processor",
-    user_id: str,
-    stock_code: str,
     exchange_code: str,
-    expiry_display: str,
-    strikes: list[Strike],
-    spot: float | None = None,
+    reading: SpotReading | None,
 ) -> dict[str, Any]:
-    resolved = _parse_positive_spot(payload.get("spot_price"))
-    if resolved is None:
-        resolved = spot if spot is not None else _resolve_chain_spot(
-            proc, user_id, stock_code, exchange_code, expiry_display, strikes
-        )
-    else:
-        resolved = _remember_chain_spot(exchange_code, stock_code, resolved)
-    if resolved is None:
+    """A live or today's-last tick outranks a spot the chain's own cells carried in (a
+    bhavcopy cell's is the previous close); otherwise the cells' own spot stands."""
+    if reading is None or reading.source not in (SPOT_LIVE, SPOT_LAST_TICK):
+        reading = _payload_own_spot(payload, exchange_code) or reading
+    if reading is None:
         return payload
-    spot = resolved
-    payload["spot_price"] = spot
+    _stamp_spot(payload, reading)
+    spot = reading.spot
     chain_rows = payload.get("chain_rows") or []
     chain_strikes = sorted(
         {
@@ -433,14 +569,26 @@ def _flatten_chain_side_rows(payload: dict[str, Any], right: str) -> list[dict[s
     """
     side = _chain_side_key(right)
     chain_spot = _parse_positive_spot(payload.get("spot_price"))
+    chain_spot_is_tick = payload.get("spot_source") in (SPOT_LIVE, SPOT_LAST_TICK)
     rows: list[dict[str, Any]] = []
     for chain_row in payload.get("chain_rows") or []:
         cell = chain_row.get(side)
         if not cell:
             continue
         row = _cell_to_icici_row(cell)
-        if chain_spot is not None and _parse_positive_spot(row.get("spot_price")) is None:
+        # A tick outranks a spot the cell brought with it (a bhavcopy cell's is a close).
+        if chain_spot is not None and (
+            chain_spot_is_tick or _parse_positive_spot(row.get("spot_price")) is None
+        ):
             row["spot_price"] = chain_spot
+            row["spot_source"] = payload.get("spot_source")
+            row["spot_as_of"] = payload.get("spot_as_of")
+        elif _parse_positive_spot(row.get("spot_price")) is not None:
+            own = _payload_own_spot(
+                {"spot_price": row["spot_price"], "quote_source": row.get("quote_source")},
+                str(payload.get("exchange_code") or ""),
+            )
+            row["spot_source"], row["spot_as_of"] = own.source, own.as_of
         rows.append(row)
     return rows
 
@@ -693,6 +841,7 @@ def _build_offline_chain(
     puts: list[dict[str, Any]] = []
     source_counts: dict[str, int] = {}
     spot_price: float | None = None
+    spot_cell_source: str | None = None
     depth_as_of: str | None = None
 
     for strike in strikes:
@@ -740,6 +889,8 @@ def _build_offline_chain(
             source_counts[resolved_source] = source_counts.get(resolved_source, 0) + 1
             if spot_price is None:
                 spot_price = _parse_positive_spot(cell.get("spot_price"))
+                if spot_price is not None:
+                    spot_cell_source = resolved_source
             (calls if right == cfg.CALL else puts).append(cell)
 
     if not calls and not puts:
@@ -759,7 +910,16 @@ def _build_offline_chain(
         atm_strike = min(chain_strikes, key=lambda s: abs(s - spot_price))
     bhav_date = get_bhavcopy_source_date(exchange_code)
     dominant = max(source_counts, key=lambda s: source_counts[s]) if source_counts else "icici_api"
+    own_spot: SpotReading | None = None
+    if spot_price is not None:
+        own_spot = (
+            SpotReading(spot_price, SPOT_ICICI_API)
+            if spot_cell_source == "icici_api"
+            else _close_reading(exchange_code, spot_price)
+        )
     return {
+        "spot_source": own_spot.source if own_spot else None,
+        "spot_as_of": own_spot.as_of if own_spot else None,
         "chain_rows": chain_rows,
         "max_call_oi": max((int(c.get("open_interest") or 0) for c in calls), default=0),
         "max_put_oi": max((int(p.get("open_interest") or 0) for p in puts), default=0),
@@ -801,7 +961,10 @@ def fetch_chain_payload_routed(
     # Resolved once up front (cache/bhavcopy-sourced, cheap after the first call) so the
     # completeness gate below can require live quotes only near the ATM strike instead of
     # every tradeable strike -- see `chain_readiness.is_chain_complete`.
-    spot = _resolve_chain_spot(proc, user_id, stock_code, exchange_code, expiry_display, strikes)
+    spot_reading = _resolve_spot_reading(
+        proc, user_id, stock_code, exchange_code, expiry_display, strikes
+    )
+    spot = spot_reading.spot if spot_reading is not None else None
 
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import ensure_chain_subscriptions
@@ -831,14 +994,7 @@ def fetch_chain_payload_routed(
         )
         if ws_payload is not None:
             ws_payload = _apply_chain_spot(
-                ws_payload,
-                proc=proc,
-                user_id=user_id,
-                stock_code=stock_code,
-                exchange_code=exchange_code,
-                expiry_display=expiry_display,
-                strikes=strikes,
-                spot=spot,
+                ws_payload, exchange_code=exchange_code, reading=spot_reading
             )
         if ws_payload is not None and is_chain_complete(
             ws_payload,
@@ -886,16 +1042,7 @@ def fetch_chain_payload_routed(
         detail=offline_detail,
     ):
         return _enrich_quote_metadata(
-            _apply_chain_spot(
-                payload,
-                proc=proc,
-                user_id=user_id,
-                stock_code=stock_code,
-                exchange_code=exchange_code,
-                expiry_display=expiry_display,
-                strikes=strikes,
-                spot=spot,
-            )
+            _apply_chain_spot(payload, exchange_code=exchange_code, reading=spot_reading)
         )
     _logger.warning(
         "Offline chain incomplete for %s %s (%s)",
@@ -1006,9 +1153,12 @@ def _fetch_chain_payload_atm_gated(
     if not strikes:
         return None
 
-    spot = _resolve_chain_spot(proc, user_id, stock_code, exchange_code, expiry_display, strikes)
-    if spot is None:
+    spot_reading = _resolve_spot_reading(
+        proc, user_id, stock_code, exchange_code, expiry_display, strikes
+    )
+    if spot_reading is None:
         return None
+    spot = spot_reading.spot
     atm_strike = min(strikes, key=lambda s: abs(s - spot))
 
     if source == "websocket":
@@ -1038,7 +1188,7 @@ def _fetch_chain_payload_atm_gated(
             expiry_display=expiry_display,
             atm_strike=atm_strike,
         ):
-            ws_payload["spot_price"] = spot
+            _stamp_spot(ws_payload, spot_reading)
             ws_payload["atm_strike"] = atm_strike
             return _enrich_quote_metadata(ws_payload)
 
@@ -1073,7 +1223,7 @@ def _fetch_chain_payload_atm_gated(
         atm_strike=atm_strike,
     ):
         payload = dict(payload)
-        payload["spot_price"] = spot
+        _stamp_spot(payload, spot_reading)
         payload["atm_strike"] = atm_strike
         return _enrich_quote_metadata(payload)
     _logger.warning("Offline ATM quote unavailable for %s %s", stock_code, expiry_display)
@@ -1242,7 +1392,12 @@ def fetch_quote_icici_response(
                 return {
                     "Status": 200,
                     "Error": None,
-                    "Success": [{"spot_price": spot, "strike_price": 0}],
+                    "Success": [{
+                        "spot_price": spot,
+                        "strike_price": 0,
+                        "spot_source": payload.get("spot_source"),
+                        "spot_as_of": payload.get("spot_as_of"),
+                    }],
                     "quote_source": payload.get("quote_source"),
                 }
         return _quote_miss_response(exchange_code)
@@ -1265,6 +1420,14 @@ def fetch_quote_icici_response(
     if cell:
         row = _cell_to_icici_row(cell)
         _apply_buy_sell_ratio(row)
+        tick = _live_or_last_tick_reading(exchange_code, stock_code)
+        if tick is not None:
+            row["spot_price"], row["spot_source"], row["spot_as_of"] = tick.spot, tick.source, tick.as_of
+        elif _parse_positive_spot(row.get("spot_price")) is not None:
+            own = _payload_own_spot(
+                {"spot_price": row["spot_price"], "quote_source": quote_source}, exchange_code
+            )
+            row["spot_source"], row["spot_as_of"] = own.source, own.as_of
         return {
             "Status": 200,
             "Error": None,

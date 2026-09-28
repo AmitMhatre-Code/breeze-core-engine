@@ -41,16 +41,31 @@ _logger = logging.getLogger(__name__)
 INDEX_STOCK_CODE = "NIFTY"
 INDEX_EXCHANGE = cfg.NFO
 
+LIVE_QUOTE_SOURCE = "websocket"
+# An index level older than this is not "spot now" -- the same bound CAS Bingo uses.
+SPOT_MAX_AGE_SECONDS = 15.0
+
 
 @dataclass(frozen=True)
 class Quote:
     bid: Optional[float]
     ask: Optional[float]
     ltp: Optional[float]
+    source: Optional[str] = None
 
     @property
     def priceable(self) -> bool:
         return bool(self.bid and self.bid > 0 and self.ask and self.ask > 0)
+
+    @property
+    def live(self) -> bool:
+        """Served by the WebSocket feed, not a snapshot/bhavcopy/REST stand-in.
+
+        Mid-session the quote router answers a WebSocket miss from those stand-ins without
+        saying so, and a stand-in can be the previous session's price. A scalper must not
+        enter, mark or stop on one.
+        """
+        return self.source == LIVE_QUOTE_SOURCE
 
 
 @dataclass(frozen=True)
@@ -148,7 +163,13 @@ def _chain_rows(proc: Any, user_id: str, expiry_display: str, right: str) -> lis
     )
     if (chain or {}).get("Status") != 200 or not chain.get("Success"):
         return []
-    return [r for r in chain["Success"] if isinstance(r, dict)]
+    # Offline cells carry their own source; WebSocket rows only have the chain-level one.
+    source = chain.get("quote_source")
+    return [
+        r if r.get("quote_source") else {**r, "quote_source": source}
+        for r in chain["Success"]
+        if isinstance(r, dict)
+    ]
 
 
 def atm_strike(rows: list[dict[str, Any]], spot: float) -> Optional[float]:
@@ -180,11 +201,35 @@ def _spot_from(rows: list[dict[str, Any]]) -> float:
     return 0.0
 
 
-def _row_quote(row: dict[str, Any]) -> Quote:
+def live_index_spot(*, now: Optional[float] = None) -> Optional[float]:
+    """NIFTY from a live index tick, or None when none arrived in `SPOT_MAX_AGE_SECONDS`.
+
+    Never a chain row's `spot_price`: when index ticks lapse, the quote router refills that
+    from the previous session's bhavcopy close and caches it as if it were live.
+    """
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+    from icici_breeze_backend.app.services.reference_data.keys import index_spot_key
+
+    payload = cache_get_json(index_spot_key("nifty"))
+    if not isinstance(payload, dict):
+        return None
+    try:
+        ltp = float(payload.get("ltp"))
+        updated_at = float(payload.get("updated_at"))
+    except (TypeError, ValueError):
+        return None
+    ts = time.time() if now is None else now
+    if ltp <= 0 or ts - updated_at > SPOT_MAX_AGE_SECONDS:
+        return None
+    return ltp
+
+
+def _row_quote(row: dict[str, Any], source: Optional[str] = None) -> Quote:
     return Quote(
         bid=_f(row.get("best_bid_price")),
         ask=_f(row.get("best_offer_price")),
         ltp=_f(row.get("ltp")),
+        source=row.get("quote_source") or source,
     )
 
 
@@ -202,7 +247,7 @@ def live_quote(
     rows = (response or {}).get("Success") or []
     if (response or {}).get("Status") != 200 or not rows:
         return Quote(None, None, None)
-    return _row_quote(rows[0])
+    return _row_quote(rows[0], response.get("quote_source"))
 
 
 def plan_entry(
@@ -224,7 +269,13 @@ def plan_entry(
     if not rows:
         return None, (ReasonCode.CHAIN_NOT_READY, f"No {right} chain for {expiry} yet.")
 
-    spot = _spot_from(rows)
+    spot = live_index_spot()
+    if spot is None:
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            f"No live NIFTY index tick in the last {SPOT_MAX_AGE_SECONDS:.0f}s; not picking a "
+            f"strike off a stale spot.",
+        )
     strike = atm_strike(rows, spot)
     if strike is None:
         return None, (ReasonCode.QUOTE_UNAVAILABLE, "Could not resolve an ATM strike from the chain.")
@@ -237,6 +288,12 @@ def plan_entry(
         return None, (
             ReasonCode.QUOTE_UNAVAILABLE,
             f"No two-sided quote on the {int(strike)} {right} yet.",
+        )
+    if not quote.live:
+        return None, (
+            ReasonCode.QUOTE_UNAVAILABLE,
+            f"No live quote on the {int(strike)} {right}; the feed is serving "
+            f"{quote.source or 'an unknown'} prices.",
         )
 
     # Feed the backtest's spread model from what this deployment actually sees on the
@@ -397,6 +454,9 @@ def manage_position(
         float(leg.get("strike_price") or 0),
         str(leg.get("right") or "call"),
     )
+    if not quote.live:
+        # A stand-in price must not move the ladder, trip a stop, or mark the daily total.
+        quote = Quote(None, None, None, quote.source)
     spreads_mod.sample_from_quote(leg, quote.bid, quote.ask)
     state = ladder_mod.LadderState.from_detail((cycle.detail or {}).get("ladder"))
     if state is None:
@@ -704,7 +764,9 @@ def _execute_live(
         repo.mark_cycle_placed(
             cycle.id, order_ids=[result.order_id or ""], detail={"cancel_failed": True}
         )
-        guards.disarm_bot(user_id, bot_type, result.error or "An order could not be cancelled.")
+        guards.disarm_bot(
+            user_id, bot_type, result.error or "An order could not be cancelled.", paper=False,
+        )
         return
 
     if not result.ok and not result.partial:

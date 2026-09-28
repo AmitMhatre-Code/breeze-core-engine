@@ -42,6 +42,7 @@ class FakeProc:
 def _chain(spot=24_010.0, bid=100.0, ask=101.0, strikes=(23_900, 24_000, 24_100)):
     return {
         "Status": 200,
+        "quote_source": "websocket",
         "Success": [
             {
                 "strike_price": s,
@@ -95,9 +96,11 @@ def _set_quotes(monkeypatch, *, bid, ask, spot=24_010.0):
         "icici_breeze_backend.app.services.quote_source_router.fetch_quote_icici_response",
         lambda *a, **k: {
             "Status": 200,
+            "quote_source": "websocket",
             "Success": [{"best_bid_price": bid, "best_offer_price": ask, "ltp": (bid + ask) / 2}],
         },
     )
+    monkeypatch.setattr(momentum_bot, "live_index_spot", lambda: spot)
 
 
 def _published(monkeypatch, payload):
@@ -165,6 +168,54 @@ def test_a_one_sided_quote_blocks_entry(env, monkeypatch):
     _set_quotes(monkeypatch, bid=0.0, ask=101.0)
     plan, problem = momentum_bot.plan_entry(proc, USER, _cfg(), "call")
     assert plan is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+
+
+def test_a_stand_in_quote_blocks_entry(env, monkeypatch):
+    """Mid-session the router fills a WebSocket miss from the snapshot or bhavcopy."""
+    _, proc = env
+    _set_quotes(monkeypatch, bid=100.0, ask=101.0)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
+        lambda *a, **k: {**_chain(), "quote_source": "bhavcopy"},
+    )
+    plan, problem = momentum_bot.plan_entry(proc, USER, _cfg(), "call")
+    assert plan is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+    assert "No live quote" in problem[1]
+
+
+def test_no_live_index_tick_blocks_entry(env, monkeypatch):
+    _, proc = env
+    _set_quotes(monkeypatch, bid=100.0, ask=101.0)
+    monkeypatch.setattr(momentum_bot, "live_index_spot", lambda: None)
+    plan, problem = momentum_bot.plan_entry(proc, USER, _cfg(), "call")
+    assert plan is None and problem[0] == ReasonCode.QUOTE_UNAVAILABLE
+
+
+def test_a_stand_in_quote_neither_moves_nor_marks_an_open_position(env, monkeypatch):
+    _set_quotes(monkeypatch, bid=100.0, ask=101.0)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.quote_source_router.fetch_quote_icici_response",
+        lambda *a, **k: {
+            "Status": 200, "quote_source": "snapshot",
+            "Success": [{"best_bid_price": 5.0, "best_offer_price": 6.0}],
+        },
+    )
+
+    class Cycle:
+        legs = [{"expiry_display": "10-Sep-2026", "strike_price": 24_000, "right": "call"}]
+        detail = {}
+
+    _, _, verdict, quote = momentum_bot.manage_position(env[1], USER, _cfg(), Cycle())
+    assert verdict is None and quote.bid is None
+
+
+def test_the_index_spot_is_live_only_while_ticks_are_fresh(monkeypatch):
+    stored = {"ltp": 24_010.0, "updated_at": 1_000.0}
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.db.redis_client.cache_get_json", lambda key: stored
+    )
+    assert momentum_bot.live_index_spot(now=1_010.0) == 24_010.0
+    assert momentum_bot.live_index_spot(now=1_016.0) is None
 
 
 # --- the round trip --------------------------------------------------------------------

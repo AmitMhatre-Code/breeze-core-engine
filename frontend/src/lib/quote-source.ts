@@ -1,4 +1,9 @@
-import type { ChainSuccess, QuoteMeta, QuoteSource } from "@/lib/strategy-builder/types";
+import type {
+  ChainSuccess,
+  QuoteMeta,
+  QuoteSource,
+  SpotSource,
+} from "@/lib/strategy-builder/types";
 import { quoteSourceDetailLine } from "@/lib/help/topic-content";
 import { formatIsoDateDdMmmYyyy } from "@/lib/format-iso-date";
 
@@ -24,8 +29,42 @@ export function quoteMetaFromChain(
     quote_as_of: success.quote_as_of ?? null,
     bhavcopy_stale: success.bhavcopy_stale ?? false,
     depth_as_of: success.depth_as_of ?? null,
+    spot_source: success.spot_source ?? null,
+    spot_as_of: success.spot_as_of ?? null,
   };
 }
+
+/**
+ * Short note beside a spot that is not a live tick, e.g. "last tick 11:28" or
+ * "close 25-Sep". Null for a live or unlabelled spot: the norm needs no note.
+ */
+export function spotSourceNote(
+  source: SpotSource | string | null | undefined,
+  asOf: string | null | undefined,
+): string | null {
+  switch (source) {
+    case "last_tick": {
+      const d = asOf ? new Date(asOf) : null;
+      if (!d || !Number.isFinite(d.getTime())) return "last tick";
+      const time = d.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Kolkata",
+      });
+      return `last tick ${time}`;
+    }
+    case "close":
+      return asOf ? `close ${formatIsoDateDdMmmYyyy(asOf).slice(0, 6)}` : "prev close";
+    case "icici_api":
+      return "ICICI quote";
+    default:
+      return null;
+  }
+}
+
+export const SPOT_STAND_IN_TITLE =
+  "Not a live tick: no spot update for over a minute. Shown from the last tick today, or the last close.";
 
 export function isLiveQuoteSource(meta: QuoteMeta | null | undefined): boolean {
   return meta?.quote_source === "websocket";

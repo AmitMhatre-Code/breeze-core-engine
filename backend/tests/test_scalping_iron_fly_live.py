@@ -84,15 +84,18 @@ def env(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response",
-        lambda p, u, s, e, exp, right, **k: {"Status": 200, "Success": _rows(right)},
+        lambda p, u, s, e, exp, right, **k: {
+            "Status": 200, "Success": _rows(right), "quote_source": "websocket",
+        },
     )
     monkeypatch.setattr(
         fly, "live_quote",
         lambda proc, uid, expiry, strike, right: Quote(
             bid=round(_price(strike) - 0.5, 2), ask=round(_price(strike) + 0.5, 2),
-            ltp=_price(strike),
+            ltp=_price(strike), source="websocket",
         ),
     )
+    monkeypatch.setattr(fly, "live_index_spot", lambda: 24_010.0)
     # Never let a test reach Telegram or the real disarm write path unnoticed.
     monkeypatch.setattr(fly, "_alert_stuck", lambda *a, **k: None)
     return FakeProc()
@@ -247,7 +250,7 @@ def test_a_cancel_failure_unwinds_nothing_and_stands_the_bot_down(env, monkeypat
     disarmed: list = []
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why: disarmed.append(why),
+        lambda uid, bt, why, **kw: disarmed.append(why),
     )
     d, cycles = _enter(env, monkeypatch, outcomes=[
         {}, {},
@@ -264,7 +267,7 @@ def test_an_unwind_that_sticks_leaves_the_cycle_open_and_disarms(env, monkeypatc
     disarmed: list = []
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why: disarmed.append(why),
+        lambda uid, bt, why, **kw: disarmed.append(why),
     )
     d, cycles = _enter(env, monkeypatch, outcomes=[
         {}, {},                                    # wings on
@@ -310,7 +313,7 @@ def test_an_exit_leg_that_will_not_fill_keeps_the_cycle_open(env, monkeypatch):
     disarmed: list = []
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why: disarmed.append(why),
+        lambda uid, bt, why, **kw: disarmed.append(why),
     )
     cycle, context = _open_position(env, monkeypatch)
     _dispatch(monkeypatch, outcomes=[{}, {"filled": 0, "error": "no fill"}, {}, {}])

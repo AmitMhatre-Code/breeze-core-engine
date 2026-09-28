@@ -297,7 +297,10 @@ def open_live(
                 cycle.id, order_ids=order_ids,
                 detail={**detail, "cancel_failed": True, "filled_legs": len(placed)},
             )
-            guards.disarm_bot(user_id, BOT_CAS_BINGO, result.error or "An order could not be cancelled.")
+            guards.disarm_bot(
+                user_id, BOT_CAS_BINGO, result.error or "An order could not be cancelled.",
+                paper=False,
+            )
             alert_stuck(user_id, "an order could not be cancelled mid-entry", result.error)
             return EntryOutcome(False, ReasonCode.ORDER_REJECTED, result.error or "Cancel failed.", cycle_id=cycle.id)
         if result.filled_quantity > 0:
@@ -371,7 +374,9 @@ def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_
     }
     if stuck:
         repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
-        guards.disarm_bot(user_id, BOT_CAS_BINGO, "An entry could not be unwound cleanly.")
+        guards.disarm_bot(
+            user_id, BOT_CAS_BINGO, "An entry could not be unwound cleanly.", paper=False,
+        )
         alert_stuck(
             user_id, "an entry failed and could not be fully unwound",
             "; ".join(f"{l.right} {int(l.strike)} x{q} still open" for l, q in stuck),
@@ -482,7 +487,9 @@ def close_live(
     if stuck:
         detail["exit_partial"] = {"closed": closed, "stuck": stuck}
         repo.update_cycle_detail(cycle.id, detail)
-        guards.disarm_bot(user_id, BOT_CAS_BINGO, "A position could not be fully closed.")
+        guards.disarm_bot(
+            user_id, BOT_CAS_BINGO, "A position could not be fully closed.", paper=False,
+        )
         alert_stuck(
             user_id, "a position could not be fully closed",
             "; ".join(f"{s['right']} {int(float(s['strike']))} x{s['quantity']}" for s in stuck),

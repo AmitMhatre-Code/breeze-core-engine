@@ -7,7 +7,8 @@
 //   node frontend/scripts/capture-guide-screenshots.mjs --only place-order,order-confirm
 //   node frontend/scripts/capture-guide-screenshots.mjs --theme dark
 //
-// Data is mock data. The two mock-only banners (mock broker, Next dev badge) are hidden, the
+// Data is mock data. The two mock-only banners (mock broker, Next dev badge) are hidden, as is
+// the spot's "· close" note (mock never ticks an index, so every spot there is a close), the
 // license is reported active to the frontend, and a few endpoints mock mode cannot serve (market
 // outlook, login disclosure) get fixed sample content. `--setup` first creates the state some shots
 // need (parked orders, armed Profit Booking / Stop Loss rules) through the app's own UI.
@@ -80,7 +81,7 @@ async function newContext(browser, theme, viewport = DESKTOP) {
     };
     const start = () => {
       const s = document.createElement("style");
-      s.textContent = "nextjs-portal{display:none!important}";
+      s.textContent = "nextjs-portal,[data-spot-note]{display:none!important}";
       document.head.appendChild(s);
       hide();
       new MutationObserver(hide).observe(document.body, { childList: true, subtree: true });

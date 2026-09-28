@@ -194,6 +194,20 @@ def _force_index_spot() -> bool | None:
     return ok
 
 
+def _force_underlying_spots() -> None:
+    from icici_breeze_backend.app.services.breeze_websocket_manager import current_ws_user_id
+    from icici_breeze_backend.app.services.index_spot_feed import (
+        resync_underlying_spot_subscriptions,
+    )
+    from icici_breeze_backend.app.services.processor import processor
+
+    user_id = current_ws_user_id()
+    if user_id is None:
+        return
+    ok = resync_underlying_spot_subscriptions(processor(), user_id)
+    _logger.info("price-feed watchdog: forced re-subscribe stock spots ok=%s", ok)
+
+
 def _escalate_to_reconnect(now: float) -> None:
     """Rebuild the socket after repeated whole-pass failure.
 
@@ -286,6 +300,7 @@ def _run_open_pass(now: float) -> None:
         _mark_forced(chain_key, now)
     _force_index_spot()
     _mark_forced(_INDEX_SPOT_TARGET, now)
+    _force_underlying_spots()
     _force_order_feed()
 
 

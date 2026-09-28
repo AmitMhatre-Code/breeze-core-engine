@@ -7,6 +7,7 @@ import {
   isBhavcopyStale,
   isLiveQuoteSource,
   quoteMetaFromChain,
+  spotSourceNote,
 } from "@/lib/quote-source";
 import type { ChainSuccess, QuoteMeta } from "@/lib/strategy-builder/types";
 
@@ -29,6 +30,8 @@ describe("quoteMetaFromChain", () => {
       ...baseChain,
       quote_source: "websocket",
       quote_as_of: "2026-06-27T10:15:00+05:30",
+      spot_source: "last_tick",
+      spot_as_of: "2026-06-27T10:13:00+05:30",
     });
     expect(meta).toEqual({
       quote_source: "websocket",
@@ -36,6 +39,8 @@ describe("quoteMetaFromChain", () => {
       bhavcopy_date: null,
       quote_as_of: "2026-06-27T10:15:00+05:30",
       bhavcopy_stale: false,
+      spot_source: "last_tick",
+      spot_as_of: "2026-06-27T10:13:00+05:30",
     });
   });
 
@@ -157,5 +162,26 @@ describe("snapshot quote source", () => {
     expect(formatDepthAsOf({ quote_source: "snapshot" })).toBeNull();
     expect(formatDepthAsOf({ quote_source: "bhavcopy" })).toBeNull();
     expect(formatDepthAsOf(null)).toBeNull();
+  });
+});
+
+describe("spotSourceNote", () => {
+  it("says nothing for a live or unlabelled spot", () => {
+    expect(spotSourceNote("live", "2026-09-28T11:28:00+05:30")).toBeNull();
+    expect(spotSourceNote(null, null)).toBeNull();
+    expect(spotSourceNote(undefined, undefined)).toBeNull();
+  });
+
+  it("gives the IST time of the last tick", () => {
+    expect(spotSourceNote("last_tick", "2026-09-28T11:28:40+05:30")).toBe("last tick 11:28");
+  });
+
+  it("dates a close so the previous session's cannot pass for today's", () => {
+    expect(spotSourceNote("close", "2026-09-25")).toBe("close 25-Sep");
+    expect(spotSourceNote("close", null)).toBe("prev close");
+  });
+
+  it("names a REST quote", () => {
+    expect(spotSourceNote("icici_api", null)).toBe("ICICI quote");
   });
 });
