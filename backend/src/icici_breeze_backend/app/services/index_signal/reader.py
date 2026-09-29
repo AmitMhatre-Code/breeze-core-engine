@@ -8,6 +8,7 @@ treat anything but "bullish"/"bearish" as no directional trade -- `unavailable` 
 """
 from __future__ import annotations
 
+import datetime
 import time
 from typing import Any, Optional, Union
 
@@ -59,6 +60,24 @@ def get_signal(
         payload = {**payload, "state": "unavailable", "reason": REASON_STALE,
                    "call_started_at": None, "held_until": None}
     return apply_direction(payload, direction)
+
+
+def rollover_standdown(key: Union[SeriesKey, str], day: datetime.date) -> Optional[datetime.date]:
+    """The futures expiry a series stands down for on `day`, or None when it reads normally.
+
+    Only a reading that uses open interest stands down (#34), and it does so for the whole day,
+    so this is known before the first bar -- unlike the reading's own `excluded_session` reason,
+    which appears only inside 09:15-15:15. Never raises: a calendar problem is "not known",
+    and the reading itself still stands down on its own."""
+    try:
+        series = key if isinstance(key, SeriesKey) else SeriesKey.parse(key)
+        if not series.uses_oi:
+            return None
+        from icici_breeze_backend.app.services.index_signal.series import rollover_expiry
+
+        return rollover_expiry(day)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def get_signals(*, now: Optional[float] = None) -> dict[str, dict[str, Any]]:

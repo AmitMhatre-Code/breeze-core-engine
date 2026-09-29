@@ -30,6 +30,7 @@ The Long Scalper, CAS Bingo's spreads and (optionally) the Iron Fly read a [sign
 | Status | **Idle** (not armed), **Armed**, or **Closing** (switched off with a real position still open, which it manages to its exit). A pill reads **Asks first** or **Simulation** when the bot is armed but cannot reach the exchange on its own. |
 | What next | When it will act next, for example **Would fire 3 trading days before expiry** or **Trades 09:35–11:30 and 13:30–15:10, flat by 15:15**. |
 | Figures | **Last run** or **Cycles today**, **Net P&L** today, and **Last backtest** (clearly marked as a backtest, never as money made). |
+| Feed line | Long Scalper and Iron Fly only: whether the NIFTY futures feed is live, warming up or broken. On a futures rollover day it reads **Won't trade today** instead if the bot's signal (or the Iron Fly's entry filter) is Volume expansion: that reading uses open interest, which moves for mechanical reasons around futures expiry, so it gives no reading all day (see [Signals](signals.md)). A broken feed is still shown on those days. |
 | Mode switch | How the bot runs (below). The line under it says in plain words what the mode does. |
 
 ### Modes

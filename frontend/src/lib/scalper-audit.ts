@@ -25,9 +25,21 @@ export type ScalperFeedDetail = {
   last_error?: string | null;
 };
 
+/** The bot's signal cannot read at all today (`runtime._signal_standdown`): a NIFTY
+ *  volume-expansion reading reads open interest, which stands down through a futures rollover. */
+export type SignalStanddown = {
+  reason?: string;
+  series?: string;
+  label?: string;
+  /** "signal" for the Long Scalper, "entry filter" for the Iron Fly's quiet filter. */
+  role?: string;
+  futures_expiry?: string;
+};
+
 export type ScalperRunDetail = {
   feed?: ScalperFeedDetail;
   gates?: Record<string, unknown>;
+  signal_standdown?: SignalStanddown | null;
 };
 
 /** `bad` is "this will not fix itself"; `warn` is "working, not ready yet". */
@@ -39,10 +51,27 @@ function count(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString("en-IN") : "0";
 }
 
+function describeStanddown(standdown: SignalStanddown): FeedSummary {
+  const label = standdown.label ?? "Volume expansion";
+  const setTo = standdown.role === "entry filter" ? `its entry filter is ${label}` : `set to ${label}`;
+  const expiry = standdown.futures_expiry ? ` (${standdown.futures_expiry})` : "";
+  return {
+    text:
+      `Won't trade today — ${setTo}, and open interest changes near futures expiry${expiry} ` +
+      "are unreliable.",
+    tone: "warn",
+  };
+}
+
 /** The feed's state in one line, or null when the run carries no feed detail at all
- *  (every non-scalper bot, and any run recorded before this was added). */
+ *  (every non-scalper bot, and any run recorded before this was added).
+ *
+ *  A signal that cannot read today outranks a healthy or warming feed -- "Futures feed live"
+ *  on a day the bot cannot enter is the misleading line this replaces -- but not a broken
+ *  one: a dead feed will still be dead tomorrow, when the signal reads again. */
 export function describeFeed(detail: unknown): FeedSummary | null {
-  const feed = (detail as ScalperRunDetail | null)?.feed;
+  const run = detail as ScalperRunDetail | null;
+  const feed = run?.feed;
   if (!feed || typeof feed !== "object") return null;
 
   if (feed.last_error) {
@@ -59,6 +88,9 @@ export function describeFeed(detail: unknown): FeedSummary | null {
     const age = typeof feed.stale_seconds === "number" ? ` for ${Math.round(feed.stale_seconds)}s` : "";
     return { text: `Futures feed quiet${age} — entries are frozen.`, tone: "bad" };
   }
+
+  const standdown = run?.signal_standdown;
+  if (standdown && typeof standdown === "object") return describeStanddown(standdown);
 
   const ticks = `${count(feed.ticks_seen)} ticks`;
   // Stale packets are named outright rather than left to be inferred from a low candle

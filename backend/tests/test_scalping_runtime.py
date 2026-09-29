@@ -19,8 +19,10 @@ from icici_breeze_backend.app.db.bots_migrate import (
 from icici_breeze_backend.app.domain.bots import (
     IronFlyScalperConfig,
     MomentumLongScalperConfig,
+    IronFlyEntryFilterConfig,
     ReasonCode,
     ScalperDayTotals,
+    SignalChoice,
 )
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.scalping import runtime
@@ -697,3 +699,76 @@ def test_a_failed_reentry_check_holds_the_entry(db_path, stubbed, monkeypatch):
 
     assert decision.action == "idle"
     assert decision.reason_code == ReasonCode.REENTRY_GATE_CLOSED
+
+
+# --------------------------------------------------------------------------------------
+# A signal that cannot read at all today is named on the run row (2026-09-29)
+# --------------------------------------------------------------------------------------
+
+ROLLOVER_DAY = datetime.date(2026, 9, 29)  # NIFTY September futures expiry
+ORDINARY_DAY = datetime.date(2026, 9, 8)
+
+
+def _scalper(mechanism: str, direction: str = "follow") -> MomentumLongScalperConfig:
+    return MomentumLongScalperConfig(
+        signal=SignalChoice(mechanism=mechanism, duration=1, direction=direction)
+    )
+
+
+def test_an_expansion_scalper_stands_down_for_the_futures_rollover():
+    """Every in-window pass of 2026-09-29 read `signal_unavailable:excluded_session` while the
+    card said "Futures feed live". The date alone says so, from the first pass."""
+    out = runtime._signal_standdown(BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"), ROLLOVER_DAY)
+    assert out == {
+        "reason": "futures_rollover",
+        "series": "nifty:expansion:1m",
+        "label": "Volume expansion 1m",
+        "role": "signal",
+        "futures_expiry": "29-Sep-2026",
+    }
+
+
+def test_the_rollover_window_includes_the_session_before_expiry():
+    out = runtime._signal_standdown(
+        BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"), ROLLOVER_DAY - datetime.timedelta(days=1)
+    )
+    assert out is not None and out["futures_expiry"] == "29-Sep-2026"
+
+
+def test_an_ordinary_day_has_no_standdown():
+    assert runtime._signal_standdown(
+        BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"), ORDINARY_DAY
+    ) is None
+
+
+def test_momentum_reads_no_open_interest_so_it_trades_through_rollover():
+    assert runtime._signal_standdown(
+        BOT_MOMENTUM_LONG_SCALPER, _scalper("momentum"), ROLLOVER_DAY
+    ) is None
+
+
+def test_a_fly_stands_down_only_when_it_filters_on_an_oi_reading():
+    assert runtime._signal_standdown(BOT_IRON_FLY_SCALPER, IronFlyScalperConfig(), ROLLOVER_DAY) is None
+    config = IronFlyScalperConfig(
+        entry_filter=IronFlyEntryFilterConfig(
+            kind="signal_quiet",
+            signal=SignalChoice(mechanism="expansion", duration=15, direction="fade"),
+        )
+    )
+    out = runtime._signal_standdown(BOT_IRON_FLY_SCALPER, config, ROLLOVER_DAY)
+    assert out is not None
+    assert out["role"] == "entry filter"
+    # The quiet filter ignores direction, so the label must not claim a fade.
+    assert out["label"] == "Volume expansion 15m"
+
+
+def test_the_standdown_reaches_the_run_row(db_path, stubbed, monkeypatch):
+    monkeypatch.setattr(runtime, "now_ist", lambda: datetime.datetime(2026, 9, 29, 9, 20))
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"))
+    detail = repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail
+    assert detail["signal_standdown"]["futures_expiry"] == "29-Sep-2026"
+
+
+def test_an_ordinary_day_writes_no_standdown(db_path, stubbed):
+    runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"))
+    assert repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["signal_standdown"] is None

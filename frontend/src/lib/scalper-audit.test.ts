@@ -57,6 +57,50 @@ describe("describeFeed", () => {
     });
   });
 
+  it("says a scalper on volume expansion won't trade through a futures rollover", () => {
+    // 2026-09-29: every pass read `excluded_session` while the card said "Futures feed live".
+    const standdown = {
+      reason: "futures_rollover",
+      series: "nifty:expansion:1m",
+      label: "Volume expansion 1m",
+      role: "signal",
+      futures_expiry: "29-Sep-2026",
+    };
+    const live = { ...feed({ warm: true, ticks_seen: 41234 }), signal_standdown: standdown };
+    expect(describeFeed(live)).toEqual({
+      text:
+        "Won't trade today — set to Volume expansion 1m, and open interest changes near " +
+        "futures expiry (29-Sep-2026) are unreliable.",
+      tone: "warn",
+    });
+    // Warming up is moot on a day the signal cannot read either.
+    expect(describeFeed({ ...feed({ candles: 3 }), signal_standdown: standdown })?.text).toMatch(
+      /^Won't trade today/,
+    );
+  });
+
+  it("names the Iron Fly's entry filter rather than a signal it trades", () => {
+    const summary = describeFeed({
+      ...feed({ warm: true }),
+      signal_standdown: { label: "Volume expansion 15m", role: "entry filter", futures_expiry: "29-Sep-2026" },
+    });
+    expect(summary?.text).toContain("its entry filter is Volume expansion 15m");
+  });
+
+  it("still reports a broken feed on a rollover day, since it will still be broken tomorrow", () => {
+    const summary = describeFeed({
+      ...feed({ subscribed: false }),
+      signal_standdown: { label: "Volume expansion 1m", role: "signal" },
+    });
+    expect(summary?.tone).toBe("bad");
+    expect(summary?.text).toMatch(/not subscribed/);
+  });
+
+  it("ignores an empty standdown", () => {
+    const summary = describeFeed({ ...feed({ warm: true, ticks_seen: 5 }), signal_standdown: null });
+    expect(summary?.text).toBe("Futures feed live · 5 ticks · 24-Sep-2026");
+  });
+
   it("returns nothing for runs that carry no feed detail", () => {
     // Every non-scalper bot, and any scalper run recorded before the audit detail existed.
     expect(describeFeed(null)).toBeNull();

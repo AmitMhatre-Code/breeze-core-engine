@@ -377,11 +377,9 @@ def service_feeds(now: float, *, force: bool = False) -> None:
 def _in_rollover_window(ts: float) -> bool:
     """NIFTY near-month futures rolling: OI moves mechanically, so OI readings stand down (#34)."""
     try:
-        from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
-        from icici_breeze_backend.app.services.index_signal.expansion import in_rollover_window
+        from icici_breeze_backend.app.services.index_signal.series import rollover_expiry
 
-        today = bars_mod.trading_date(ts)
-        return in_rollover_window(today, regime.near_month_futures_expiry(today, "NIFTY", set()))
+        return rollover_expiry(bars_mod.trading_date(ts)) is not None
     except Exception:  # noqa: BLE001
         return False
 

@@ -174,20 +174,30 @@ def replay_series(
         yield bar, engine.snapshot(bar.close_ts, excluded=day in excluded_days)
 
 
+def rollover_expiry(
+    day: datetime.date, holidays: Optional[set[datetime.date]] = None
+) -> Optional[datetime.date]:
+    """The NIFTY futures expiry whose rollover `day` falls in, or None on an ordinary day (#34).
+
+    The one place the rule is applied: the live publisher, the replay and the bot card all ask
+    this, so a card can never say "won't trade today" on a day the signal actually reads."""
+    from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
+    from icici_breeze_backend.app.services.index_signal.expansion import in_rollover_window
+
+    expiry = regime.near_month_futures_expiry(day, "NIFTY", holidays or set())
+    return expiry if in_rollover_window(day, expiry) else None
+
+
 def rollover_days(
     start: datetime.date, end: datetime.date, holidays: Optional[set[datetime.date]] = None
 ) -> set[datetime.date]:
     """The days whose NIFTY OI moves for mechanical reasons (near-month futures rolling), which a
     reading that uses OI must not speak on (#34). Covers `start`..`end` inclusive."""
-    from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
-    from icici_breeze_backend.app.services.index_signal.expansion import in_rollover_window
-
     out: set[datetime.date] = set()
     day = start
     while day <= end:
         try:
-            expiry = regime.near_month_futures_expiry(day, "NIFTY", holidays or set())
-            if in_rollover_window(day, expiry):
+            if rollover_expiry(day, holidays) is not None:
                 out.add(day)
         except Exception:  # noqa: BLE001 -- a calendar gap costs an exclusion, never the replay
             pass

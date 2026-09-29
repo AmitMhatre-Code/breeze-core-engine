@@ -355,7 +355,48 @@ def _is_expiry_day(config: Any) -> bool:
     return contract.expiry_date == now_ist().date()
 
 
-def _audit_detail(snapshot: Snapshot, decision: Decision) -> dict[str, Any]:
+def _signal_standdown(bot_type: str, config: Any, day: Any) -> Optional[dict[str, Any]]:
+    """Why the bot's signal will not read at all today, if it will not.
+
+    A NIFTY volume-expansion reading reads open interest and stands down for the whole of a
+    futures rollover (#34), so a bot trading it -- or a fly filtering on it -- cannot enter
+    all day. Without this the card said "Futures feed live" through two whole rollover days
+    while every pass logged `signal_unavailable:excluded_session` (2026-09-29).
+
+    Known from the date alone, so the card can say it from the first pass, before the
+    session window opens and long before the reading itself says `excluded_session`."""
+    from icici_breeze_backend.app.services.index_signal.reader import rollover_standdown
+
+    if bot_type == BOT_IRON_FLY_SCALPER:
+        f = getattr(config, "entry_filter", None)
+        if f is None or getattr(f, "kind", "none") != "signal_quiet":
+            return None
+        # Direction is ignored by the quiet filter, so "· fade" would only mislead.
+        choice, role = f.signal.model_copy(update={"direction": "follow"}), "entry filter"
+    else:
+        choice, role = getattr(config, "signal", None), "signal"
+    if choice is None:
+        return None
+    try:
+        series = choice.series_id(config.index)
+        expiry = rollover_standdown(series, day)
+        if expiry is None:
+            return None
+        return {
+            "reason": "futures_rollover",
+            "series": series,
+            "label": choice.label(),
+            "role": role,
+            "futures_expiry": expiry.strftime("%d-%b-%Y"),
+        }
+    except Exception:  # noqa: BLE001 -- diagnostic only; the signal still stands down itself
+        _logger.debug("scalping[%s]: rollover check failed", bot_type, exc_info=True)
+        return None
+
+
+def _audit_detail(
+    snapshot: Snapshot, decision: Decision, standdown: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
     """Everything needed to tell two identical-looking stand-downs apart.
 
     `not_warm` on its own is ambiguous in the worst way: it reads as "give it twenty
@@ -407,6 +448,8 @@ def _audit_detail(snapshot: Snapshot, decision: Decision) -> dict[str, Any]:
         },
         # Whatever the decision itself attached (warm-up status, cooldown counts, budget).
         "decision": dict(decision.detail or {}),
+        # Set only when the bot's signal cannot read at all today (`_signal_standdown`).
+        "signal_standdown": standdown,
     }
 
 
@@ -416,6 +459,7 @@ def _publish_verdict(
     run_id: str,
     snapshot: Snapshot,
     decision: Decision,
+    standdown: Optional[dict[str, Any]] = None,
 ) -> None:
     """Log the verdict and record it on the open run row.
 
@@ -435,7 +479,7 @@ def _publish_verdict(
     _last_reason[key] = decision.reason_code
     _last_published[key] = now
 
-    detail = _audit_detail(snapshot, decision)
+    detail = _audit_detail(snapshot, decision, standdown)
     _logger.info(
         "scalping[%s]: %s -> %s (%s) %s",
         bot_type,
@@ -462,6 +506,7 @@ def _record_audit(
     run_id: str,
     snapshot: Snapshot,
     decision: Decision,
+    standdown: Optional[dict[str, Any]] = None,
 ) -> None:
     """Append this pass to the durable audit trail.
 
@@ -479,7 +524,7 @@ def _record_audit(
             user_id,
             bot_type,
             run_id,
-            detail=_audit_detail(snapshot, decision),
+            detail=_audit_detail(snapshot, decision, standdown),
             reason_code=decision.reason_code,
             reason_text=decision.reason_text,
             in_window=inside,
@@ -535,8 +580,9 @@ def tick_bot(
     run_id = repo.open_session_run(user_id, bot_type)
     repo.touch_run_heartbeat(run_id)
     _stamp_session(run_id, bot_type, config)
-    _publish_verdict(user_id, bot_type, run_id, snapshot, decision)
-    _record_audit(user_id, bot_type, config, run_id, snapshot, decision)
+    standdown = _signal_standdown(bot_type, config, snapshot.now_ist.date())
+    _publish_verdict(user_id, bot_type, run_id, snapshot, decision, standdown)
+    _record_audit(user_id, bot_type, config, run_id, snapshot, decision, standdown)
 
     feed = futures_feed.get_feed()
     _finalise_if_day_is_over(user_id, bot_type, config, run_id, snapshot, decision)
