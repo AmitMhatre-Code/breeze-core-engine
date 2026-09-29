@@ -987,3 +987,18 @@ def test_flattened_rows_carry_the_spot_label():
     assert row["spot_price"] == 22_830.0
     assert row["spot_source"] == "last_tick"
     assert row["spot_as_of"] == "2026-09-28T11:28:00+05:30"
+
+
+@patch("icici_breeze_backend.app.services.index_spot_feed.ensure_underlying_spot_subscription")
+@patch("icici_breeze_backend.app.services.breeze_websocket_manager.subscribe_option")
+@patch("icici_breeze_backend.app.services.quote_source_router.cache_get_json", return_value={"ltp": 4.5})
+@patch("icici_breeze_backend.app.services.quote_source_router.is_market_open", return_value=True)
+def test_single_contract_lookup_keeps_the_underlying_spot_live(_open, _cache, _sub, mock_spot):
+    """Portfolio legs resolve one contract each and never build a chain; without this the
+    stock's SPOT sat at an old bhavcopy close all session (VISMEG, 2026-09-29)."""
+    from icici_breeze_backend.app.services.quote_source_router import _fetch_cell_from_cache
+
+    proc = MagicMock()
+    cell, source = _fetch_cell_from_cache(proc, "u1", "NFO", "VISMEG", "29-Sep-2026", 105.0, "call")
+    assert source == "websocket"
+    mock_spot.assert_called_once_with(proc, "u1", "NFO", "VISMEG")

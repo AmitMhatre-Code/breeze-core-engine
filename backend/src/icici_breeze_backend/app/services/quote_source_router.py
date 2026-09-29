@@ -612,8 +612,15 @@ def _fetch_cell_from_cache(
 
     if source == "websocket":
         from icici_breeze_backend.app.services.breeze_websocket_manager import subscribe_option
+        from icici_breeze_backend.app.services.index_spot_feed import (
+            ensure_underlying_spot_subscription,
+        )
 
         subscribe_option(proc, user_id, exchange_code, stock_code, expiry_display, strike, right_key, holder_id=holder_id)
+        # A single-contract lookup (every Portfolio leg) never builds the chain, and the
+        # chain build was the only thing subscribing the stock's cash spot -- so a holding
+        # nobody opened showed the bhavcopy's underlying close as SPOT all session.
+        ensure_underlying_spot_subscription(proc, user_id, exchange_code, stock_code)
         key = ws_quote_key(exchange_code, stock_code, expiry_display, strike, right_key)
         cell = cache_get_json(key)
         if cell:

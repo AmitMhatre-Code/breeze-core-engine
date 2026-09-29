@@ -53,6 +53,13 @@ _symbol_to_label: dict[str, str] = {}
 # outlives a trading day, and a bare label->value map kept the first close it ever saw, so the
 # navbar measured the day's change against a close several sessions old.
 _previous_close: dict[str, tuple[date, float]] = {}
+# label -> IST date whose `_previous_close` came from REST `get_quotes`. A tick's own `close`
+# only stands in until then; REST replaces it once the market has opened.
+_rest_close_date: dict[str, date] = {}
+# label -> monotonic time of the last post-open REST attempt, so a failing fetch from the
+# navbar poll is retried on a throttle rather than on every poll.
+_rest_close_attempt_at: dict[str, float] = {}
+_REST_CLOSE_RETRY_SECONDS = 60.0
 _subscribed_date: date | None = None
 _listener_registered = False
 
@@ -229,7 +236,29 @@ def _pick_quote_row(succ: Any, cash_exchange: str) -> dict[str, Any] | None:
     return first if isinstance(first, dict) else None
 
 
+def _has_today_rest_close(label: str) -> bool:
+    with _lock:
+        return _rest_close_date.get(label) == datetime.now(IST).date()
+
+
+def _store_rest_close(label: str, prev_close: float) -> None:
+    today = datetime.now(IST).date()
+    with _lock:
+        _previous_close[label] = (today, prev_close)
+        _rest_close_date[label] = today
+
+
 def _fetch_previous_close(sdk: Any, cash_exchange: str, cash_stock_code: str) -> float | None:
+    """Today's previous close from REST, or None -- always None before today's open.
+
+    Before ICICI rolls its quotes over to the new session, `get_quotes` still answers with
+    the last session's row, whose `previous_close` is the close *before* it. Fetched at a
+    pre-market login and stamped with today's date, that measured the whole day's change
+    against a close two sessions old (NIFTY -2.39% on 2026-09-29 against ICICI's -0.85%)."""
+    from icici_breeze_backend.app.services.market_calendar import has_market_opened
+
+    if not has_market_opened():
+        return None
     try:
         r = sdk.get_quotes(
             stock_code=cash_stock_code,
@@ -346,15 +375,12 @@ def sync_index_spot_subscriptions(proc: "Processor", user_id: str, *, force: boo
                         _subscribed_cash_tokens.discard(token)
                     continue
             # Only a REST call's worth of value once per day -- skip it when we
-            # already have today's close, so a forced re-subscribe (which can
+            # already have today's REST close, so a forced re-subscribe (which can
             # repeat on the watchdog's throttle) doesn't re-hit `get_quotes`.
-            with _lock:
-                have_prev_close = _today_previous_close(label) is not None
-            if not have_prev_close:
+            if not _has_today_rest_close(label):
                 prev_close = _fetch_previous_close(sdk, cash_exchange, cash_stock_code)
                 if prev_close is not None:
-                    with _lock:
-                        _previous_close[label] = (today, prev_close)
+                    _store_rest_close(label, prev_close)
         except Exception:
             subscribe_failed = True
             _logger.warning("index spot subscribe failed for %s", label, exc_info=True)
@@ -592,10 +618,40 @@ def _fetch_eod_quote(proc: "Processor", user_id: str, cash_exchange: str, cash_s
     }
 
 
+def _ensure_rest_previous_close(proc: "Processor", user_id: str) -> None:
+    """Fetch today's REST previous close once the market is open, if nothing has yet.
+
+    The daily subscribe usually runs at a pre-market login, when `_fetch_previous_close`
+    declines, and nothing re-runs it after the open unless the feed stalls. Until this
+    lands the tick's own `close` stands in. At most two REST calls a day, retried on a
+    throttle when ICICI refuses."""
+    now = time.monotonic()
+    pending: list[tuple[str, str, str]] = []
+    with _lock:
+        for cash_exchange, cash_stock_code, _ox, _os, label in _INDEX_SCRIPS:
+            if _rest_close_date.get(label) == datetime.now(IST).date():
+                continue
+            last = _rest_close_attempt_at.get(label)
+            if last is not None and now - last < _REST_CLOSE_RETRY_SECONDS:
+                continue
+            _rest_close_attempt_at[label] = now
+            pending.append((cash_exchange, cash_stock_code, label))
+    if not pending:
+        return
+    sdk = proc.get_session_breeze(user_id)
+    if sdk is None:
+        return
+    for cash_exchange, cash_stock_code, label in pending:
+        prev_close = _fetch_previous_close(sdk, cash_exchange, cash_stock_code)
+        if prev_close is not None:
+            _store_rest_close(label, prev_close)
+
+
 def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
     """Live NIFTY/SENSEX spot for the navbar ticker.
 
-    During market hours, this is a pure cache read -- ticks arrive fast enough
+    During market hours, this is a cache read (plus, once a day, the REST previous
+    close -- see `_ensure_rest_previous_close`) -- ticks arrive fast enough
     (`_INDEX_SPOT_TTL_SECONDS`) that an empty cache just means "not subscribed
     yet" and will fill in on its own. Outside market hours nothing is ticking,
     so an empty cache means "market closed, nobody's fetched today's close
@@ -605,6 +661,8 @@ def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
     market_open = is_market_open()
+    if market_open:
+        _ensure_rest_previous_close(proc, user_id)
     quotes: dict[str, Any] = {}
     for cash_exchange, cash_stock_code, _opt_ex, _opt_stock, label in _INDEX_SCRIPS:
         payload = cache_get_json(index_spot_key(label))
@@ -626,6 +684,8 @@ def reset_state_for_tests() -> None:
         _listener_registered = False
         _symbol_to_label.clear()
         _previous_close.clear()
+        _rest_close_date.clear()
+        _rest_close_attempt_at.clear()
         _day_open.clear()
         _underlying_targets.clear()
         _subscribed_cash_tokens.clear()

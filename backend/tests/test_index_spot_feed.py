@@ -23,6 +23,18 @@ def _clear_index_spot_cache() -> None:
     cache_delete_pattern(index_spot_key("sensex"))
 
 
+def _market_opened(monkeypatch, opened: bool = True) -> None:
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.has_market_opened",
+        lambda now=None: opened,
+    )
+
+
+def _hold_rest_close(label: str, value: float) -> None:
+    isf._previous_close[label] = (_today(), value)
+    isf._rest_close_date[label] = _today()
+
+
 @pytest.fixture(autouse=True)
 def _reset():
     isf.reset_state_for_tests()
@@ -107,6 +119,7 @@ def test_on_raw_tick_ignores_previous_close_from_an_earlier_day():
 
 
 def test_sync_refetches_previous_close_on_a_new_day(monkeypatch):
+    _market_opened(monkeypatch)
     isf._previous_close["nifty"] = (_today() - timedelta(days=1), 23446.8)
     fake_sdk = MagicMock()
     fake_sdk.get_stock_token_value.side_effect = [("4.1!4963", False), ("1.1!1", False)]
@@ -120,6 +133,7 @@ def test_sync_refetches_previous_close_on_a_new_day(monkeypatch):
 
 
 def test_sync_index_spot_subscriptions_idempotent_same_day(monkeypatch):
+    _market_opened(monkeypatch)
     fake_sdk = MagicMock()
     fake_sdk.get_stock_token_value.side_effect = [
         ("4.1!4963", False),
@@ -163,6 +177,8 @@ def test_get_index_quotes_status_reads_cache(monkeypatch):
         lambda now=None: True,
     )
     cache_set_json(index_spot_key("nifty"), {"ltp": 24800.5}, ex=15)
+    _hold_rest_close("nifty", 24700.0)
+    _hold_rest_close("sensex", 83000.0)
     proc = MagicMock()
     status = isf.get_index_quotes_status(proc, "u1")
     assert status["quotes"]["nifty"] == {"ltp": 24800.5}
@@ -177,6 +193,8 @@ def test_get_index_quotes_status_market_open_empty_cache_stays_null(monkeypatch)
         "icici_breeze_backend.app.services.market_calendar.is_market_open",
         lambda now=None: True,
     )
+    _hold_rest_close("nifty", 24700.0)
+    _hold_rest_close("sensex", 83000.0)
     proc = MagicMock()
     status = isf.get_index_quotes_status(proc, "u1")
     assert status["quotes"]["nifty"] is None
@@ -214,6 +232,65 @@ def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch
     status_again = isf.get_index_quotes_status(proc, "u1")
     assert status_again["quotes"]["nifty"]["ltp"] == 24850.25
     fake_sdk.get_quotes.assert_not_called()
+
+
+def test_sync_before_the_open_does_not_take_the_rest_close(monkeypatch):
+    """Pre-market, ICICI's quote is still the last session's, so its `previous_close` is
+    the close two sessions back (2026-09-29: NIFTY read -2.39% against ICICI's -0.85%)."""
+    _market_opened(monkeypatch, False)
+    fake_sdk = MagicMock()
+    fake_sdk.get_stock_token_value.side_effect = [("4.1!4963", False), ("1.1!1", False)]
+    fake_sdk.get_quotes.return_value = {"Status": 200, "Success": [{"previous_close": "23140.50"}]}
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.breeze_websocket_manager._ensure_ws",
+        lambda proc, user_id: fake_sdk,
+    )
+    assert isf.sync_index_spot_subscriptions(MagicMock(), "u1") is True
+    fake_sdk.get_quotes.assert_not_called()
+    assert isf._today_previous_close("nifty") is None
+
+
+def test_navbar_read_fetches_rest_close_after_the_open_over_a_tick_close(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda now=None: True,
+    )
+    _market_opened(monkeypatch)
+    isf._symbol_to_label["4.1!4963"] = "nifty"
+    isf._on_raw_tick({"symbol": "4.1!4963", "last": "22586.70", "close": "22700.00"})
+    assert isf._today_previous_close("nifty") == 22700.00
+
+    fake_sdk = MagicMock()
+    fake_sdk.get_quotes.return_value = {"Status": 200, "Success": [{"previous_close": "22780.25"}]}
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = fake_sdk
+    isf.get_index_quotes_status(proc, "u1")
+    assert fake_sdk.get_quotes.call_count == 2  # nifty + sensex
+    assert isf._today_previous_close("nifty") == 22780.25
+
+    isf._on_raw_tick({"symbol": "4.1!4963", "last": "22586.70", "close": "22700.00"})
+    cached = cache_get_json(index_spot_key("nifty"))
+    assert cached["change"] == pytest.approx(-193.55)
+
+    # Held for the day: later polls make no further REST calls.
+    fake_sdk.get_quotes.reset_mock()
+    isf.get_index_quotes_status(proc, "u1")
+    fake_sdk.get_quotes.assert_not_called()
+
+
+def test_navbar_rest_close_retry_is_throttled(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open",
+        lambda now=None: True,
+    )
+    _market_opened(monkeypatch)
+    fake_sdk = MagicMock()
+    fake_sdk.get_quotes.return_value = {"Status": 500, "Error": "down"}
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = fake_sdk
+    isf.get_index_quotes_status(proc, "u1")
+    isf.get_index_quotes_status(proc, "u1")
+    assert fake_sdk.get_quotes.call_count == 2  # one attempt per index, not per poll
 
 
 def test_on_raw_tick_seeds_chain_spot_for_dynamic_underlying(monkeypatch):
