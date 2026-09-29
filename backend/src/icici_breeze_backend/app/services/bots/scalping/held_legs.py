@@ -71,7 +71,8 @@ def entry_price(leg: dict[str, Any], detail: dict[str, Any]) -> float:
             and fill.get("action") == leg.get("action")
         ):
             return float(fill.get("price") or 0.0)
-    return 0.0
+    # The Long Scalper holds one leg and records its fill as `entry.price`.
+    return float((detail.get("entry") or {}).get("price") or 0.0)
 
 
 def resized(leg: dict[str, Any], quantity: int, *, entry: float) -> dict[str, Any]:
@@ -102,6 +103,14 @@ class ClosePass:
     # An order could not be cancelled and may still fill. No further order may go out for
     # this cycle; retrying around it is how a close turns into an opposite position.
     cancel_failed: bool = False
+    # A close got no usable answer and the order book could not say whether it went in
+    # (B-21). Same consequence as a failed cancel: an order may be live that nothing tracks.
+    outcome_unknown: bool = False
+
+    @property
+    def halted(self) -> bool:
+        """No more orders may go out for this cycle; only the broker watch continues."""
+        return self.cancel_failed or self.outcome_unknown
 
 
 def run_close(
@@ -137,6 +146,8 @@ def run_close(
         filled = max(0, min(qty, int(getattr(result, "filled_quantity", 0) or 0)))
         if getattr(result, "cancel_failed", False):
             out.cancel_failed = True
+        if getattr(result, "outcome_unknown", False):
+            out.outcome_unknown = True
         if filled > 0:
             price = float(getattr(result, "average_price", 0.0) or 0.0)
             # Closing reverses the leg: a short bought back costs, a long sold returns.
@@ -194,6 +205,8 @@ def record_stuck(
     detail["unwind_attempts"] = attempts
     if result.cancel_failed:
         detail["unwind_orders_halted"] = "cancel_failed"
+    elif result.outcome_unknown:
+        detail["unwind_orders_halted"] = "outcome_unknown"
     elif attempts > MAX_CLOSE_RETRIES:
         detail["unwind_orders_halted"] = "attempts"
     detail["unwind_next_at"] = now + RETRY_BACKOFF_SECONDS[
@@ -256,7 +269,9 @@ def halted_now(before: dict[str, Any], after: dict[str, Any]) -> bool:
     return bool(after.get("unwind_orders_halted")) and not before.get("unwind_orders_halted")
 
 
-def alert_resolved(user_id: str, bot_name: str, what: str, *, kind: str) -> None:
+def alert_resolved(
+    user_id: str, bot_name: str, what: str, *, kind: str, still_disarmed: bool = True
+) -> None:
     """Tell the user on Telegram that legs they were alerted about are no longer open.
 
     The stuck alert sends them to the Order Book. Nobody is watching the bot live, so the
@@ -265,12 +280,14 @@ def alert_resolved(user_id: str, bot_name: str, what: str, *, kind: str) -> None
     """
     from icici_breeze_backend.app.services.telegram_alerts import _notify
 
+    tail = (
+        "The bot is still disarmed and will not open anything new until you arm it again."
+        if still_disarmed
+        else "Nothing is left open, so the bot can trade again."
+    )
     try:
         _notify(
-            user_id,
-            f"\u2705 *{bot_name}: leftover legs closed*\n\n{what}\n\n"
-            "The bot is still disarmed and will not open anything new until you arm it again.",
-            kind=kind,
+            user_id, f"\u2705 *{bot_name}: leftover legs closed*\n\n{what}\n\n{tail}", kind=kind,
         )
     except Exception:  # noqa: BLE001 -- an alert failure must not undo a close that happened
         _logger.exception("bots: could not send the leftover-legs-closed alert")
@@ -285,6 +302,17 @@ def closed_outside_text() -> str:
 
 def is_unwinding(cycle: Any) -> bool:
     return bool((getattr(cycle, "detail", None) or {}).get("unwinding"))
+
+
+def still_disarmed(detail: dict[str, Any]) -> bool:
+    """Whether the bot was switched off on the way into this unwind.
+
+    A close or entry unwind that sticks disarms the bot. An unwind `order_intents` started
+    for a crashed entry does not -- unless the resolver later gave up and disarmed it.
+    """
+    if detail.get("unwind_from_recovery"):
+        return bool(detail.get("resolve_disarmed"))
+    return True
 
 
 def remainder_verdict(cycle: Any, *, now: Optional[float] = None) -> tuple[str, str]:

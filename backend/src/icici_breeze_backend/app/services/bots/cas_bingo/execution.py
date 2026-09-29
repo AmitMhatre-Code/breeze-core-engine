@@ -6,9 +6,10 @@ the touch, `scalping/paper.py`) and Autonomous/Manual (real orders through
 
 The live rules, each borrowed from Bot 4 for the reason Bot 4 gives:
 
-* **The intent row goes in before any order** (`detail.pending`), so a crash between an order
-  going out and the row being written is a question `guards.reconcile_pending_cycles` can
-  answer at startup, not a position nobody knows about.
+* **The intent row goes in before any order** (`detail.pending`), and every order is journaled
+  on it before it is sent (`scalping/order_intents.py`), so a crash -- or an order whose
+  answer was lost -- is a question `order_intents.resolve_pending` answers from the broker,
+  not a position nobody knows about (B-02, B-21).
 * **Buys first; a sell that fails unwinds the buy.** The user confirmed the unwind (not "keep
   the long and alert"). A partial on any leg counts as a failure: a spread with 75 units bought
   and 50 sold is not the structure any exit rule here describes.
@@ -271,89 +272,136 @@ def open_live(
             "An earlier order is still unreconciled; not entering on top of it.",
         )
 
+    from icici_breeze_backend.app.services.bots.scalping import order_intents
+
     qty = plan.quantity
     detail = _entry_detail(plan, extra)
     cycle = repo.open_cycle(
         user_id, BOT_CAS_BINGO, run_id,
         structure=plan.structure, legs=plan.as_legs(), lots=plan.lots,
-        entry_value=None, paper=False, detail={**detail, "pending": True, "order_ids": []},
+        entry_value=None, paper=False,
+        detail={**detail, "pending": True, "order_ids": [], "intents": []},
     )
+    journal = order_intents.Journal(cycle)
 
-    placed: list[tuple[PlanLeg, int, float, str]] = []  # (leg, qty filled, price, order id)
-    order_ids: list[str] = []
-    failure: Optional[tuple[PlanLeg, str]] = None
-    tol = config.execution.entry_limit_tolerance_pct
-    for leg in plan.entry_sequence():
-        # Marketable limits that do not chase on retry: an entry that does not fill is a trade
-        # not taken, which costs nothing (Bot 4's `_entry_ladder`).
-        ladder = (
-            live.exit_price_ladder(float(leg.quote.bid or 0), tol, widen=0.0)
-            if leg.is_short
-            else live.entry_price_ladder(float(leg.quote.ask or 0), tol)
-        )
-        result = live.place_and_confirm(
-            proc, user_id, _order(_leg_dict(plan, leg), action=leg.action, quantity=qty),
-            price_for_attempt=ladder,
-            timeout_seconds=config.execution.entry_fill_timeout_seconds,
-            attempts=max(1, config.execution.entry_retries),
-        )
-        if result.order_id:
-            order_ids.append(result.order_id)
-        if result.cancel_failed:
-            repo.mark_cycle_placed(
-                cycle.id, order_ids=order_ids,
-                detail={**detail, "cancel_failed": True, "filled_legs": len(placed)},
+    with order_intents.placing(cycle.id):
+        placed: list[tuple[PlanLeg, int, float, str]] = []  # (leg, qty filled, price, order id)
+        failure: Optional[tuple[PlanLeg, str]] = None
+        tol = config.execution.entry_limit_tolerance_pct
+        for leg in plan.entry_sequence():
+            # Marketable limits that do not chase on retry: an entry that does not fill is a
+            # trade not taken, which costs nothing (Bot 4's `_entry_ladder`).
+            ladder = (
+                live.exit_price_ladder(float(leg.quote.bid or 0), tol, widen=0.0)
+                if leg.is_short
+                else live.entry_price_ladder(float(leg.quote.ask or 0), tol)
             )
-            guards.disarm_bot(
-                user_id, BOT_CAS_BINGO, result.error or "An order could not be cancelled.",
-                paper=False,
+            result = live.place_and_confirm(
+                proc, user_id, _order(_leg_dict(plan, leg), action=leg.action, quantity=qty),
+                price_for_attempt=ladder,
+                timeout_seconds=config.execution.entry_fill_timeout_seconds,
+                attempts=max(1, config.execution.entry_retries),
+                journal=journal,
             )
-            alert_stuck(user_id, "an order could not be cancelled mid-entry", result.error)
-            return EntryOutcome(False, ReasonCode.ORDER_REJECTED, result.error or "Cancel failed.", cycle_id=cycle.id)
-        if result.filled_quantity > 0:
-            placed.append((leg, int(result.filled_quantity), float(result.average_price or 0.0), str(result.order_id or "")))
-        if not result.ok:
-            failure = (leg, result.error or "The leg did not fill.")
-            break
+            if result.unaccounted:
+                # Never unwound around: an order that may still fill would turn the unwind
+                # into a position built out of a guess. The row stays pending and the
+                # resolver settles it from the broker.
+                order_intents.stand_down(
+                    user_id, BOT_CAS_BINGO, cycle,
+                    result.error or "an order could not be accounted for",
+                    cancel_failed=result.cancel_failed,
+                )
+                return EntryOutcome(
+                    False, ReasonCode.ORDER_REJECTED,
+                    result.error or "An order could not be accounted for.", cycle_id=cycle.id,
+                )
+            if result.filled_quantity > 0:
+                placed.append((leg, int(result.filled_quantity), float(result.average_price or 0.0), str(result.order_id or "")))
+            if not result.ok:
+                failure = (leg, result.error or "The leg did not fill.")
+                break
 
-    if failure is not None:
-        return _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_ids, failure, charges)
+        if failure is not None:
+            return _abort_live_entry(
+                proc, user_id, config, cycle, plan, detail, placed, journal, failure, charges,
+            )
 
-    net = round(sum(p if l.is_short else -p for l, _q, p, _o in placed), 2)
-    entry_charges = round(
-        sum(
-            charges.leg_charges(p, q, is_buy=not l.is_short, exchange_code=plan.exchange_code)
+        legs = [
+            held_legs.resized({**_leg_dict(plan, l), "lot_size": plan.lot_size}, q, entry=p)
             for l, q, p, _o in placed
-        ),
-        2,
-    )
-    detail.update(
-        {
-            "net_entry_per_unit": net,
-            "entry_charges": entry_charges,
-            "entry_fills": [
-                {"right": l.right, "strike": l.strike, "action": l.action, "price": p, "quantity": q, "order_id": o}
-                for l, q, p, o in placed
-            ],
-        }
-    )
-    repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
-    # `entry_value` was unknown until the fills came back.
-    _set_entry_value(cycle.id, round(net * qty, 2))
+        ]
+        net = _record_live_entry(cycle, legs, journal.order_ids(), charges)
     text = f"Placed {plan.summary()['label'].lower()} on {market.INDEX_LABEL[plan.index_code]}, {plan.lots} lot(s), net {net * qty:+,.0f}."
     _logger.info("cas bingo [LIVE]: %s", text)
     return EntryOutcome(True, ReasonCode.ORDERS_PLACED, text, cycle_id=cycle.id)
 
 
-def _set_entry_value(cycle_id: str, value: float) -> None:
+def _record_live_entry(
+    cycle: Any, legs: list[dict[str, Any]], order_ids: list[str], charges: ChargesModel
+) -> float:
+    """A complete structure, at the prices that filled. Returns the net per unit.
+
+    Shared by the entry and by `order_intents` adopting a structure found filled after a
+    crash. `legs` carry `entry_price` (`held_legs.resized`).
+    """
     from icici_breeze_backend.app.repositories import bots as repo
 
-    with repo._connect() as conn:
-        conn.execute("UPDATE bot_cycles SET entry_value = ? WHERE id = ?", (value, cycle_id))
-        conn.commit()
+    exchange = str((legs[0] or {}).get("exchange_code") or cfg.NFO) if legs else cfg.NFO
+    quantity = int((legs[0] or {}).get("quantity") or 0) if legs else 0
+    net = round(
+        sum(
+            float(l["entry_price"]) if l.get("action") == cfg.SELL else -float(l["entry_price"])
+            for l in legs
+        ),
+        2,
+    )
+    detail = dict(cycle.detail or {})
+    detail.update(
+        {
+            "net_entry_per_unit": net,
+            "entry_charges": round(
+                sum(
+                    charges.leg_charges(
+                        float(l["entry_price"]), int(l["quantity"]),
+                        is_buy=l.get("action") != cfg.SELL, exchange_code=exchange,
+                    )
+                    for l in legs
+                ),
+                2,
+            ),
+            "entry_fills": [
+                {
+                    "right": l["right"], "strike": float(l["strike_price"]),
+                    "action": l["action"], "price": float(l["entry_price"]),
+                    "quantity": int(l["quantity"]),
+                }
+                for l in legs
+            ],
+        }
+    )
+    repo.mark_cycle_placed(
+        cycle.id, order_ids=order_ids, detail=detail,
+        entry_value=round(net * quantity, 2), legs=legs,
+    )
+    return net
 
 
-def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_ids, failure, charges) -> EntryOutcome:
+def adopt_recovered(charges: ChargesModel) -> Any:
+    """The `order_intents` adopter: a structure found fully filled after a crash."""
+
+    def adopt(cycle: Any, fills: list[Any]) -> None:
+        _record_live_entry(
+            cycle,
+            [held_legs.resized(f.leg, f.quantity, entry=f.price) for f in fills],
+            [oid for f in fills for oid in f.order_ids],
+            charges,
+        )
+
+    return adopt
+
+
+def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, journal, failure, charges) -> EntryOutcome:
     """Unwind whatever filled -- shorts first, then longs -- and close the row as abandoned."""
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.bots.scalping import guards
@@ -365,7 +413,9 @@ def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_
     ]
     unwind = held_legs.run_close(
         legs, {},
-        lambda leg, qty: _close_leg(proc, user_id, config, leg, held_legs.is_short(leg), qty, None)[0],
+        lambda leg, qty: _close_leg(
+            proc, user_id, config, leg, held_legs.is_short(leg), qty, None, journal=journal,
+        )[0],
         lambda price, qty, is_buy: charges.leg_charges(price, qty, is_buy=is_buy, exchange_code=plan.exchange_code),
     )
     entry_charges = round(
@@ -394,20 +444,20 @@ def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_
     if unwind.remaining:
         # The row stays open with exactly what is held -- never the plan, whose other legs
         # were never bought or are already closed (B-01).
-        detail["order_ids"] = list(order_ids)
+        detail["order_ids"] = journal.order_ids()
         detail["entry_charges"] = entry_charges
         held_legs.remember_exit(detail, code, text)
         held_legs.record_stuck(cycle.id, detail, unwind)
-        guards.disarm_bot(
-            user_id, BOT_CAS_BINGO, "An entry could not be unwound cleanly.", paper=False,
+        guards.switch_off(
+            user_id, BOT_CAS_BINGO, "An entry could not be unwound cleanly.",
         )
         alert_stuck(
             user_id, "an entry failed and could not be fully unwound",
-            held_legs.stuck_text(unwind.stuck), retrying=not unwind.cancel_failed,
+            held_legs.stuck_text(unwind.stuck), retrying=not unwind.halted,
         )
         return EntryOutcome(False, ReasonCode.ORDER_REJECTED, failure_text, cycle_id=cycle.id)
 
-    repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
+    repo.mark_cycle_placed(cycle.id, order_ids=journal.order_ids(), detail=detail)
     repo.close_cycle(
         cycle.id, exit_reason_code=code, exit_reason_text=text,
         gross_pnl=unwind.gross, friction=round(entry_charges + unwind.charges, 2), detail=detail,
@@ -416,7 +466,10 @@ def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_
     return EntryOutcome(False, code, text, cycle_id=cycle.id)
 
 
-def _close_leg(proc, user_id, config, leg: dict[str, Any], is_short: bool, quantity: int, quote: Optional[Quote]):
+def _close_leg(
+    proc, user_id, config, leg: dict[str, Any], is_short: bool, quantity: int,
+    quote: Optional[Quote], *, journal: Any = None,
+):
     """Buy a short back at a widening ask ladder, or sell a long down a widening bid one."""
     from icici_breeze_backend.app.services.bots.scalping import live
 
@@ -435,6 +488,7 @@ def _close_leg(proc, user_id, config, leg: dict[str, Any], is_short: bool, quant
         price_for_attempt=ladder,
         timeout_seconds=config.execution.entry_fill_timeout_seconds,
         attempts=_EXIT_ATTEMPTS,
+        journal=journal,
     )
     return result, float(result.average_price or 0.0)
 
@@ -495,7 +549,10 @@ def close_live(
         if not legs:
             held_legs.close_flat(cycle.id, detail, entry_charges=float(detail.get("entry_charges") or 0))
             _logger.warning("cas bingo [LIVE]: cycle %s -- the remaining legs were closed outside the bot", cycle.id)
-            held_legs.alert_resolved(user_id, "CAS Bingo", held_legs.closed_outside_text(), kind="cas_bingo_stuck")
+            held_legs.alert_resolved(
+                user_id, "CAS Bingo", held_legs.closed_outside_text(), kind="cas_bingo_stuck",
+                still_disarmed=held_legs.still_disarmed(detail),
+            )
             return
     if not legs:
         return
@@ -513,12 +570,12 @@ def close_live(
         held_legs.remember_exit(detail, verdict[0], verdict[1])
         written = held_legs.record_stuck(cycle.id, detail, result)
         if first:
-            guards.disarm_bot(
-                user_id, BOT_CAS_BINGO, "A position could not be fully closed.", paper=False,
+            guards.switch_off(
+                user_id, BOT_CAS_BINGO, "A position could not be fully closed.",
             )
             alert_stuck(
                 user_id, "a position could not be fully closed",
-                held_legs.stuck_text(result.stuck), retrying=not result.cancel_failed,
+                held_legs.stuck_text(result.stuck), retrying=not result.halted,
             )
         elif held_legs.halted_now(detail, written):
             alert_stuck(
@@ -545,6 +602,7 @@ def close_live(
             f"A retry closed the legs that were still open. The position is fully closed, "
             f"gross {gross:+,.0f}.",
             kind="cas_bingo_stuck",
+            still_disarmed=held_legs.still_disarmed(detail),
         )
 
 

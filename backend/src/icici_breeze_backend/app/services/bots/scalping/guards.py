@@ -21,8 +21,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.domain.bots import ReasonCode
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import (
     INDEX_STOCK_CODE,
     nearest_expiry,
@@ -149,29 +147,44 @@ def stop_breached_including_open(
     return (float(realized_net_pnl) + float(unrealized)) <= -abs(float(cumulative_stop_inr))
 
 
+def switch_off(user_id: str, bot_type: str, reason_text: str) -> bool:
+    """Switch the bot off so it opens nothing new, without telling anyone. Returns success.
+
+    Silent on purpose: every caller sends the one alert that says *why*. The stuck-position
+    paths (B-01) each send "... needs checking ... The bot has been disarmed", and used to
+    go through `disarm_bot`, which added a second message claiming the bot "hit its
+    cumulative daily loss limit" -- wrong, and the one a user would act on.
+    """
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    try:
+        repo.update_bot(user_id, bot_type, enabled=False)
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping: could not switch %s off (%s)", bot_type, reason_text)
+        return False
+    _logger.warning("scalping: %s switched off -- %s", bot_type, reason_text)
+    return True
+
+
 def disarm_bot(user_id: str, bot_type: str, reason_text: str, *, paper: bool) -> None:
-    """Switch the bot off after a daily-stop breach, so it cannot resume unattended.
+    """Switch the bot off after a daily-stop breach, and say so on Telegram.
+
+    Only for the daily stop -- its message says the loss limit was hit. Anything else that
+    stands a bot down uses `switch_off` and sends its own alert.
 
     Decided 2026-09-06: a bot that has lost its daily limit does not trade again until a
     human has looked at why. The cost is real and worth stating -- one bad day stops the bot
     for every subsequent day until it is re-enabled by hand, which is a silence that has to be
     noticed. The run log and the Telegram alert are what make it noticeable.
 
-    `paper` is required, not defaulted, on purpose: this is the one disarm alert that can
-    fire for a bot that has placed no real orders at all (a paper day can breach its own
-    simulated stop), unlike the other `disarm_bot` call sites, which only ever run after a
-    real order failed. A silent default here is exactly how a Paper-mode loss reads as real
-    money.
+    `paper` is required, not defaulted, on purpose: a paper day can breach its own simulated
+    stop, so this alert can fire for a bot that has placed no real orders at all. A silent
+    default here is exactly how a Paper-mode loss reads as real money.
     """
-    from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
 
-    try:
-        repo.update_bot(user_id, bot_type, enabled=False)
-    except Exception:  # noqa: BLE001
-        _logger.exception("scalping: could not disarm %s after its daily stop", bot_type)
+    if not switch_off(user_id, bot_type, f"daily loss limit: {reason_text}"):
         return
-    _logger.warning("scalping: %s disarmed after breaching its daily loss limit", bot_type)
     display_name = _BOT_LABEL.get(bot_type, bot_type)
     banner = (
         "\U0001f9ea *SIMULATION (Paper mode) — no real money is involved.*\n\n"
@@ -191,125 +204,13 @@ def disarm_bot(user_id: str, bot_type: str, reason_text: str, *, paper: bool) ->
         _logger.exception("scalping: could not send the daily-stop alert")
 
 
-def reconcile_pending_cycles(proc: Any, user_id: str, bot_type: str) -> int:
-    """Resolve intent rows left by a crash mid-placement. Returns how many were touched.
-
-    A pending row means an order MAY have gone out. Resolving it is a question with two
-    honest answers and no third:
-
-    * the broker shows a fill -> adopt it as a real open position, so the exit loop takes
-      over and the position is managed;
-    * the broker shows nothing filled -> abandon the row, having traded nothing.
-
-    Anything the broker cannot answer is escalated rather than guessed. Assuming "no fill"
-    would silently strand a live position with no stop behind it, which is the exact failure
-    this whole mechanism exists to prevent.
-    """
-    from icici_breeze_backend.app.repositories import bots as repo
-    from icici_breeze_backend.app.services.bots.scalping import live
-
-    pending = repo.pending_cycles(user_id, bot_type)
-    if not pending:
-        return 0
-
-    resolved = 0
-    for cycle in pending:
-        detail = dict(cycle.detail or {})
-        order_ids = [str(o) for o in (detail.get("order_ids") or []) if o]
-        if not order_ids:
-            # The row was written but no order id was ever recorded, so either the call never
-            # reached the broker or its answer was lost. The order book is the only place
-            # that knows, and it is not something to guess at.
-            _alert_orphan(user_id, bot_type, cycle, "no order id was recorded")
-            resolved += 1
-            continue
-
-        filled = 0
-        unknown = False
-        # Looked up on the exchange the legs trade on. A SENSEX (BFO) order asked about on NFO
-        # is simply not found, which would read as "nothing filled" and abandon a real fill.
-        exchange = str(((cycle.legs or [{}])[0] or {}).get("exchange_code") or cfg.NFO)
-        for order_id in order_ids:
-            state = live._rest_order_state(proc, user_id, order_id, exchange)
-            if not state:
-                unknown = True
-                continue
-            filled += int(state.get("executed") or 0)
-
-        if unknown:
-            _alert_orphan(user_id, bot_type, cycle, "the broker did not answer for its order")
-            resolved += 1
-            continue
-
-        if filled > 0:
-            # **A multi-leg structure is never adopted from a total.** Bot 3 holds one leg,
-            # so "some units filled" fully describes what is live. Bot 4's fly has four, and
-            # a sum cannot say *which* -- 75 units could be one wing, which is not a fly and
-            # is not something any exit rule in `iron_fly_bot` describes. Adopting it would
-            # hand the exit loop a structure it would then misprice and mis-sequence.
-            #
-            # So a multi-leg cycle is adopted only when every leg is accounted for; anything
-            # short of that goes to a human, which is the same fail-closed answer `unknown`
-            # already gets.
-            expected_legs = [l for l in (cycle.legs or []) if int(l.get("quantity") or 0) > 0]
-            if len(expected_legs) > 1:
-                wanted = sum(int(l.get("quantity") or 0) for l in expected_legs)
-                if filled < wanted or len(order_ids) < len(expected_legs):
-                    _alert_orphan(
-                        user_id, bot_type, cycle,
-                        f"only {filled} of {wanted} units across "
-                        f"{len(order_ids)}/{len(expected_legs)} legs can be accounted for, "
-                        f"so what is open is not the structure the bot intended",
-                    )
-                    resolved += 1
-                    continue
-            detail["pending"] = False
-            detail["reconciled"] = True
-            repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
-            _logger.warning(
-                "scalping: adopted cycle %s after a restart -- %d units are live",
-                cycle.cycle_no, filled,
-            )
-        else:
-            repo.abandon_cycle(
-                cycle.id,
-                reason_code=ReasonCode.ENTRY_UNFILLED,
-                reason_text="Interrupted before the order filled; nothing was traded.",
-            )
-        resolved += 1
-    return resolved
-
-
-def _alert_orphan(user_id: str, bot_type: str, cycle: Any, why: str) -> None:
-    """Surface a position we cannot account for, and stop guessing.
-
-    Deliberately does not close or adopt the row: an unresolved intent is a fact for a human,
-    and a bot that guesses here is a bot that either abandons a live position or invents one.
-    """
-    from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
-
-    _logger.error(
-        "scalping: cannot reconcile cycle %s for %s -- %s", cycle.id, bot_type, why
-    )
-    display_name = _BOT_LABEL.get(bot_type, bot_type)
-    try:
-        _notify(
-            user_id,
-            "\u26a0\ufe0f *Scalping bot needs checking*\n\n"
-            f"*{display_name}* was interrupted while placing an order and {why}.\n\n"
-            "Check the Order Book for an unexpected position. The bot will not open anything "
-            "new until this is resolved.",
-            kind="scalping_orphan",
-        )
-    except Exception:  # noqa: BLE001
-        _logger.exception("scalping: could not send the orphan alert")
-
-
 def has_unresolved_intent(user_id: str, bot_type: str) -> bool:
     """True while a pending row remains. Blocks new cycles.
 
-    One crash at a bad moment stops the bot for the session, which is the intended trade:
-    trading around an order you cannot account for is worse than not trading.
+    Trading around an order you cannot account for is worse than not trading. The block
+    lasts only as long as the question does: `order_intents.resolve_pending` settles a
+    pending row from the broker at startup and on every pass, so a row is left pending only
+    while the broker genuinely cannot answer (B-02).
     """
     from icici_breeze_backend.app.repositories import bots as repo
 

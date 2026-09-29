@@ -309,10 +309,14 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
 
     hhmm = now.strftime("%H:%M")
     market_open = is_market_open(now)
+    # An entry whose outcome is unknown is settled from the broker first (B-02); only then is
+    # it a position this loop may manage. `resolve_pending` skips a row whose orders are
+    # going out right now (a manual entry on a request thread) and one not yet due a re-check.
+    resolve_pending_entries(proc, user_id)
     for cycle in repo.open_cycles(user_id, BOT_CAS_BINGO):
         detail = cycle.detail or {}
         if detail.get("pending"):
-            continue  # an unreconciled intent row is startup's question, not the exit loop's
+            continue  # still unsettled: no order may be sent for it
         index_code = str(detail.get("index_code") or "NIFTY")
         expiry = market.expiry_date(str(detail.get("expiry_display") or ""))
         expired = expiry is not None and (expiry < now.date() or (expiry == now.date() and hhmm >= SETTLE_AFTER_IST))
@@ -580,10 +584,27 @@ def _loop() -> None:
         _stop.wait(_interval_seconds())
 
 
+def resolve_pending_entries(proc: Any, user_id: str, *, force: bool = False) -> int:
+    """Settle this user's CAS Bingo entries whose outcome is unknown (`order_intents`)."""
+    from icici_breeze_backend.app.services.bots.charges import load_charges
+    from icici_breeze_backend.app.services.bots.scalping import order_intents
+
+    if not repo.pending_cycles(user_id, BOT_CAS_BINGO):
+        return 0
+    charges = load_charges()
+    return order_intents.resolve_pending(
+        proc, user_id, BOT_CAS_BINGO,
+        adopt=execution.adopt_recovered(charges), charges=charges, force=force,
+    )
+
+
 def reconcile_on_startup() -> None:
-    """Resolve intent rows a crash left mid-placement before trading resumes."""
+    """Resolve intent rows a crash left mid-placement before trading resumes.
+
+    Forced past the back-off: a restart is new information, and events during it reached
+    nobody.
+    """
     try:
-        from icici_breeze_backend.app.services.bots.scalping import guards
         from icici_breeze_backend.app.services.processor import processor
 
         proc = processor()
@@ -591,7 +612,7 @@ def reconcile_on_startup() -> None:
         users = {repo.bot_owner(r.id) for r in repo.list_enabled_bots(BOT_CAS_BINGO)}
         users.update(repo.users_with_open_cycles(BOT_CAS_BINGO))
         for user_id in filter(None, users):
-            guards.reconcile_pending_cycles(proc, user_id, BOT_CAS_BINGO)
+            resolve_pending_entries(proc, user_id, force=True)
     except Exception:  # noqa: BLE001
         _logger.exception("cas bingo: startup reconciliation failed")
 

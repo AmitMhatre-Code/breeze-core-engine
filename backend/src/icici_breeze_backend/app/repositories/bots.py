@@ -908,22 +908,79 @@ def update_cycle_holdings(
 
 
 def mark_cycle_placed(
-    cycle_id: str, *, order_ids: list[str], detail: dict[str, Any]
+    cycle_id: str,
+    *,
+    order_ids: list[str],
+    detail: dict[str, Any],
+    entry_value: Optional[float] = None,
+    legs: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Resolve an intent row once the broker has answered.
 
     Clears `pending`, so the row stops being a reconciliation question and becomes an
     ordinary open cycle the exit loop will manage.
+
+    `entry_value` and `legs`, when given, land in the same write (B-52). The live row is
+    written before any order with `entry_value=NULL`; leaving it NULL once the fills are
+    known is how the daily stop read a live fly's whole buy-back cost as a loss.
     """
     merged = dict(detail or {})
     merged.pop("pending", None)
     merged["order_ids"] = list(order_ids)
+    sets = ["detail = ?", "paper = 0"]
+    args: list[Any] = [json.dumps(merged)]
+    if entry_value is not None:
+        sets.append("entry_value = ?")
+        args.append(float(entry_value))
+    if legs is not None:
+        sets.append("legs = ?")
+        args.append(json.dumps(legs))
     with _connect() as conn:
         conn.execute(
-            "UPDATE bot_cycles SET detail = ?, paper = 0 WHERE id = ?",
-            (json.dumps(merged), cycle_id),
+            f"UPDATE bot_cycles SET {', '.join(sets)} WHERE id = ?",
+            (*args, cycle_id),
         )
         conn.commit()
+
+
+def backfill_live_entry_values() -> int:
+    """Set `entry_value` on open live scalper cycles that an older build left NULL (B-52).
+
+    Derived from what that build did record: the fly's `net_credit_per_unit` and the Long
+    Scalper's `entry.price`, each times the quantity held. Rows that recorded neither are
+    left alone. Idempotent. Returns how many rows were written.
+    """
+    from icici_breeze_backend.app.db.bots_migrate import (
+        BOT_IRON_FLY_SCALPER,
+        BOT_MOMENTUM_LONG_SCALPER,
+    )
+
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM bot_cycles WHERE closed_at IS NULL AND paper = 0 "
+            "AND entry_value IS NULL AND bot_type IN (?, ?)",
+            (BOT_IRON_FLY_SCALPER, BOT_MOMENTUM_LONG_SCALPER),
+        ).fetchall()
+        written = 0
+        for row in rows:
+            cycle = _row_to_cycle(row)
+            detail = cycle.detail or {}
+            if detail.get("pending") or detail.get("unwinding") or not cycle.legs:
+                continue
+            quantity = int((cycle.legs[0] or {}).get("quantity") or 0)
+            if cycle.bot_type == BOT_IRON_FLY_SCALPER:
+                per_unit = detail.get("net_credit_per_unit")
+            else:
+                per_unit = (detail.get("entry") or {}).get("price")
+            if per_unit is None or quantity <= 0:
+                continue
+            conn.execute(
+                "UPDATE bot_cycles SET entry_value = ? WHERE id = ?",
+                (round(float(per_unit) * quantity, 2), cycle.id),
+            )
+            written += 1
+        conn.commit()
+    return written
 
 
 def abandon_cycle(cycle_id: str, *, reason_code: str, reason_text: str) -> None:

@@ -25,8 +25,10 @@ from icici_breeze_backend.app.domain.bots import (
     MomentumLongScalperConfig,
     ReasonCode,
 )
+from icici_breeze_backend.app.services.bots.scalping import held_legs
 from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
 from icici_breeze_backend.app.services.bots.scalping import live
+from icici_breeze_backend.app.services.bots.scalping import order_intents
 from icici_breeze_backend.app.services.bots.scalping import spreads as spreads_mod
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping.paper import (
@@ -524,7 +526,18 @@ def inspect_position(
     if not open_cycles:
         return None
     cycle = open_cycles[0]
+    if (cycle.detail or {}).get("pending"):
+        # An entry whose outcome is not known yet is not a position (B-02). Nothing may be
+        # sold against it until `order_intents` has settled what, if anything, filled.
+        return None
     state, moved, verdict, quote = manage_position(proc, user_id, config, cycle)
+    if not cycle.paper and held_legs.is_unwinding(cycle):
+        # What is left of an exit that did not complete. The exit was already decided; the
+        # ladder no longer describes the position, so the only verdict is "close the rest".
+        return PositionContext(
+            cycle=cycle, state=state, stop_moved=False,
+            verdict=held_legs.remainder_verdict(cycle), quote=quote,
+        )
     return PositionContext(cycle=cycle, state=state, stop_moved=moved, verdict=verdict, quote=quote)
 
 
@@ -732,85 +745,133 @@ def _execute_live(
         _logger.info("momentum bot: entry skipped -- %s: %s", code, text)
         return
 
-    # The row goes in BEFORE the order does. A crash in between then leaves a question that
-    # `guards.reconcile_pending_cycles` can answer, rather than a silent live position.
+    # The row goes in BEFORE the order does, and the journal records the order on it before
+    # it is sent and its id the moment ICICI returns one. A crash at any point then leaves a
+    # question `order_intents.resolve_pending` can answer (B-02).
     cycle = repo.open_cycle(
         user_id, bot_type, run_id,
         structure=f"long_{'ce' if plan.right == 'call' else 'pe'}",
         legs=[plan.as_leg()], lots=plan.lots, entry_value=None, paper=False,
         detail={"pending": True, "signal": signal.values,
                 "call": call_stamp(signal),
-                "intended_price": plan.quote.ask, "order_ids": []},
+                "intended_price": plan.quote.ask, "order_ids": [], "intents": []},
     )
+    journal = order_intents.Journal(cycle)
 
-    result = live.place_and_confirm(
-        proc,
-        user_id,
-        live.LegOrder(
-            stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE, right=plan.right,
-            strike_price=plan.strike_price, expiry_display=plan.expiry_display,
-            action=cfg.BUY, quantity=plan.quantity,
-        ),
-        price_for_attempt=live.entry_price_ladder(
-            float(plan.quote.ask or 0), config.execution.entry_limit_tolerance_pct
-        ),
-        timeout_seconds=config.execution.entry_fill_timeout_seconds,
-        attempts=max(1, config.execution.entry_retries),
-    )
-
-    if result.cancel_failed:
-        # Standing down rather than tidying up: an order believed dead that is not will fill
-        # into a position nothing is managing.
-        repo.mark_cycle_placed(
-            cycle.id, order_ids=[result.order_id or ""], detail={"cancel_failed": True}
-        )
-        guards.disarm_bot(
-            user_id, bot_type, result.error or "An order could not be cancelled.", paper=False,
-        )
-        return
-
-    if not result.ok and not result.partial:
-        repo.abandon_cycle(
-            cycle.id,
-            reason_code=ReasonCode.ENTRY_UNFILLED,
-            reason_text=result.error or "The entry limit did not fill.",
-        )
-        return
-
-    if result.partial:
-        # A cancelled partial is a real position, just a smaller one. Adopting it at the
-        # filled size is the only option that neither strands it nor pretends the rest
-        # exists -- and the ladder works identically on 25 units as on 75.
-        _logger.warning(
-            "momentum bot [LIVE]: partial fill %d of %d; managing the smaller position",
-            result.filled_quantity, plan.quantity,
+    with order_intents.placing(cycle.id):
+        result = live.place_and_confirm(
+            proc,
+            user_id,
+            live.LegOrder(
+                stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE, right=plan.right,
+                strike_price=plan.strike_price, expiry_display=plan.expiry_display,
+                action=cfg.BUY, quantity=plan.quantity,
+            ),
+            price_for_attempt=live.entry_price_ladder(
+                float(plan.quote.ask or 0), config.execution.entry_limit_tolerance_pct
+            ),
+            timeout_seconds=config.execution.entry_fill_timeout_seconds,
+            attempts=max(1, config.execution.entry_retries),
+            journal=journal,
         )
 
-    filled_qty = int(result.filled_quantity)
-    fill_price = float(result.average_price or plan.quote.ask or 0)
+        if result.unaccounted:
+            # An order may be live that nothing can describe. The row stays pending -- never
+            # adopted as the plan, never abandoned as nothing -- until the broker answers.
+            order_intents.stand_down(
+                user_id, bot_type, cycle,
+                result.error or "an order could not be accounted for",
+                cancel_failed=result.cancel_failed,
+            )
+            return
+
+        if not result.ok and not result.partial:
+            repo.abandon_cycle(
+                cycle.id,
+                reason_code=ReasonCode.ENTRY_UNFILLED,
+                reason_text=result.error or "The entry limit did not fill.",
+            )
+            return
+
+        if result.partial:
+            # A cancelled partial is a real position, just a smaller one. Adopting it at the
+            # filled size is the only option that neither strands it nor pretends the rest
+            # exists -- and the ladder works identically on 25 units as on 75.
+            _logger.warning(
+                "momentum bot [LIVE]: partial fill %d of %d; managing the smaller position",
+                result.filled_quantity, plan.quantity,
+            )
+
+        _record_live_entry(
+            cycle,
+            fill_price=float(result.average_price or plan.quote.ask or 0),
+            filled_qty=int(result.filled_quantity),
+            order_ids=journal.order_ids() or [result.order_id or ""],
+            config=config,
+            charges=charges,
+        )
+
+
+def _record_live_entry(
+    cycle: Any,
+    *,
+    fill_price: float,
+    filled_qty: int,
+    order_ids: list[str],
+    config: MomentumLongScalperConfig,
+    charges: ChargesModel,
+) -> None:
+    """Turn the row into an open position at what actually filled.
+
+    Shared by the entry itself and by `order_intents` adopting a fill found after a crash, so
+    a recovered position gets the same stop, entry price and `entry_value` as a normal one.
+    `entry_value` is the cost of the position: without it the daily stop read an open long as
+    a gain worth its whole market value (B-52).
+    """
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    planned = int(((cycle.legs or [{}])[0] or {}).get("quantity") or 0)
     state = ladder_mod.open_ladder(fill_price, time.time(), config.exits)
-    detail = {
+    detail = dict(cycle.detail or {})
+    detail.update({
         "ladder": state.to_detail(),
         "risk_per_stop_inr": round(fill_price - state.stop_price, 2) * filled_qty,
         "entry": {
             "price": fill_price,
             "charges": charges.breakdown(fill_price, filled_qty, is_buy=True),
         },
-        "signal": signal.values,
-        "call": call_stamp(signal),
         # The leg is rewritten to what actually filled, so the exit sells the real size
         # rather than the size that was requested.
         "filled_quantity": filled_qty,
-        "partial_fill": result.partial,
-    }
-    leg_actual = dict(plan.as_leg())
-    leg_actual["quantity"] = filled_qty
-    repo.replace_cycle_legs(cycle.id, [leg_actual])
-    repo.mark_cycle_placed(cycle.id, order_ids=[result.order_id or ""], detail=detail)
-    _logger.info(
-        "momentum bot [LIVE]: filled %d @ %.2f, stop %.2f (order %s)",
-        result.filled_quantity, fill_price, state.stop_price, result.order_id,
+        "partial_fill": 0 < filled_qty < planned,
+    })
+    leg = held_legs.resized(dict((cycle.legs or [{}])[0]), filled_qty, entry=fill_price)
+    repo.mark_cycle_placed(
+        cycle.id, order_ids=order_ids, detail=detail,
+        entry_value=round(fill_price * filled_qty, 2), legs=[leg],
     )
+    _logger.info(
+        "momentum bot [LIVE]: filled %d @ %.2f, stop %.2f (orders %s)",
+        filled_qty, fill_price, state.stop_price, ", ".join(order_ids),
+    )
+
+
+def adopt_recovered(config: MomentumLongScalperConfig, charges: ChargesModel) -> Any:
+    """The `order_intents` adopter: a fill found after a crash becomes a managed position."""
+
+    def adopt(cycle: Any, fills: list[Any]) -> None:
+        quantity = sum(f.quantity for f in fills)
+        cost = sum(f.price * f.quantity for f in fills)
+        _record_live_entry(
+            cycle,
+            fill_price=round(cost / quantity, 2) if quantity else 0.0,
+            filled_qty=quantity,
+            order_ids=[oid for f in fills for oid in f.order_ids],
+            config=config,
+            charges=charges,
+        )
+
+    return adopt
 
 
 def _close_live(
@@ -821,68 +882,129 @@ def _close_live(
     decision: Any,
     charges: ChargesModel,
 ) -> None:
-    from icici_breeze_backend.app.repositories import bots as repo
-    from icici_breeze_backend.app.services.telegram_alerts import _notify
+    """Sell what is held, and only what is held.
 
-    leg = (context.cycle.legs or [{}])[0]
-    quantity = int(leg.get("quantity") or 0)
-    if quantity <= 0 or not context.quote.bid:
+    Goes through `held_legs` like the fly's close (B-01): a partial exit leaves the remainder
+    on the row rather than the full size, and every retry is checked against the broker's
+    positions first. Before this, an exit that filled 50 of 75 -- or whose answer was lost
+    after it filled -- was re-sent at 75 on the next pass, which sold the account short.
+    """
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    cycle = context.cycle
+    detail = dict(cycle.detail or {})
+    if detail.get("pending"):
+        _logger.error("momentum bot [LIVE]: refusing to exit cycle %s -- its entry is unsettled", cycle.id)
+        return
+    legs = list(cycle.legs or [])
+    if held_legs.is_unwinding(cycle):
+        retry = held_legs.legs_to_retry(proc, user_id, cycle)
+        if retry is None:
+            return
+        detail, legs = retry.detail, retry.legs
+        if not legs:
+            held_legs.close_flat(cycle.id, detail, entry_charges=_entry_charges(detail))
+            held_legs.alert_resolved(
+                user_id, "Long scalper", held_legs.closed_outside_text(),
+                kind="scalping_exit_failed", still_disarmed=False,
+            )
+            return
+    if not legs or int((legs[0] or {}).get("quantity") or 0) <= 0:
+        _logger.warning("momentum bot [LIVE]: cycle %s has nothing to sell", cycle.id)
+        return
+    if not context.quote or not context.quote.bid:
         _logger.warning("momentum bot [LIVE]: cannot price an exit; will retry next pass")
         return
 
-    result = live.place_and_confirm(
-        proc,
-        user_id,
-        live.LegOrder(
-            stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE,
-            right=str(leg.get("right") or "call"),
-            strike_price=float(leg.get("strike_price") or 0),
-            expiry_display=str(leg.get("expiry_display") or ""),
-            action=cfg.SELL, quantity=quantity,
-        ),
-        # An exit must complete -- there is a live position with no stop behind it -- so
-        # unlike an entry it steps progressively further through the touch.
-        price_for_attempt=live.exit_price_ladder(
-            float(context.quote.bid), config.execution.exit_limit_band_pct
-        ),
-        timeout_seconds=config.execution.entry_fill_timeout_seconds,
-        attempts=3,
+    def close_leg(leg: dict[str, Any], quantity: int) -> Any:
+        return live.place_and_confirm(
+            proc,
+            user_id,
+            live.LegOrder(
+                stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE,
+                right=str(leg.get("right") or "call"),
+                strike_price=float(leg.get("strike_price") or 0),
+                expiry_display=str(leg.get("expiry_display") or ""),
+                action=cfg.SELL, quantity=quantity,
+            ),
+            # An exit must complete -- there is a live position with no stop behind it -- so
+            # unlike an entry it steps progressively further through the touch.
+            price_for_attempt=live.exit_price_ladder(
+                float(context.quote.bid), config.execution.exit_limit_band_pct
+            ),
+            timeout_seconds=config.execution.entry_fill_timeout_seconds,
+            attempts=3,
+        )
+
+    result = held_legs.run_close(
+        legs, detail, close_leg,
+        lambda price, qty, is_buy: charges.leg_charges(price, qty, is_buy=is_buy),
     )
 
-    if not result.ok:
-        # Retried and still not out. Alert and STOP trying: firing more orders into a market
-        # that keeps refusing them spends friction and achieves nothing. The position is the
-        # user's to close, and they are told so.
-        _logger.error("momentum bot [LIVE]: exit failed -- %s", result.error)
-        try:
-            _notify(
-                user_id,
-                "\U0001f6d1 *Scalping bot could not exit*\n\n"
-                f"An exit for {leg.get('right')} {int(float(leg.get('strike_price') or 0))} "
-                f"did not fill after {result.attempts} attempts.\n\n"
-                f"{result.error or ''}\n\n"
-                "*The position is still open.* Close it from the Order Book.",
-                kind="scalping_exit_failed",
+    if result.remaining:
+        # Not all of it sold. The row keeps exactly what is left, and a later pass retries
+        # only that, after the back-off and a positions check. Alert once, not every pass.
+        first = not detail.get("unwinding")
+        held_legs.remember_exit(detail, decision.reason_code, decision.reason_text)
+        written = held_legs.record_stuck(cycle.id, detail, result)
+        stuck = result.stuck[0] if result.stuck else {}
+        _logger.error(
+            "momentum bot [LIVE]: exit incomplete -- %s", stuck.get("error") or "no fill"
+        )
+        if first or held_legs.halted_now(detail, written):
+            _alert_exit_failed(
+                user_id, held_legs.stuck_text(result.stuck), stuck.get("error"),
+                retrying=first and not result.halted,
             )
-        except Exception:  # noqa: BLE001
-            _logger.exception("momentum bot: could not send the exit-failure alert")
         return
 
-    exit_price = float(result.average_price or context.quote.bid)
-    entry_price = float(((context.cycle.detail or {}).get("entry") or {}).get("price") or 0)
-    gross = round((exit_price - entry_price) * quantity, 2)
-    friction = round(
-        float(((context.cycle.detail or {}).get("entry") or {}).get("charges", {}).get("total") or 0)
-        + charges.leg_charges(exit_price, quantity, is_buy=False),
-        2,
-    )
-    detail = dict(context.cycle.detail or {})
-    detail["exit"] = {"price": exit_price, "order_id": result.order_id}
+    gross, exit_charges = held_legs.totals_after(detail, result)
+    code, text = held_legs.exit_reason(detail, decision.reason_code, decision.reason_text)
+    closed = list(detail.get("closed_legs") or []) + result.closed
+    sold_units = sum(int(c.get("quantity") or 0) for c in closed)
+    exit_value = round(sum(float(c.get("price") or 0) * int(c.get("quantity") or 0) for c in closed), 2)
+    detail["exit"] = {
+        "price": round(exit_value / sold_units, 2) if sold_units else None,
+        "order_id": (result.closed[-1] if result.closed else {}).get("order_id"),
+    }
+    friction = round(_entry_charges(detail) + exit_charges, 2)
     repo.close_cycle(
-        context.cycle.id,
-        exit_reason_code=decision.reason_code,
-        exit_reason_text=decision.reason_text,
-        exit_value=round(exit_price * quantity, 2),
+        cycle.id,
+        exit_reason_code=code,
+        exit_reason_text=text,
+        exit_value=exit_value,
         gross_pnl=gross, friction=friction, detail=detail,
     )
     _logger.info("momentum bot [LIVE]: closed -- gross %+.2f, friction %.2f", gross, friction)
+    if detail.get("unwinding"):
+        held_legs.alert_resolved(
+            user_id, "Long scalper",
+            f"A retry sold the rest of the position. It is fully closed, gross {gross:+,.0f}.",
+            kind="scalping_exit_failed", still_disarmed=False,
+        )
+
+
+def _entry_charges(detail: dict[str, Any]) -> float:
+    return float(((detail.get("entry") or {}).get("charges") or {}).get("total") or 0)
+
+
+def _alert_exit_failed(
+    user_id: str, left: str, error: Optional[str], *, retrying: bool
+) -> None:
+    from icici_breeze_backend.app.services.telegram_alerts import _notify
+
+    retry = (
+        held_legs.retry_note()
+        if retrying
+        else "The bot has stopped sending orders for it and is waiting for you."
+    )
+    try:
+        _notify(
+            user_id,
+            "\U0001f6d1 *Scalping bot could not exit*\n\n"
+            f"{left}.\n\n{error or ''}\n\n{retry}\n\n"
+            "*The position is still open.* Close it from the Order Book if you want it gone now.",
+            kind="scalping_exit_failed",
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("momentum bot: could not send the exit-failure alert")

@@ -51,6 +51,11 @@ In semi-auto, Telegram approval works like this: the bot sends the priced trade 
 - **Your ICICI login must be live.** ICICI sessions end every night. When a bot needs a session and there is none, it sends Telegram reminders and waits, up to a cut-off. It never trades on stale credentials.
 - **Read-only mode stops new trades.** If your license is not active, bots do not open positions.
 - **One order at a time.** Orders go to ICICI strictly one after another, never in parallel, so a refused order can be retried without any risk of a double fill.
+- **An order the bot cannot account for is never guessed at.** This applies to the Long Scalper, the Intraday Iron Fly and CAS Bingo. An entry can be interrupted (the app restarts mid-order, ICICI's answer is lost, or an order cannot be cancelled). When that happens, the bot checks ICICI's order book before doing anything else, and it places no order for that entry until the question is settled:
+  - If the whole entry filled, the bot manages it as normal, and Telegram says **interrupted entry recovered**.
+  - If only part of a multi-leg entry filled, it closes those legs, short legs first, and Telegram says **interrupted entry is being closed**.
+  - If nothing filled, the entry is dropped and nothing is counted as a loss.
+  - If the order book cannot answer, you get **needs checking**. The bot opens nothing new and checks again after 30 seconds, then 1, 2 and 5 minutes. If it still cannot tell, it switches itself off, says so, and keeps checking every 5 minutes.
 - **Never partly funded.** If even one lot does not fit the budget or margin, the bot skips with a logged reason rather than trading a smaller version of the idea.
 - **Limit orders, not market orders.** Entries and exits use limit prices a small band beyond the quote.
 - **Protection is armed as soon as the trade exists.** If a stop cannot be armed, the run is marked **Partial**, not failed, and the card tells you to set one by hand (see [Profit Booking / Stop Loss](portfolio.md#profit-booking--stop-loss)).

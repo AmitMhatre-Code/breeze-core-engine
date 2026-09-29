@@ -736,7 +736,7 @@ def _open_live_spread(monkeypatch):
         lambda *a, **k: Quote(4.0, 5.0, 4.5, "websocket"),
     )
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot", lambda *a, **k: None
+        "icici_breeze_backend.app.services.bots.scalping.guards.switch_off", lambda *a, **k: None
     )
     p, _ = _plan("bear_call_credit")
     _scripted_place(monkeypatch, [{"price": 10.0}, {"price": 30.0}])
@@ -810,3 +810,83 @@ def test_an_expired_remainder_settles_only_what_was_still_held(db, monkeypatch):
     closed = repo.list_cycles(USER, bot_type=BOT_CAS_BINGO)[0]
     # Banked (30-20) on q-25; then 25 short units keep their 30, and the long loses its 10.
     assert closed.gross_pnl == pytest.approx(10.0 * (q - 25) + 30.0 * 25 - 10.0 * q)
+
+
+# --------------------------------------------------------------------------------------
+# B-02: an entry whose outcome is unknown is settled from the broker, never traded as planned
+# --------------------------------------------------------------------------------------
+
+
+class _Broker:
+    def __init__(self, fills):
+        self.fills = fills
+        self.cancelled: list = []
+
+    def get_session_breeze(self, user_id):
+        return self
+
+    def get_order_detail(self, exchange_code="", order_id=""):
+        return {"Status": 200, "Success": [self.fills[order_id]]}
+
+    def cancel_order_single(self, user_id, ref):
+        self.cancelled.append(ref)
+        return {"success": True}
+
+
+def _sensex_legs():
+    base = {"stock_code": "BSESEN", "exchange_code": "BFO", "expiry_display": "10-Sep-2026",
+            "lots": 1, "lot_size": 20, "quantity": 20}
+    return [
+        {**base, "right": "call", "strike_price": 82_200.0, "action": cfg.BUY},
+        {**base, "right": "call", "strike_price": 82_000.0, "action": cfg.SELL},
+    ]
+
+
+def _pending_spread(order_ids):
+    legs = _sensex_legs()
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    intents = [
+        {**{k: l[k] for k in ("stock_code", "exchange_code", "right", "strike_price",
+                              "expiry_display", "action", "quantity")},
+         "price": 10.0, "sent_at": 0.0, "order_id": oid}
+        for l, oid in zip(legs, order_ids)
+    ]
+    return repo.open_cycle(
+        USER, BOT_CAS_BINGO, run_id, structure="bear_call_credit", legs=legs, lots=1,
+        paper=False, detail={"index_code": "SENSEX", "pending": True, "order_ids": [],
+                             "intents": intents},
+    )
+
+
+def test_a_filled_pending_spread_is_adopted_with_its_entry_value(db, monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.telegram_alerts._notify", lambda *a, **k: None
+    )
+    _pending_spread(["b1", "s1"])
+    broker = _Broker({
+        "b1": {"quantity_executed": 20, "status": "Executed", "average_price": 10.0},
+        "s1": {"quantity_executed": 20, "status": "Executed", "average_price": 30.0},
+    })
+    assert runtime.resolve_pending_entries(broker, USER, force=True) == 1
+    row = repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+    assert "pending" not in row.detail
+    assert row.detail["net_entry_per_unit"] == pytest.approx(20.0)
+    assert row.entry_value == pytest.approx(20.0 * 20)
+
+
+def test_a_resting_sensex_entry_is_cancelled_on_bfo(db, monkeypatch):
+    """B-10 inside the resolver: the cancel must reach BFO or the order keeps resting."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.telegram_alerts._notify", lambda *a, **k: None
+    )
+    _pending_spread(["b1"])
+
+    class Resting(_Broker):
+        def get_order_detail(self, exchange_code="", order_id=""):
+            status = "Cancelled" if self.cancelled else "Ordered"
+            return {"Status": 200, "Success": [{"quantity_executed": 0, "status": status}]}
+
+    broker = Resting({})
+    runtime.resolve_pending_entries(broker, USER, force=True)
+    assert broker.cancelled == ["b1|BFO"]
+    assert not repo.open_cycles(USER, BOT_CAS_BINGO)

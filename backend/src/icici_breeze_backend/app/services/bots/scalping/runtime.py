@@ -39,8 +39,10 @@ from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.scalping import (
     futures_feed,
     guards,
+    held_legs,
     iron_fly_bot,
     momentum_bot,
+    order_intents,
 )
 from icici_breeze_backend.app.services.bots.charges import load_charges
 from icici_breeze_backend.app.services.bots.scalping.decide import (
@@ -551,6 +553,10 @@ def tick_bot(
 
     proc = processor()
     handler = iron_fly_bot if bot_type == BOT_IRON_FLY_SCALPER else momentum_bot
+    # An entry whose outcome is unknown -- a crash mid-placement, or an order whose answer
+    # was lost -- is settled from the broker before anything else looks at the position
+    # (B-02). Until it is, `inspect_position` treats it as no position at all.
+    _resolve_pending_entries(proc, user_id, bot_type, config)
     context = None
     try:
         context = handler.inspect_position(proc, user_id, config, bot_type)
@@ -619,6 +625,10 @@ def _unrealized_from(context: Any) -> float:
     if context is None:
         return 0.0
     cycle = getattr(context, "cycle", None)
+    if cycle is not None and held_legs.is_unwinding(cycle):
+        # A remainder on its way out: `entry_value` describes the whole position, not what
+        # is left, and the exit is already decided.
+        return 0.0
     quantity = 0
     if cycle is not None and cycle.legs:
         quantity = int((cycle.legs[0] or {}).get("quantity") or 0)
@@ -887,12 +897,30 @@ def _loop() -> None:
         _stop.wait(_interval_seconds())
 
 
+def _resolve_pending_entries(
+    proc: Any, user_id: str, bot_type: str, config: Any, *, force: bool = False
+) -> int:
+    """Settle this bot's entries whose outcome is unknown (`order_intents`). Never raises."""
+    try:
+        if not repo.pending_cycles(user_id, bot_type):
+            return 0
+        handler = iron_fly_bot if bot_type == BOT_IRON_FLY_SCALPER else momentum_bot
+        charges = load_charges()
+        return order_intents.resolve_pending(
+            proc, user_id, bot_type,
+            adopt=handler.adopt_recovered(config, charges), charges=charges, force=force,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping[%s]: could not settle pending entries", bot_type)
+        return 0
+
+
 def reconcile_on_startup() -> None:
     """Resolve any intent rows left by a crash mid-placement, before trading resumes.
 
-    Runs once at start, ahead of the loop: an unreconciled row blocks new cycles, so
-    resolving them first is what lets a clean restart pick up where it left off instead of
-    standing down all session.
+    Runs once at start, ahead of the loop, forced past the back-off: a restart is new
+    information. Covers every bot holding an open live row, not only armed ones -- a bot
+    switched off still owns whatever its crashed entry left at the exchange.
     """
     from icici_breeze_backend.app.services.processor import processor
 
@@ -902,19 +930,36 @@ def reconcile_on_startup() -> None:
         _logger.warning("scalping: no processor at startup; skipping reconciliation")
         return
     try:
-        from icici_breeze_backend.app.services.bots.scalping import held_legs
-
         held_legs.repair_legacy_rows()
     except Exception:  # noqa: BLE001
         _logger.exception("scalping: could not repair cycles left stuck by an older build")
+    try:
+        repo.backfill_live_entry_values()
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping: could not backfill entry values left NULL by an older build")
+    pairs: set[tuple[str, str]] = set()
     for bot_type in SCALPER_BOT_TYPES:
         try:
             for record in repo.list_enabled_bots(bot_type):
                 user_id = repo.bot_owner(record.id)
                 if user_id:
-                    guards.reconcile_pending_cycles(proc, user_id, bot_type)
+                    pairs.add((user_id, bot_type))
+        except Exception:  # noqa: BLE001
+            _logger.exception("scalping: could not list enabled %s bots", bot_type)
+    try:
+        pairs.update(
+            p for p in repo.bots_with_open_live_cycles() if p[1] in SCALPER_BOT_TYPES
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping: could not list bots holding live positions")
+    for user_id, bot_type in sorted(pairs):
+        try:
+            record = repo.get_or_create_bot(user_id, bot_type)
+            config = _config_model(bot_type, record.config)
         except Exception:  # noqa: BLE001
             _logger.exception("scalping: startup reconciliation failed for %s", bot_type)
+            continue
+        _resolve_pending_entries(proc, user_id, bot_type, config, force=True)
 
 
 def _armed_summary() -> str:

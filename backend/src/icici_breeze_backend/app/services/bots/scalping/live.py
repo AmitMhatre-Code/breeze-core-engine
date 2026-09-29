@@ -45,7 +45,14 @@ _logger = logging.getLogger(__name__)
 # Terminal broker states. `executed_quantity` is what actually decides a fill; these only
 # say the order will not change again.
 _FILLED = {"executed", "complete", "completed"}
-_DEAD = {"cancelled", "canceled", "rejected", "expired"}
+# ICICI reports an order that traded partly before it died with its own two strings
+# (`cfg.PARTIAL_EXECUTED_CANCELED` / `_EXPIRED`, lower-cased here). Missing them left such an
+# order "live" until the timeout, then read the cancel of a dead order as a failed cancel
+# (B-53). Unknown statuses stay non-terminal, as `order_notifications` treats them.
+_DEAD = {
+    "cancelled", "canceled", "rejected", "expired",
+    "partially executed and cancelled", "partially executed and expired",
+}
 
 
 @dataclass
@@ -60,7 +67,17 @@ class FillResult:
     # bot down: an order you believe is dead but is not will fill later, into a position
     # nothing is managing.
     cancel_failed: bool = False
+    # True when `place_order` gave no usable answer (transport error, garbled body, no order
+    # id) AND the order book could not settle whether the order went in (B-21). Same
+    # consequence as `cancel_failed`: an order may exist that nothing is tracking, so no
+    # further order may go out for this position until `order_intents` has answered.
+    outcome_unknown: bool = False
     attempts: int = 0
+
+    @property
+    def unaccounted(self) -> bool:
+        """An order may be live that this result cannot describe."""
+        return self.cancel_failed or self.outcome_unknown
 
     @property
     def ok(self) -> bool:
@@ -216,9 +233,16 @@ def await_fill(
         sleep(poll_interval)
 
 
-def cancel(proc: Any, user_id: str, order_id: str) -> bool:
+def cancel(proc: Any, user_id: str, order_id: str, exchange_code: str = cfg.NFO) -> bool:
+    """Cancel on the exchange the order was placed on.
+
+    `cancel_order_single` assumes NFO unless the reference carries `|EXCH`, so a bare id sent
+    a SENSEX (BFO) cancel to NFO, where it cannot succeed (B-10): every CAS Bingo SENSEX
+    timeout became a "could not cancel" stand-down while the order kept resting.
+    """
+    ref = str(order_id) if str(exchange_code).upper() == cfg.NFO else f"{order_id}|{exchange_code}"
     try:
-        result = proc.cancel_order_single(user_id, str(order_id))
+        result = proc.cancel_order_single(user_id, ref)
         return bool((result or {}).get("success"))
     except Exception:  # noqa: BLE001
         _logger.warning("live: cancel raised for %s", order_id, exc_info=True)
@@ -246,6 +270,8 @@ def place_and_confirm(
     attempts: int = 2,
     now: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    journal: Any = None,
+    wall: Callable[[], float] = time.time,
 ) -> FillResult:
     """Place, wait, and on a timeout cancel and re-price -- bounded by `attempts`.
 
@@ -256,13 +282,27 @@ def place_and_confirm(
     A cancel that fails sets `cancel_failed` and stops immediately. Placing a *second* order
     while unsure whether the first is dead is how a bot ends up with twice the position it
     intended.
+
+    `journal` (an `order_intents.Journal`) records each order on the cycle row just before it
+    goes out and its id the moment ICICI returns one -- not after the fill wait -- so a crash
+    at any point leaves an answerable question (B-02).
+
+    An answer that says nothing -- a transport error, a garbled body, a 200 without an order
+    id -- is not a refusal (#24): the order may have been accepted before the answer was
+    lost. The order book is read before anything is concluded (B-21); if it cannot settle
+    the question, `outcome_unknown` is set and nothing more is placed.
     """
+    from icici_breeze_backend.app.services.bots.scalping import order_intents
+
     _tracker.ensure_registered()
     result = FillResult(requested_quantity=int(leg.quantity))
+    ours: set[str] = set()  # ids this call has already placed, never another attempt's match
 
     for attempt in range(max(1, int(attempts))):
         result.attempts = attempt + 1
         price = limit_on_tick(float(price_for_attempt(attempt)), leg.action)
+        sent_at = wall()
+        token = journal.sending(leg, price, sent_at) if journal is not None else None
         try:
             response = proc.place_order(
                 user_id,
@@ -277,18 +317,51 @@ def place_and_confirm(
                 exchange_code=leg.exchange_code,
             )
         except Exception as exc:  # noqa: BLE001
-            result.error = f"Broker call failed while placing: {exc}"
-            return result
+            response = {
+                "Status": None,
+                "Error": f"Broker call failed while placing: {exc}",
+                "outcome_unknown": True,
+            }
 
-        if not (isinstance(response, dict) and response.get("Status") == 200):
-            result.error = str((response or {}).get("Error") or "Broker rejected the order.")
-            return result
-        order_id = str((response.get("Success") or {}).get("order_id") or "")
+        order_id = ""
+        if isinstance(response, dict) and response.get("Status") == 200:
+            order_id = str((response.get("Success") or {}).get("order_id") or "")
+            if not order_id:
+                response = {
+                    **response, "Error": "Broker did not return an order id.",
+                    "outcome_unknown": True,
+                }
         if not order_id:
-            result.error = "Broker did not return an order id."
-            return result
+            error = str((response or {}).get("Error") or "Broker rejected the order.")
+            if not (isinstance(response, dict) and response.get("outcome_unknown")):
+                result.error = error  # ICICI answered, and the answer was no
+                return result
+            claimed = set(ours) | (set(journal.order_ids()) if journal is not None else set())
+            sleep(order_intents.LOCATE_SETTLE_SECONDS)
+            found = order_intents.locate_order(
+                proc, user_id, order_intents.intent_fields(leg, price, sent_at), claimed=claimed,
+            )
+            if found.state == "absent":
+                result.error = f"{error} The order book shows it was not placed."
+                return result
+            if found.state != "found":
+                result.outcome_unknown = True
+                result.error = (
+                    f"{error} The order book could not say whether it was placed "
+                    f"({found.why}), so this bot is standing down rather than trading "
+                    f"around an order it cannot account for."
+                )
+                return result
+            order_id = str(found.order_id)
+            _logger.warning(
+                "live: place_order gave no usable answer, but order %s is in the order book",
+                order_id,
+            )
 
+        ours.add(order_id)
         result.order_id = order_id
+        if journal is not None:
+            journal.placed(token, order_id)
         _tracker.watch(order_id)
         state = await_fill(
             proc, user_id, order_id, quantity=leg.quantity,
@@ -300,14 +373,25 @@ def place_and_confirm(
 
         if executed >= leg.quantity:
             result.filled_quantity = executed
-            result.average_price = state.get("price") or price
+            result.average_price = _fill_price(state, price)
             _tracker.forget(order_id)
             return result
 
         if status in _DEAD:
-            # Rejected or already cancelled: nothing rests, so a re-price is safe.
             _tracker.forget(order_id)
             result.filled_quantity = executed
+            if executed > 0:
+                # It traded partly before it died -- cancelled by someone else, or expired.
+                # Those units are a real position, so this stops exactly as a partial we
+                # cancelled ourselves does. Re-sending the full size on top of them bought
+                # more than planned on an entry and sold more than was held on an exit
+                # (B-53). The caller decides what the partial means.
+                result.average_price = _fill_price(state, price)
+                result.error = (
+                    f"Order {status} after {executed} of {leg.quantity} filled."
+                )
+                return result
+            # Rejected or cancelled with nothing traded: nothing rests, so a re-price is safe.
             if attempt + 1 >= attempts:
                 result.error = f"Order {status or 'did not fill'} after {attempt + 1} attempt(s)."
                 return result
@@ -315,9 +399,11 @@ def place_and_confirm(
 
         # Unfilled or partially filled and still live -- it must be cancelled before we
         # either try again or walk away.
-        if not cancel(proc, user_id, order_id):
+        if not cancel(proc, user_id, order_id, leg.exchange_code):
             result.cancel_failed = True
             result.filled_quantity = executed
+            if executed > 0:
+                result.average_price = _fill_price(state, price)
             result.error = (
                 f"Could not cancel order {order_id}. It may still fill, so this bot is "
                 f"standing down rather than trading around an order it cannot account for."
@@ -330,12 +416,28 @@ def place_and_confirm(
         if executed > 0:
             # A partial that we then cancelled is a real, small position. The caller has to
             # decide, and for an entry the answer is to unwind it.
+            result.average_price = _fill_price(state, price)
             return result
         if attempt + 1 >= attempts:
             result.error = "Limit did not fill; order cancelled and the cycle abandoned."
             return result
 
     return result
+
+
+def _fill_price(state: dict[str, Any], limit: float) -> float:
+    """What a fill is recorded at: the order's average price when the state carries one, else
+    the limit that was sent.
+
+    Every branch that reports filled units must set this. A partial used to return with no
+    price, and callers defaulted it to 0, so a partly filled close was booked at ₹0 (B-54).
+    The limit is still only an approximation until fill prices come from the broker (B-22).
+    """
+    try:
+        average = float(state.get("price") or 0)
+    except (TypeError, ValueError):
+        average = 0.0
+    return average if average > 0 else float(limit)
 
 
 _TICK = 0.05

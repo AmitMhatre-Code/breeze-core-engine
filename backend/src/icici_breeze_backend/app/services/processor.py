@@ -3239,6 +3239,11 @@ class processor():
                 )
             else:
                 response = _icici_error(f"Error calling ICICI Breeze API place_order: {e}")
+            # The request may have reached ICICI and been accepted before the answer was
+            # lost, so this is NOT a refusal (#24: transport errors carry no refusal
+            # guarantee). Callers that act on "not placed" must check the order book first
+            # (B-21, `bots/scalping/order_intents.locate_order`).
+            response["outcome_unknown"] = True
 
         api_st = (response or {}).get("Status")
         if api_st != 200 and not place_order_sdk_exception:

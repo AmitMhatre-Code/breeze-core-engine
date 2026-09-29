@@ -109,7 +109,8 @@ class Dispatcher:
         self._outcomes = list(outcomes or [])
         self._n = 0
 
-    def __call__(self, proc, user_id, leg, *, price_for_attempt, timeout_seconds, attempts=2):
+    def __call__(self, proc, user_id, leg, *, price_for_attempt, timeout_seconds, attempts=2,
+                 journal=None, **_kw):
         self.calls.append((leg.action, leg.right, leg.strike_price, leg.quantity))
         spec = self._outcomes[self._n] if self._n < len(self._outcomes) else {}
         self._n += 1
@@ -122,6 +123,7 @@ class Dispatcher:
             average_price=spec.get("price", 100.0),
             error=spec.get("error") if filled < qty else None,
             cancel_failed=spec.get("cancel_failed", False),
+            outcome_unknown=spec.get("outcome_unknown", False),
         )
 
     @property
@@ -241,33 +243,69 @@ def test_a_partial_fill_is_unwound_not_adopted(env, monkeypatch):
     assert buybacks and buybacks[0][3] == 50
 
 
-def test_a_cancel_failure_unwinds_nothing_and_stands_the_bot_down(env, monkeypatch):
-    """The one failure that must NOT unwind.
+def _alerts(monkeypatch):
+    sent: list = []
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.telegram_alerts._notify",
+        lambda user_id, text, *, kind: sent.append((kind, text)),
+    )
+    return sent
 
-    An order believed dead but still live will fill later. Unwinding around it would build a
-    position out of a guess, so everything freezes and a human is told.
+
+@pytest.mark.parametrize("unaccounted", [
+    {"cancel_failed": True, "error": "cancel failed"},
+    {"outcome_unknown": True, "error": "answer lost"},  # B-21
+])
+def test_an_unaccounted_order_unwinds_nothing_and_leaves_the_row_pending(
+    env, monkeypatch, unaccounted,
+):
+    """The one failure that must NOT unwind (B-02).
+
+    An order that may still fill -- one that could not be cancelled, or whose answer was lost
+    -- would turn an unwind into a position built out of a guess. The row stays PENDING, so
+    no exit can trade the planned legs, and the resolver settles it from the broker. The bot
+    is not switched off yet: that happens only if the broker still cannot answer after the
+    retry budget.
     """
     disarmed: list = []
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why, **kw: disarmed.append(why),
+        "icici_breeze_backend.app.services.bots.scalping.guards.switch_off",
+        lambda uid, bt, why: disarmed.append(why),
     )
-    d, cycles = _enter(env, monkeypatch, outcomes=[
-        {}, {},
-        {"filled": 0, "cancel_failed": True, "error": "cancel failed"},
-    ])
+    sent = _alerts(monkeypatch)
+    d, cycles = _enter(env, monkeypatch, outcomes=[{}, {}, {"filled": 0, **unaccounted}])
     assert len(d.calls) == 3, "no unwind orders may be sent"
-    assert disarmed, "the bot must be disarmed"
-    assert cycles[0].is_open, "the row stays open -- the position is unaccounted for"
-    assert cycles[0].detail["cancel_failed"] is True
+    assert disarmed == []
+    row = cycles[0]
+    assert row.is_open and row.detail["pending"] is True
+    assert unaccounted["error"] in row.detail["resolve_problem"]
+    assert row.detail.get("cancel_failed", False) is unaccounted.get("cancel_failed", False)
+    assert [k for k, _ in sent] == ["scalping_orphan"]
+    # And the exit path cannot see it as a fly.
+    assert fly.inspect_position(env, USER, IronFlyScalperConfig(mode="live"), BOT) is None
+
+
+def test_a_complete_live_fly_records_its_entry_value(env, monkeypatch):
+    """B-52: the daily stop reads `entry_value`. NULL made a live fly's whole buy-back cost
+    read as a loss, so the bot stood down on its first pass."""
+    _, cycles = _enter(env, monkeypatch, outcomes=[
+        {"price": 10.0}, {"price": 12.0}, {"price": 100.0}, {"price": 105.0},
+    ])
+    row = cycles[0]
+    q = int(row.legs[0]["quantity"])
+    assert row.entry_value == pytest.approx(183.0 * q)
+    # Marked at a close cost of 152/unit, the stop sees the real +31/unit, not -152.
+    from icici_breeze_backend.app.services.bots.scalping import guards
+
+    assert guards.unrealized_pnl(row, 152.0 * q) == pytest.approx(31.0 * q)
 
 
 def test_an_unwind_that_sticks_leaves_the_cycle_open_and_disarms(env, monkeypatch):
     """The worst reachable state, and it must never be tidied away as flat."""
     disarmed: list = []
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why, **kw: disarmed.append(why),
+        "icici_breeze_backend.app.services.bots.scalping.guards.switch_off",
+        lambda uid, bt, why: disarmed.append(why),
     )
     d, cycles = _enter(env, monkeypatch, outcomes=[
         {}, {},                                    # wings on
@@ -312,8 +350,8 @@ def test_an_exit_leg_that_will_not_fill_keeps_the_cycle_open(env, monkeypatch):
     """A position that is still partly on is not closed. The exit loop retries next pass."""
     disarmed: list = []
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
-        lambda uid, bt, why, **kw: disarmed.append(why),
+        "icici_breeze_backend.app.services.bots.scalping.guards.switch_off",
+        lambda uid, bt, why: disarmed.append(why),
     )
     cycle, context = _open_position(env, monkeypatch)
     _dispatch(monkeypatch, outcomes=[{}, {"filled": 0, "error": "no fill"}, {}, {}])
@@ -400,7 +438,7 @@ class _Remainder:
 
 def _no_disarm(monkeypatch):
     monkeypatch.setattr(
-        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
+        "icici_breeze_backend.app.services.bots.scalping.guards.switch_off",
         lambda *a, **k: None,
     )
 
@@ -658,3 +696,19 @@ def test_giving_up_is_announced_on_telegram(env, monkeypatch):
     assert len(sent) == 2
     assert "still could not be closed" in sent[1]
     assert "will try" not in sent[1], "no retry promise once the bot has stopped sending orders"
+
+
+def test_a_stuck_close_switches_the_bot_off_with_one_accurate_message(env, monkeypatch):
+    """The switch-off itself is real here, not stubbed. It used to go through `disarm_bot`,
+    whose second message told the user the fly "hit its cumulative daily loss limit"."""
+    sent = _telegram(monkeypatch)
+    repo.get_or_create_bot(USER, BOT)
+    repo.update_bot(USER, BOT, enabled=True)
+    _, context = _open_position(env, monkeypatch)
+    _dispatch(monkeypatch, outcomes=[
+        {"price": 40.0}, {"filled": 0, "error": "no fill"}, {"price": 5.0}, {"price": 5.0},
+    ])
+    fly._close_live(env, USER, IronFlyScalperConfig(mode="live"), context, _Decision(), CHARGES)
+    assert repo.get_or_create_bot(USER, BOT).enabled is False
+    assert len(sent) == 1 and "needs checking" in sent[0]
+    assert not any("daily loss limit" in text for text in sent)
