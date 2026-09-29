@@ -1,16 +1,21 @@
 """Daily IST scheduler for reference data loads."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import threading
+import time
 
-from icici_breeze_backend.app.core.timezone import now_ist
+from icici_breeze_backend.app.core.timezone import IST, now_ist
 from icici_breeze_backend.app.services.reference_data.state import load_schedule, save_schedule
 
 _logger = logging.getLogger(__name__)
 _thread: threading.Thread | None = None
 _stop = threading.Event()
 _last_run_date: str | None = None
+# Monotonic time of the last late-publish bhavcopy retry (see `_bhavcopy_retry_due`).
+_last_bhavcopy_retry: float | None = None
+_BHAVCOPY_RETRY_SECONDS = 30 * 60
 
 
 def configure_reference_data_schedule(enabled: bool, hour_ist: int, minute_ist: int) -> dict:
@@ -51,7 +56,42 @@ def _scheduler_loop() -> None:
                 )
 
                 run_reference_data_load(force=True, trigger_mode="scheduled")
+            elif _bhavcopy_retry_due(now, sch):
+                _retry_stale_bhavcopy()
         _stop.wait(30)
+
+
+def _bhavcopy_retry_due(now: dt.datetime, sch: dict) -> bool:
+    """A segment still holds an older session's bhavcopy, and the scheduled load for the latest
+    concluded session has already had its turn. Runs through the evening and overnight until
+    the file lands; never in market hours, when parsing it in-process would compete with the
+    tick feed (design-decisions #46) and the websocket is the source anyway."""
+    from icici_breeze_backend.app.services.market_calendar import is_market_open
+    from icici_breeze_backend.app.services.quote_source_router import latest_concluded_trading_day
+    from icici_breeze_backend.app.services.reference_data.orchestrator import stale_bhavcopy_segments
+
+    if _last_bhavcopy_retry is not None and time.monotonic() - _last_bhavcopy_retry < _BHAVCOPY_RETRY_SECONDS:
+        return False
+    if is_market_open(now):
+        return False
+    concluded = latest_concluded_trading_day(now)
+    scheduled_at = dt.datetime.combine(
+        concluded, dt.time(int(sch["hour_ist"]), int(sch["minute_ist"])), tzinfo=IST
+    )
+    if now < scheduled_at:
+        return False
+    return bool(stale_bhavcopy_segments(now))
+
+
+def _retry_stale_bhavcopy() -> None:
+    global _last_bhavcopy_retry
+    from icici_breeze_backend.app.services.reference_data.orchestrator import retry_stale_bhavcopy
+
+    _last_bhavcopy_retry = time.monotonic()
+    try:
+        retry_stale_bhavcopy()
+    except Exception:
+        _logger.exception("Late-publish bhavcopy retry failed")
 
 
 def start_reference_data_scheduler() -> None:

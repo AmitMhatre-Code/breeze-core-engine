@@ -23,6 +23,8 @@ Breeze Modern keeps its own copies of the exchanges' daily files so it can show 
 | **Save schedule** | Saves the time and switch. **Unsaved schedule changes** reminds you if you have not. |
 | **Load now** | Loads everything immediately. Progress bars appear under **Active load**. |
 
+If an exchange has not yet published the day's bhavcopy when the daily load runs, the app keeps the previous session's file and tries again every 30 minutes, through the evening and overnight, until the new file appears. It never retries during market hours. A successful retry appears in the load history like any other load.
+
 SPAN files follow the exchanges' own intraday releases instead, loading automatically at **09:15, 11:15, 12:45, 14:15, 15:45, 18:00 and 21:45 IST**, and picking up the next trading day's file as soon as it is published.
 
 ### Use SPAN files for margin calculation

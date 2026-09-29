@@ -1,6 +1,7 @@
 """Unified reference data batch loader."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import threading
 import uuid
@@ -20,6 +21,10 @@ from icici_breeze_backend.app.services.reference_data.state import (
 _logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _refresh_thread: threading.Thread | None = None
+# Held for the whole of a full load or a late-publish retry, so the two never interleave their
+# bhavcopy publishes. In-process on purpose: the persisted `refresh_in_progress` flag survives a
+# process killed mid-load and would then block the retry for good.
+_load_mutex = threading.Lock()
 
 _SOURCE_LABELS = {
     "nse_fo": ("nse_fo_bhavcopy", "NSE FO BhavCopy"),
@@ -79,6 +84,11 @@ def _record_ingest(source: str, *, ok: bool, source_date: str | None, row_count:
 
 
 def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual") -> dict[str, Any]:
+    with _load_mutex:
+        return _run_reference_data_load(force=force, trigger_mode=trigger_mode)
+
+
+def _run_reference_data_load(*, force: bool, trigger_mode: str) -> dict[str, Any]:
     _logger.info("Reference data load started (mode=%s force=%s)", trigger_mode, force)
     _merge_state(
         {
@@ -214,6 +224,73 @@ def run_reference_data_load(*, force: bool = False, trigger_mode: str = "manual"
         _logger.exception("Reference data load failed")
         _merge_state({"refresh_in_progress": False, "last_refresh_message": f"Load failed: {exc}"})
         return {"ok": False, "message": str(exc)}
+
+
+def stale_bhavcopy_segments(now: dt.datetime | None = None) -> list[str]:
+    """Options exchanges whose loaded bhavcopy predates the latest concluded session."""
+    from icici_breeze_backend.app.services.quote_source_router import bhavcopy_is_fresh
+
+    return [ex for ex in (cfg.NFO, cfg.BFO) if not bhavcopy_is_fresh(ex, now)]
+
+
+def retry_stale_bhavcopy(now: dt.datetime | None = None) -> dict[str, str]:
+    """Fetch the latest concluded session's bhavcopy for each segment still holding an older one.
+
+    The daily load runs once, and `fetch_latest_*` quietly falls back to the previous session's
+    file when the exchange has not published yet -- which then stood for another whole day
+    (2026-09-29: Friday's closes all Tuesday). Only the missing day's file is asked for, so an
+    attempt before it is published costs one 404 rather than re-publishing the old file.
+
+    Published into the live generation, like a standalone SPAN refresh: a new version would
+    purge the scrip index, the other segment and SPAN, none of which this rewrites."""
+    if not _load_mutex.acquire(blocking=False):
+        return {}
+    try:
+        return _retry_stale_bhavcopy(now)
+    finally:
+        _load_mutex.release()
+
+
+def _retry_stale_bhavcopy(now: dt.datetime | None) -> dict[str, str]:
+    from icici_breeze_backend.app.services.quote_source_router import latest_concluded_trading_day
+
+    target = latest_concluded_trading_day(now)
+    segments = (
+        ("nse_fo", "nfo", cfg.NFO, bhavcopy_nse.fetch_nse_fo_bhavcopy_for_date),
+        ("bse_fo", "bfo", cfg.BFO, bhavcopy_bse.fetch_bse_fo_bhavcopy_for_date),
+    )
+    stale = set(stale_bhavcopy_segments(now))
+    out: dict[str, str] = {}
+    for source, seg, exchange_code, fetch_for_date in segments:
+        if exchange_code not in stale:
+            continue
+        fetched = fetch_for_date(target)
+        if not fetched:
+            _logger.info("Bhavcopy %s for %s not published yet; will retry", seg, target.isoformat())
+            out[seg] = "not_published"
+            continue
+        rows, url = fetched
+        live = scrip_index.current_version()
+        bhavcopy_store.publish_bhavcopy_rows(
+            rows,
+            segment=seg,
+            source_date=target,
+            source_url=url,
+            version=live if live > 0 else None,
+        )
+        _set_source(
+            source,
+            in_progress=False,
+            progress_pct=100,
+            message=f"Loaded {len(rows)} rows from {target.isoformat()} (late-publish retry)",
+        )
+        _record_ingest(
+            source, ok=True, source_date=target.isoformat(), row_count=len(rows), url=url,
+            notes="late_publish_retry",
+        )
+        _logger.info("Bhavcopy %s for %s loaded on retry (%s rows)", seg, target.isoformat(), len(rows))
+        out[seg] = "loaded"
+    return out
 
 
 def trigger_reference_data_load_now(*, force: bool = False, trigger_mode: str = "manual") -> dict[str, Any]:
