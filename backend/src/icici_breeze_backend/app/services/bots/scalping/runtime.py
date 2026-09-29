@@ -901,6 +901,12 @@ def reconcile_on_startup() -> None:
     except Exception:  # noqa: BLE001
         _logger.warning("scalping: no processor at startup; skipping reconciliation")
         return
+    try:
+        from icici_breeze_backend.app.services.bots.scalping import held_legs
+
+        held_legs.repair_legacy_rows()
+    except Exception:  # noqa: BLE001
+        _logger.exception("scalping: could not repair cycles left stuck by an older build")
     for bot_type in SCALPER_BOT_TYPES:
         try:
             for record in repo.list_enabled_bots(bot_type):

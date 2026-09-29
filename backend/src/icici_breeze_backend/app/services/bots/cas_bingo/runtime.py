@@ -27,6 +27,7 @@ from icici_breeze_backend.app.domain.bots import CasBingoConfig, ReasonCode
 from icici_breeze_backend.app.repositories import bots as repo
 from icici_breeze_backend.app.services.bots.cas_bingo import execution, market, triggers
 from icici_breeze_backend.app.services.bots.cas_bingo.plan import build_plan, structure_for
+from icici_breeze_backend.app.services.bots.scalping import held_legs
 
 _logger = logging.getLogger(__name__)
 
@@ -323,6 +324,15 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
                 continue
             if not market_open:
                 continue
+            if not cycle.paper and held_legs.is_unwinding(cycle):
+                # What is left of a close that stuck. The exit was already decided; the
+                # structure's own target/stop no longer describe it (B-01). `close_live`
+                # owns the back-off and the broker check.
+                execution.close_live(
+                    proc, user_id, config, cycle, {}, held_legs.remainder_verdict(cycle),
+                    load_charges(),
+                )
+                continue
             quotes = execution.leg_quotes(proc, user_id, cycle)
             verdict = execution.evaluate_exit(
                 config, cycle, execution.close_value_per_unit(cycle.legs or [], quotes)
@@ -577,6 +587,7 @@ def reconcile_on_startup() -> None:
         from icici_breeze_backend.app.services.processor import processor
 
         proc = processor()
+        held_legs.repair_legacy_rows()
         users = {repo.bot_owner(r.id) for r in repo.list_enabled_bots(BOT_CAS_BINGO)}
         users.update(repo.users_with_open_cycles(BOT_CAS_BINGO))
         for user_id in filter(None, users):

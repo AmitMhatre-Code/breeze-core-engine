@@ -132,6 +132,13 @@ class ReasonCode:
     DRIFT_STOP = "drift_stop"
     CREDIT_DECAY_TARGET = "credit_decay_target"
     SQUARE_OFF = "square_off"
+    # A close (or an entry unwind) left legs open. The exit is already decided, so every pass
+    # is a retry of closing what is still held -- never a fresh verdict on a structure that no
+    # longer exists (B-01, `scalping/held_legs.py`).
+    CLOSING_REMAINDER = "closing_remainder"
+    # The broker shows nothing left of the legs the bot was still trying to close: the user
+    # closed them by hand. P&L covers only what the bot itself closed.
+    CLOSED_OUTSIDE_BOT = "closed_outside_bot"
 
     # CAS Bingo (docs/bots-cas-bingo-plan.md). `signal_not_ready` is the readiness gate on an
     # Autonomous spread entry -- distinct from SIGNAL_NO_TRADE, which means the signal is

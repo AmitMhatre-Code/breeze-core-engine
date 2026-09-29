@@ -896,3 +896,19 @@ The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short 
 **Why.** Feeds fail one at a time (#50, #51), and the router answers a mid-session miss with snapshot, bhavcopy or REST prices without saying so. The scalpers already refused those. The writers and CAS Bingo still priced off them, so the "bots paused" alert was not true for every bot until now.
 
 **Risk this accepts.** #50 left open whether index option quotes keep streaming through the 15:15–15:30 closing auction. If they do not, CAS Bingo now pauses for the whole auction window instead of trading on stand-ins. That is the safe way to fail. The `_probe_auction_quotes` logs on an expiry day settle it.
+
+## 53. A live multi-leg cycle's legs are what it holds now, and a close that sticks is retried only against the broker's positions
+
+**Decision** (2026-09-29, bug audit B-01). For Iron Fly and CAS Bingo, `bot_cycles.legs` is rewritten every time the broker answers a close or an entry unwind (`scalping/held_legs.py`). It is never the plan. The rules:
+
+- **Size comes from `filled_quantity`.** A close that filled 50 of 75 leaves 25. `FillResult.ok` only means a complete fill.
+- **A long is not sold while the short it covers is open.** Shorts close first. If a short sticks, the long of the same right is held back with it.
+- **Legs and detail are written together** (`repo.update_cycle_holdings`). The detail gets `unwinding`, the P&L banked so far (`realized_gross`, `realized_charges`, `closed_legs`) and the exit that started the close (`exit_decision`).
+- **An unwinding cycle is not judged again.** Iron Fly's `inspect_position` and CAS Bingo's exit loop skip target, stop and drift and return `closing_remainder`. The final booking uses the saved `exit_decision`. P&L is per leg against each leg's entry price, which equals the old whole-structure formula when everything closes in one pass.
+- **Every retry checks the broker first** (`legs_to_retry`). It waits for the back-off (30, 60, 120, 300 s), reads `positions_for_underlying`, and cuts each leg to what the broker still holds on that side. It never grows a leg. An unreadable positions call sends nothing. An empty book closes the cycle as `closed_outside_bot`.
+- **Retries are bounded.** After four, or at once if a cancel failed (an order that may still fill), the bot stops sending orders. It keeps reading positions every 5 minutes and closes the row once the user has flattened the legs. The Telegram alert says which of these applies.
+- Rows stuck by older code are rebuilt at startup from `exit_partial.stuck` / `stuck_legs` (`repair_legacy_rows`), and then go through the same broker check.
+
+**Why.** Before this, a stuck close left the planned legs on the row. The next exit (square-off, stale feed, window end) closed all of them again. It bought back shorts already bought back and sold wings already sold or never bought, which opened new naked shorts. An aborted entry kept every planned leg, including ones that never filled. The broker check is what makes a retry safe. The alert tells the user to go to the Order Book, and a leg they close there must not be closed a second time.
+
+**What it does not cover.** Units the user closed by hand get no P&L on the cycle, because the bot never saw their price. Legacy rebuilt rows have no entry price for an aborted entry's legs, so their P&L counts entry as 0. B-02 (a crashed entry's `pending` row reaching `_close_live`) is a separate fix.

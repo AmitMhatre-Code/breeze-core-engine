@@ -12,8 +12,11 @@ The live rules, each borrowed from Bot 4 for the reason Bot 4 gives:
 * **Buys first; a sell that fails unwinds the buy.** The user confirmed the unwind (not "keep
   the long and alert"). A partial on any leg counts as a failure: a spread with 75 units bought
   and 50 sold is not the structure any exit rule here describes.
-* **A failed unwind or exit is never retried silently.** The row stays open, the bot is
-  disarmed, and the user is told exactly which legs are live.
+* **A failed unwind or exit is never retried silently.** The row stays open with its legs
+  rewritten to what is actually still held (B-01, `scalping/held_legs.py`), the bot is
+  disarmed, and the user is told exactly which legs are live and that the close will be
+  retried a bounded number of times -- each retry checked against the broker's positions
+  first, so a leg the user closed by hand is never closed twice.
 
 An open position is managed the way it was OPENED (`cycle.paper`), never by the bot's current
 mode -- a real spread must not be "closed" at simulated prices because the user flipped the
@@ -32,6 +35,7 @@ from icici_breeze_backend.app.services.bots.cas_bingo import liquidation as liq
 from icici_breeze_backend.app.services.bots.cas_bingo import market
 from icici_breeze_backend.app.services.bots.cas_bingo.plan import Plan, PlanLeg
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
+from icici_breeze_backend.app.services.bots.scalping import held_legs
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import Quote
 from icici_breeze_backend.app.services.bots.scalping.paper import simulate_buy, simulate_sell
 
@@ -355,48 +359,58 @@ def _abort_live_entry(proc, user_id, config, cycle, plan, detail, placed, order_
     from icici_breeze_backend.app.services.bots.scalping import guards
 
     failed_leg, failure_text = failure
-    unwound, stuck, realized, unwind_charges = [], [], 0.0, 0.0
-    for leg, q, price, _oid in sorted(placed, key=lambda f: not f[0].is_short):
-        result, fill_price = _close_leg(proc, user_id, config, _leg_dict(plan, leg), leg.is_short, q, None)
-        if result.ok:
-            unwound.append(leg)
-            # A short bought back costs; a long sold returns.
-            realized += (price - fill_price) * q if leg.is_short else (fill_price - price) * q
-            unwind_charges += charges.leg_charges(price, q, is_buy=not leg.is_short, exchange_code=plan.exchange_code)
-            unwind_charges += charges.leg_charges(fill_price, q, is_buy=leg.is_short, exchange_code=plan.exchange_code)
-        else:
-            stuck.append((leg, q))
+    legs = [
+        held_legs.resized({**_leg_dict(plan, leg), "lot_size": plan.lot_size}, q, entry=price)
+        for leg, q, price, _oid in placed
+    ]
+    unwind = held_legs.run_close(
+        legs, {},
+        lambda leg, qty: _close_leg(proc, user_id, config, leg, held_legs.is_short(leg), qty, None)[0],
+        lambda price, qty, is_buy: charges.leg_charges(price, qty, is_buy=is_buy, exchange_code=plan.exchange_code),
+    )
+    entry_charges = round(
+        sum(
+            charges.leg_charges(price, q, is_buy=not leg.is_short, exchange_code=plan.exchange_code)
+            for leg, q, price, _oid in placed
+        ),
+        2,
+    )
 
     detail = {
         **detail,
         "aborted": True,
         "failed_leg": {"right": failed_leg.right, "strike": failed_leg.strike, "action": failed_leg.action},
         "failure": failure_text,
-        "unwound_legs": len(unwound),
-        "stuck_legs": [{"right": l.right, "strike": l.strike, "quantity": q} for l, q in stuck],
+        "unwound_legs": len(unwind.closed),
+        "stuck_legs": unwind.stuck,
     }
-    if stuck:
-        repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
+    code = ReasonCode.ENTRY_PARTIAL_UNWOUND if placed else ReasonCode.ENTRY_UNFILLED
+    text = (
+        f"The {int(failed_leg.strike)} {failed_leg.right} {failed_leg.action.lower()} did not fill "
+        f"({failure_text}); the {len(unwind.closed)} leg(s) that had filled were unwound."
+        if placed
+        else f"The first leg did not fill ({failure_text}); nothing was traded."
+    )
+    if unwind.remaining:
+        # The row stays open with exactly what is held -- never the plan, whose other legs
+        # were never bought or are already closed (B-01).
+        detail["order_ids"] = list(order_ids)
+        detail["entry_charges"] = entry_charges
+        held_legs.remember_exit(detail, code, text)
+        held_legs.record_stuck(cycle.id, detail, unwind)
         guards.disarm_bot(
             user_id, BOT_CAS_BINGO, "An entry could not be unwound cleanly.", paper=False,
         )
         alert_stuck(
             user_id, "an entry failed and could not be fully unwound",
-            "; ".join(f"{l.right} {int(l.strike)} x{q} still open" for l, q in stuck),
+            held_legs.stuck_text(unwind.stuck), retrying=not unwind.cancel_failed,
         )
         return EntryOutcome(False, ReasonCode.ORDER_REJECTED, failure_text, cycle_id=cycle.id)
 
-    code = ReasonCode.ENTRY_PARTIAL_UNWOUND if placed else ReasonCode.ENTRY_UNFILLED
-    text = (
-        f"The {int(failed_leg.strike)} {failed_leg.right} {failed_leg.action.lower()} did not fill "
-        f"({failure_text}); the {len(unwound)} leg(s) that had filled were unwound."
-        if placed
-        else f"The first leg did not fill ({failure_text}); nothing was traded."
-    )
     repo.mark_cycle_placed(cycle.id, order_ids=order_ids, detail=detail)
     repo.close_cycle(
         cycle.id, exit_reason_code=code, exit_reason_text=text,
-        gross_pnl=round(realized, 2), friction=round(unwind_charges, 2), detail=detail,
+        gross_pnl=unwind.gross, friction=round(entry_charges + unwind.charges, 2), detail=detail,
     )
     _logger.warning("cas bingo [LIVE]: %s", text)
     return EntryOutcome(False, code, text, cycle_id=cycle.id)
@@ -464,52 +478,74 @@ def close_live(
     quotes: dict[tuple[str, float], Quote], verdict: tuple[str, str], charges: ChargesModel,
 ) -> None:
     """Shorts bought back first, then longs sold -- selling the hedge first would leave a naked
-    short for the life of one order."""
+    short for the life of one order.
+
+    Only ever closes `cycle.legs`, which is what is held now -- after a pass that stuck, that
+    is the remainder, not the structure (B-01)."""
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.app.services.bots.scalping import guards
 
-    legs = cycle.legs or []
     detail = dict(cycle.detail or {})
+    legs = list(cycle.legs or [])
+    if held_legs.is_unwinding(cycle):
+        retry = held_legs.legs_to_retry(proc, user_id, cycle)
+        if retry is None:
+            return
+        detail, legs = retry.detail, retry.legs
+        if not legs:
+            held_legs.close_flat(cycle.id, detail, entry_charges=float(detail.get("entry_charges") or 0))
+            _logger.warning("cas bingo [LIVE]: cycle %s -- the remaining legs were closed outside the bot", cycle.id)
+            held_legs.alert_resolved(user_id, "CAS Bingo", held_legs.closed_outside_text(), kind="cas_bingo_stuck")
+            return
+    if not legs:
+        return
     exchange = str((legs[0] or {}).get("exchange_code") or cfg.NFO)
-    closed, stuck = [], []
-    close_value = 0.0
-    exit_charges = 0.0
-    for leg in sorted(legs, key=lambda l: l.get("action") != cfg.SELL):
-        qty = int(leg.get("quantity") or 0)
-        if qty <= 0:
-            continue
-        is_short = leg.get("action") == cfg.SELL
-        result, price = _close_leg(proc, user_id, config, leg, is_short, qty, quotes.get(_key(leg)))
-        if not result.ok:
-            stuck.append({"right": leg.get("right"), "strike": leg.get("strike_price"), "quantity": qty, "error": result.error})
-            continue
-        close_value += -price if is_short else price
-        exit_charges += charges.leg_charges(price, qty, is_buy=is_short, exchange_code=exchange)
-        closed.append({"right": leg.get("right"), "strike": leg.get("strike_price"), "price": price, "order_id": result.order_id})
+    result = held_legs.run_close(
+        legs, detail,
+        lambda leg, qty: _close_leg(
+            proc, user_id, config, leg, held_legs.is_short(leg), qty, quotes.get(_key(leg))
+        )[0],
+        lambda price, qty, is_buy: charges.leg_charges(price, qty, is_buy=is_buy, exchange_code=exchange),
+    )
 
-    if stuck:
-        detail["exit_partial"] = {"closed": closed, "stuck": stuck}
-        repo.update_cycle_detail(cycle.id, detail)
-        guards.disarm_bot(
-            user_id, BOT_CAS_BINGO, "A position could not be fully closed.", paper=False,
-        )
-        alert_stuck(
-            user_id, "a position could not be fully closed",
-            "; ".join(f"{s['right']} {int(float(s['strike']))} x{s['quantity']}" for s in stuck),
-        )
+    if result.remaining:
+        first = not detail.get("unwinding")
+        held_legs.remember_exit(detail, verdict[0], verdict[1])
+        written = held_legs.record_stuck(cycle.id, detail, result)
+        if first:
+            guards.disarm_bot(
+                user_id, BOT_CAS_BINGO, "A position could not be fully closed.", paper=False,
+            )
+            alert_stuck(
+                user_id, "a position could not be fully closed",
+                held_legs.stuck_text(result.stuck), retrying=not result.cancel_failed,
+            )
+        elif held_legs.halted_now(detail, written):
+            alert_stuck(
+                user_id, "the leftover legs still could not be closed",
+                held_legs.stuck_text(result.stuck),
+            )
         return
 
-    qty = int((legs[0] or {}).get("quantity") or 0)
-    net_entry = float(detail.get("net_entry_per_unit") or 0)
-    detail["exit"] = {"close_value_per_unit": round(close_value, 2), "charges": round(exit_charges, 2), "legs": closed}
+    gross, exit_charges = held_legs.totals_after(detail, result)
+    code, text = held_legs.exit_reason(detail, verdict[0], verdict[1])
+    # `close_value_per_unit` keeps its sign (longs sold +, shorts bought back -).
+    detail["exit"] = {"close_value_per_unit": -result.cost_per_unit, "charges": exit_charges, "legs": result.closed}
     repo.close_cycle(
         cycle.id,
-        exit_reason_code=verdict[0], exit_reason_text=verdict[1],
-        exit_value=round(close_value * qty, 2),
-        gross_pnl=round((net_entry + close_value) * qty, 2),
+        exit_reason_code=code, exit_reason_text=text,
+        exit_value=-held_legs.close_outlay(detail, result),
+        gross_pnl=gross,
         friction=round(float(detail.get("entry_charges") or 0) + exit_charges, 2),
         detail=detail,
     )
+    if detail.get("unwinding"):
+        held_legs.alert_resolved(
+            user_id, "CAS Bingo",
+            f"A retry closed the legs that were still open. The position is fully closed, "
+            f"gross {gross:+,.0f}.",
+            kind="cas_bingo_stuck",
+        )
 
 
 def settle(cycle: Any, level: float) -> None:
@@ -520,6 +556,9 @@ def settle(cycle: Any, level: float) -> None:
 
     legs = cycle.legs or []
     detail = dict(cycle.detail or {})
+    if held_legs.is_unwinding(cycle):
+        _settle_remainder(cycle, legs, detail, level)
+        return
     qty = int((legs[0] or {}).get("quantity") or 0) if legs else 0
     value = settle_value_per_unit(legs, level)
     net_entry = float(detail.get("net_entry_per_unit") or 0)
@@ -534,6 +573,34 @@ def settle(cycle: Any, level: float) -> None:
         exit_value=round(value * qty, 2),
         gross_pnl=round((net_entry + value) * qty, 2),
         friction=round(float(detail.get("entry_charges") or 0), 2),
+        detail=detail,
+    )
+
+
+def _settle_remainder(cycle: Any, legs: list[dict[str, Any]], detail: dict[str, Any], level: float) -> None:
+    """Settle what was left of a close that stuck: only the legs still held, each at its own
+    size and entry price, plus what the earlier passes already banked (B-01)."""
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    gross = float(detail.get("realized_gross") or 0)
+    value = 0.0
+    for leg in legs:
+        q = int(leg.get("quantity") or 0)
+        intrinsic = settle_value_per_unit([{**leg, "action": cfg.BUY}], level)
+        entry = held_legs.entry_price(leg, detail)
+        gross += (entry - intrinsic) * q if held_legs.is_short(leg) else (intrinsic - entry) * q
+        value += (-intrinsic if held_legs.is_short(leg) else intrinsic) * q
+    detail["exit"] = {"settled_at_level": level, "estimate": True, "settled_legs": legs}
+    repo.close_cycle(
+        cycle.id,
+        exit_reason_code=ReasonCode.EXPIRED_SETTLED,
+        exit_reason_text=(
+            f"Expired with legs the bot could not close still open. Estimated at intrinsic value "
+            f"against the index at {level:,.2f}; the official settlement price may differ."
+        ),
+        exit_value=round(value, 2),
+        gross_pnl=round(gross, 2),
+        friction=round(float(detail.get("entry_charges") or 0) + float(detail.get("realized_charges") or 0), 2),
         detail=detail,
     )
 
@@ -670,14 +737,15 @@ def enter(
     return outcome
 
 
-def alert_stuck(user_id: str, what: str, detail: Optional[str]) -> None:
+def alert_stuck(user_id: str, what: str, detail: Optional[str], *, retrying: bool = False) -> None:
     from icici_breeze_backend.app.services.telegram_alerts import _notify
 
+    retry = f"{held_legs.retry_note()}\n\n" if retrying else ""
     try:
         _notify(
             user_id,
             "\U0001f6d1 *CAS Bingo needs checking*\n\n"
-            f"The bot stopped because {what}.\n\n{detail or ''}\n\n"
+            f"The bot stopped because {what}.\n\n{detail or ''}\n\n{retry}"
             "*Check the Order Book for open legs.* The bot has been disarmed and will not "
             "open anything new.",
             kind="cas_bingo_stuck",

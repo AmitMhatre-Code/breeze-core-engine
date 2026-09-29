@@ -890,6 +890,23 @@ def replace_cycle_legs(cycle_id: str, legs: list[dict[str, Any]]) -> None:
         conn.commit()
 
 
+def update_cycle_holdings(
+    cycle_id: str, legs: list[dict[str, Any]], detail: dict[str, Any]
+) -> None:
+    """Rewrite an open cycle's legs AND detail in one write.
+
+    Used when a close leaves legs open (B-01). The two must land together: legs rewritten
+    without the `unwinding` flag would hand the exit loop a fragment it then judges as if it
+    were the whole structure, and the flag without the legs would retry the planned legs.
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE bot_cycles SET legs = ?, detail = ? WHERE id = ? AND closed_at IS NULL",
+            (json.dumps(legs), json.dumps(detail), cycle_id),
+        )
+        conn.commit()
+
+
 def mark_cycle_placed(
     cycle_id: str, *, order_ids: list[str], detail: dict[str, Any]
 ) -> None:

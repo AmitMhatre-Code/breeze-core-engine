@@ -376,3 +376,285 @@ def test_a_real_fly_is_never_unwound_at_simulated_prices(env, monkeypatch):
     )
     assert paper_closes == [], "a live cycle must never take the paper close path"
     assert d.calls, "it must dispatch real unwind orders instead"
+
+
+# --- B-01: a close that sticks leaves the cycle holding only what is really open ----------
+#
+# Before this, `cycle.legs` stayed the planned fly after a close or unwind stuck, and the next
+# exit re-ran the close over all four legs: buying back shorts already bought back (new longs)
+# and selling wings already sold or never bought (new naked shorts).
+
+from icici_breeze_backend.app.services import portfolio_margin_netting as pmn
+from icici_breeze_backend.app.services import telegram_alerts
+from icici_breeze_backend.app.services.bots.scalping import held_legs
+
+# Captured at import, before the `env` fixture stubs it out, so the Telegram tests below can
+# put the real alert back and see exactly what reaches the user.
+_REAL_ALERT_STUCK = fly._alert_stuck
+
+
+class _Remainder:
+    reason_code = ReasonCode.CLOSING_REMAINDER
+    reason_text = "Retrying the close."
+
+
+def _no_disarm(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot",
+        lambda *a, **k: None,
+    )
+
+
+def _positions(monkeypatch, rows=None, *, available=True):
+    """The broker's positions, as `held_legs.broker_holdings` reads them."""
+    monkeypatch.setattr(
+        pmn, "positions_for_underlying",
+        lambda proc, uid, stock, exchange: pmn.PositionSet(
+            rows=list(rows or []), available=available,
+            error=None if available else "positions down",
+        ),
+    )
+
+
+def _row(leg, quantity=None):
+    return {
+        "stock_code": "NIFTY", "exchange_code": "NFO",
+        "action": "Sell" if leg["action"] == cfg.SELL else "Buy",
+        "quantity": str(leg["quantity"] if quantity is None else quantity),
+        "right": leg["right"].capitalize(),
+        "strike_price": str(int(leg["strike_price"])),
+        "expiry_date": leg["expiry_display"],
+    }
+
+
+def _make_due():
+    cycle = repo.open_cycles(USER, BOT)[0]
+    detail = dict(cycle.detail)
+    detail["unwind_next_at"] = 0
+    repo.update_cycle_detail(cycle.id, detail)
+
+
+def _retry(env, monkeypatch, outcomes=None):
+    context = fly.inspect_position(env, USER, IronFlyScalperConfig(mode="live"), BOT)
+    d = _dispatch(monkeypatch, outcomes)
+    fly._close_live(env, USER, IronFlyScalperConfig(mode="live"), context, _Remainder(), CHARGES)
+    return context, d
+
+
+def _stick_exit(env, monkeypatch, second=None, first=None):
+    """Open a fly (every entry fill at 100) and close it with the second short refused."""
+    _no_disarm(monkeypatch)
+    cycle, context = _open_position(env, monkeypatch)
+    d = _dispatch(monkeypatch, outcomes=[
+        first or {"price": 40.0},
+        second or {"filled": 0, "error": "no fill"},
+        {"price": 5.0}, {"price": 5.0},
+    ])
+    fly._close_live(env, USER, IronFlyScalperConfig(mode="live"), context, _Decision(), CHARGES)
+    return cycle, d, d.calls[1][1]  # the right of the short that stuck
+
+
+def test_a_stuck_exit_keeps_only_the_legs_still_held(env, monkeypatch):
+    cycle, d, right = _stick_exit(env, monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    # Both shorts tried; only the wing whose short is gone is sold. The other wing still
+    # covers the short that would not buy back.
+    assert [a for a, _, _ in d.actions] == [cfg.BUY, cfg.BUY, cfg.SELL]
+    assert d.actions[2][1] != right
+    left = repo.open_cycles(USER, BOT)[0]
+    assert sorted((l["right"], l["action"], l["quantity"]) for l in left.legs) == sorted(
+        [(right, cfg.SELL, q), (right, cfg.BUY, q)]
+    )
+    assert left.detail["unwinding"] is True
+    # Banked: one short bought back at 40 and one wing sold at 5, both opened at 100.
+    assert left.detail["realized_gross"] == pytest.approx((100 - 40) * q + (5 - 100) * q)
+
+
+def test_the_retry_closes_only_the_remainder_and_books_the_whole_fly(env, monkeypatch):
+    cycle, _, right = _stick_exit(env, monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    credit = float(cycle.detail["net_credit_per_unit"])
+    _positions(monkeypatch, [_row(l) for l in repo.open_cycles(USER, BOT)[0].legs])
+    _make_due()
+
+    context, d = _retry(env, monkeypatch, outcomes=[{"price": 40.0}, {"price": 5.0}])
+
+    assert context.verdict[0] == ReasonCode.CLOSING_REMAINDER
+    assert [(a, r) for a, r, _ in d.actions] == [(cfg.BUY, right), (cfg.SELL, right)]
+    closed = repo.list_cycles(USER, bot_type=BOT)[0]
+    assert not closed.is_open
+    # Booked as the exit that started it, and at the same P&L as a one-pass close.
+    assert closed.exit_reason_code == ReasonCode.CREDIT_DECAY_TARGET
+    assert closed.gross_pnl == pytest.approx((credit - 70.0) * q)
+    assert closed.exit_value == pytest.approx(70.0 * q)
+
+
+def test_a_retry_waits_for_its_back_off(env, monkeypatch):
+    _stick_exit(env, monkeypatch)
+    _positions(monkeypatch, [_row(l) for l in repo.open_cycles(USER, BOT)[0].legs])
+    _, d = _retry(env, monkeypatch)
+    assert d.calls == []
+    assert repo.open_cycles(USER, BOT)[0].is_open
+
+
+def test_a_leg_closed_by_hand_is_not_closed_again(env, monkeypatch):
+    _stick_exit(env, monkeypatch)
+    left = repo.open_cycles(USER, BOT)[0].legs
+    wing = next(l for l in left if l["action"] == cfg.BUY)
+    _positions(monkeypatch, [_row(wing)])  # the user bought the short back themselves
+    _make_due()
+    _, d = _retry(env, monkeypatch)
+    assert [a for a, _, _ in d.actions] == [cfg.SELL]
+
+
+def test_everything_closed_by_hand_closes_the_cycle_without_an_order(env, monkeypatch):
+    _stick_exit(env, monkeypatch)
+    banked = repo.open_cycles(USER, BOT)[0].detail["realized_gross"]
+    _positions(monkeypatch, [])
+    _make_due()
+    _, d = _retry(env, monkeypatch)
+    assert d.calls == []
+    closed = repo.list_cycles(USER, bot_type=BOT)[0]
+    assert not closed.is_open
+    assert closed.exit_reason_code == ReasonCode.CLOSED_OUTSIDE_BOT
+    assert closed.gross_pnl == pytest.approx(banked)
+
+
+def test_unreadable_positions_send_nothing(env, monkeypatch):
+    """Unreadable is not flat (B-11), and it is not "still held" either."""
+    _stick_exit(env, monkeypatch)
+    _positions(monkeypatch, available=False)
+    _make_due()
+    _, d = _retry(env, monkeypatch)
+    assert d.calls == []
+    left = repo.open_cycles(USER, BOT)[0]
+    assert left.is_open and left.detail["unwind_next_at"] > 0
+
+
+def test_a_partly_filled_close_leaves_only_the_unfilled_units(env, monkeypatch):
+    _no_disarm(monkeypatch)
+    cycle, context = _open_position(env, monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    d = _dispatch(monkeypatch, outcomes=[
+        {"filled": q - 25, "error": "partial"}, {}, {}, {},
+    ])
+    fly._close_live(env, USER, IronFlyScalperConfig(mode="live"), context, _Decision(), CHARGES)
+    right = d.calls[0][1]
+    left = repo.open_cycles(USER, BOT)[0].legs
+    # 25 units of the short, and its wing held back in full to cover them.
+    assert sorted((l["right"], l["action"], l["quantity"]) for l in left) == sorted(
+        [(right, cfg.SELL, 25), (right, cfg.BUY, q)]
+    )
+
+
+def test_an_aborted_entry_keeps_only_the_legs_that_filled(env, monkeypatch):
+    """The planned second short never filled; it must never appear in the cycle's legs."""
+    _no_disarm(monkeypatch)
+    d, _ = _enter(env, monkeypatch, outcomes=[
+        {}, {},                                    # wings on
+        {},                                        # short 1 on
+        {"filled": 0, "error": "no fill"},         # short 2 fails -> unwind
+        {"filled": 0, "error": "cannot buy back"}, # short 1 will not buy back
+        {},                                        # the other wing sells
+    ])
+    short_right = d.calls[2][1]
+    never_filled = (d.calls[3][1], d.calls[3][2])
+    left = repo.open_cycles(USER, BOT)[0]
+    assert sorted((l["right"], l["action"]) for l in left.legs) == sorted(
+        [(short_right, cfg.SELL), (short_right, cfg.BUY)]
+    )
+    assert never_filled not in {(l["right"], l["strike_price"]) for l in left.legs}
+    assert "pending" not in left.detail and left.detail["unwinding"] is True
+
+
+def test_retries_stop_at_the_limit_and_then_only_watch(env, monkeypatch):
+    _stick_exit(env, monkeypatch)
+    cycle = repo.open_cycles(USER, BOT)[0]
+    detail = dict(cycle.detail)
+    detail["unwind_attempts"] = held_legs.MAX_CLOSE_RETRIES
+    repo.update_cycle_detail(cycle.id, detail)
+    _positions(monkeypatch, [_row(l) for l in cycle.legs])
+    _make_due()
+    _retry(env, monkeypatch, outcomes=[{"filled": 0, "error": "no fill"}])
+    assert repo.open_cycles(USER, BOT)[0].detail["unwind_orders_halted"] == "attempts"
+
+    _make_due()
+    _, d = _retry(env, monkeypatch)
+    assert d.calls == [], "past the limit the bot only watches"
+    assert repo.open_cycles(USER, BOT)[0].is_open
+
+
+def test_a_close_whose_cancel_failed_is_never_retried_by_order(env, monkeypatch):
+    """An order that may still fill must not have a second close placed beside it."""
+    _stick_exit(env, monkeypatch, second={"filled": 0, "cancel_failed": True, "error": "x"})
+    cycle = repo.open_cycles(USER, BOT)[0]
+    assert cycle.detail["unwind_orders_halted"] == "cancel_failed"
+    _positions(monkeypatch, [_row(l) for l in cycle.legs])
+    _make_due()
+    _, d = _retry(env, monkeypatch)
+    assert d.calls == []
+
+
+def test_rows_stuck_by_an_older_build_are_rebuilt_to_their_leftover_legs(env, monkeypatch):
+    cycle, _ = _open_position(env, monkeypatch)
+    short = next(l for l in cycle.legs if l["action"] == cfg.SELL)
+    detail = dict(cycle.detail)
+    detail["exit_partial"] = {
+        "closed": [],
+        "stuck": [{"right": short["right"], "strike": short["strike_price"],
+                   "quantity": short["quantity"], "error": "no fill"}],
+    }
+    repo.update_cycle_detail(cycle.id, detail)  # the old shape: planned legs, stuck in detail
+
+    assert held_legs.repair_legacy_rows() == 1
+    left = repo.open_cycles(USER, BOT)[0]
+    assert [(l["right"], l["action"]) for l in left.legs] == [(short["right"], cfg.SELL)]
+    assert left.detail["unwinding"] is True
+    assert held_legs.repair_legacy_rows() == 0, "idempotent"
+
+
+def _telegram(monkeypatch):
+    """Every message the user would get on Telegram. Nobody watches the bot live, so this is
+    the only channel that reaches them."""
+    sent: list[str] = []
+    monkeypatch.setattr(fly, "_alert_stuck", _REAL_ALERT_STUCK)
+    monkeypatch.setattr(telegram_alerts, "_notify", lambda uid, text, *, kind: sent.append(text))
+    return sent
+
+
+def test_every_step_of_a_stuck_close_reaches_telegram(env, monkeypatch):
+    sent = _telegram(monkeypatch)
+    _stick_exit(env, monkeypatch)
+    assert len(sent) == 1
+    assert "needs checking" in sent[0] and "still open" in sent[0]
+    assert "checks your positions before each try" in sent[0], "the retry plan is spelled out"
+
+    _positions(monkeypatch, [_row(l) for l in repo.open_cycles(USER, BOT)[0].legs])
+    _make_due()
+    _retry(env, monkeypatch, outcomes=[{"price": 40.0}, {"price": 5.0}])
+    assert len(sent) == 2 and "leftover legs closed" in sent[1]
+
+
+def test_legs_closed_by_hand_are_confirmed_on_telegram(env, monkeypatch):
+    sent = _telegram(monkeypatch)
+    _stick_exit(env, monkeypatch)
+    _positions(monkeypatch, [])
+    _make_due()
+    _retry(env, monkeypatch)
+    assert len(sent) == 2
+    assert "leftover legs closed" in sent[1] and "no longer show in your positions" in sent[1]
+
+
+def test_giving_up_is_announced_on_telegram(env, monkeypatch):
+    sent = _telegram(monkeypatch)
+    _stick_exit(env, monkeypatch)
+    cycle = repo.open_cycles(USER, BOT)[0]
+    repo.update_cycle_detail(
+        cycle.id, {**cycle.detail, "unwind_attempts": held_legs.MAX_CLOSE_RETRIES}
+    )
+    _positions(monkeypatch, [_row(l) for l in cycle.legs])
+    _make_due()
+    _retry(env, monkeypatch, outcomes=[{"filled": 0, "error": "no fill"}])
+    assert len(sent) == 2
+    assert "still could not be closed" in sent[1]
+    assert "will try" not in sent[1], "no retry promise once the bot has stopped sending orders"

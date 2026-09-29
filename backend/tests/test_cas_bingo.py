@@ -702,3 +702,111 @@ def test_the_auction_probe_reports_how_old_the_atm_cells_are(monkeypatch):
     assert "index tick age=2s" in line
     assert "24000 call: bid=40.0 ask=41.0 ltp=40.5 age=7s" in line
     assert "24000 put: no ws cell" in line
+
+
+# --------------------------------------------------------------------------------------
+# B-01: a live close that sticks leaves the cycle holding only what is really open
+# --------------------------------------------------------------------------------------
+
+from icici_breeze_backend.app.services import portfolio_margin_netting as pmn
+
+
+def _scripted_place(monkeypatch, outcomes):
+    """`place_and_confirm` answering from `outcomes` in order: {"filled", "price"}."""
+    calls = []
+
+    def place(proc, user_id, leg, **kwargs):
+        spec = outcomes[len(calls)] if len(calls) < len(outcomes) else {}
+        calls.append((leg.action, leg.right, leg.strike_price, leg.quantity))
+        filled = spec.get("filled", leg.quantity)
+        return live.FillResult(
+            order_id=f"o{len(calls)}", requested_quantity=leg.quantity, filled_quantity=filled,
+            average_price=spec.get("price", 10.0),
+            error=None if filled >= leg.quantity else "no fill",
+        )
+
+    monkeypatch.setattr(live, "place_and_confirm", place)
+    return calls
+
+
+def _open_live_spread(monkeypatch):
+    """A live bear call credit spread: long bought at 10, short sold at 30."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.cas_bingo.market.live_quote",
+        lambda *a, **k: Quote(4.0, 5.0, 4.5, "websocket"),
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.scalping.guards.disarm_bot", lambda *a, **k: None
+    )
+    p, _ = _plan("bear_call_credit")
+    _scripted_place(monkeypatch, [{"price": 10.0}, {"price": 30.0}])
+    run_id = repo.open_session_run(USER, BOT_CAS_BINGO)
+    assert execution.open_live(FakeProc(), USER, run_id, p, CasBingoConfig(), ChargesModel(), {}).opened
+    return repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+
+
+def _cas_positions(monkeypatch, legs):
+    rows = [
+        {
+            "stock_code": "NIFTY", "exchange_code": "NFO",
+            "action": "Sell" if l["action"] == cfg.SELL else "Buy",
+            "quantity": str(l["quantity"]), "right": l["right"].capitalize(),
+            "strike_price": str(int(l["strike_price"])), "expiry_date": l["expiry_display"],
+        }
+        for l in legs
+    ]
+    monkeypatch.setattr(
+        pmn, "positions_for_underlying",
+        lambda *a, **k: pmn.PositionSet(rows=rows, available=True, error=None),
+    )
+
+
+def _cas_due():
+    cycle = repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+    repo.update_cycle_detail(cycle.id, {**cycle.detail, "unwind_next_at": 0})
+    return repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+
+
+def test_a_partly_filled_buyback_keeps_the_rest_and_its_hedge(db, monkeypatch):
+    cycle = _open_live_spread(monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    calls = _scripted_place(monkeypatch, [{"filled": q - 25, "price": 20.0}])
+    execution.close_live(FakeProc(), USER, CasBingoConfig(), cycle, {}, ("stop_loss", "Stop."), ChargesModel())
+    # The long is not sold while 25 units of the short it covers are still open.
+    assert [a for a, *_ in calls] == [cfg.BUY]
+    left = repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+    assert sorted((l["action"], l["quantity"]) for l in left.legs) == sorted(
+        [(cfg.SELL, 25), (cfg.BUY, q)]
+    )
+
+
+def test_the_retry_closes_only_the_remainder_and_books_one_pass_pnl(db, monkeypatch):
+    cycle = _open_live_spread(monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    _scripted_place(monkeypatch, [{"filled": q - 25, "price": 20.0}])
+    execution.close_live(FakeProc(), USER, CasBingoConfig(), cycle, {}, ("stop_loss", "Stop."), ChargesModel())
+
+    left = _cas_due()
+    _cas_positions(monkeypatch, left.legs)
+    calls = _scripted_place(monkeypatch, [{"price": 20.0}, {"price": 4.0}])
+    runtime._manage_open_cycles(FakeProc(), USER, CasBingoConfig(), datetime.datetime(2026, 9, 11, 11, 0, tzinfo=IST))
+
+    assert [(a, qty) for a, _r, _s, qty in calls] == [(cfg.BUY, 25), (cfg.SELL, q)]
+    closed = repo.list_cycles(USER, bot_type=BOT_CAS_BINGO)[0]
+    assert not closed.is_open and closed.exit_reason_code == "stop_loss"
+    # Short sold 30, bought back 20; long bought 10, sold 4 -> (10 - 6) per unit.
+    assert closed.gross_pnl == pytest.approx(4.0 * q)
+
+
+def test_an_expired_remainder_settles_only_what_was_still_held(db, monkeypatch):
+    cycle = _open_live_spread(monkeypatch)
+    q = int(cycle.legs[0]["quantity"])
+    short_strike = next(float(l["strike_price"]) for l in cycle.legs if l["action"] == cfg.SELL)
+    _scripted_place(monkeypatch, [{"filled": q - 25, "price": 20.0}])
+    execution.close_live(FakeProc(), USER, CasBingoConfig(), cycle, {}, ("stop_loss", "Stop."), ChargesModel())
+
+    left = repo.open_cycles(USER, BOT_CAS_BINGO)[0]
+    execution.settle(left, short_strike - 100)  # both calls expire worthless
+    closed = repo.list_cycles(USER, bot_type=BOT_CAS_BINGO)[0]
+    # Banked (30-20) on q-25; then 25 short units keep their 30, and the long loses its 10.
+    assert closed.gross_pnl == pytest.approx(10.0 * (q - 25) + 30.0 * 25 - 10.0 * q)
