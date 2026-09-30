@@ -217,7 +217,13 @@ async def _claim_once() -> bool:
 def _anything_outstanding() -> bool:
     from icici_breeze_backend.app.repositories.bots import has_outstanding_approval_token
 
-    if has_outstanding_link_token():
+    try:
+        if has_outstanding_link_token():
+            return True
+    except Exception:  # noqa: BLE001 - e.g. "database is locked"
+        # Unknown is not "nothing outstanding": answering False would put the loop to
+        # sleep with a link or an approval tap still waiting. Keep claiming.
+        logger.warning("telegram inbound: link token check failed", exc_info=True)
         return True
     try:
         return has_outstanding_approval_token()
@@ -231,17 +237,22 @@ async def run_link_claim_loop() -> None:
     backoff = 0.0
     while True:
         await _link_pending.wait()
-        if not await asyncio.to_thread(_anything_outstanding):
-            # Every outstanding token was consumed or expired; sleep until the
-            # next deep link or proposal is generated instead of polling an empty
-            # queue. An approval token counts: a proposal awaiting a tap is
-            # exactly the state in which a claim can return something.
-            _link_pending.clear()
-            continue
-        if await _claim_once():
-            backoff = 0.0
-            await asyncio.sleep(_CLAIM_INTERVAL_SEC)
-            continue
+        try:
+            if not await asyncio.to_thread(_anything_outstanding):
+                # Every outstanding token was consumed or expired; sleep until the
+                # next deep link or proposal is generated instead of polling an empty
+                # queue. An approval token counts: a proposal awaiting a tap is
+                # exactly the state in which a claim can return something.
+                _link_pending.clear()
+                continue
+            if await _claim_once():
+                backoff = 0.0
+                await asyncio.sleep(_CLAIM_INTERVAL_SEC)
+                continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one bad pass must not end linking and HITL taps
+            logger.exception("telegram inbound claim pass failed")
         backoff = min(max(backoff * 2, _BACKOFF_INITIAL_SEC), _BACKOFF_MAX_SEC)
         await asyncio.sleep(backoff)
 

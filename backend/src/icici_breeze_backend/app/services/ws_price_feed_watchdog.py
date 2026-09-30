@@ -29,6 +29,15 @@ so after two consecutive passes in which everything attempted failed, this escal
 SDK's own socket.io reconnect happening to succeed (three silent minutes during market
 hours on 2026-08-06 while every forced re-subscribe reported ok=False).
 
+A subscribe that *succeeds* proves nothing either: socket.io can report itself connected
+while ICICI has stopped sending, and then every re-subscribe is accepted and changes
+nothing. So the rebuild is also triggered by two accepted re-subscribes in a row with not
+one tick of any kind reaching the process in between (`_ingest_silent`).
+
+Silence is judged from the raw tick keys in Redis, which our own tick pipeline writes. If
+that pipeline is the thing that has stopped (`_pipeline_fault`), the quiet is on our side
+of the socket: the pass repairs the pipeline and leaves ICICI alone.
+
 The order-notification feed has its own equivalent (`order_feed_watchdog_tick`);
 this one covers price ticks, which that watchdog explicitly does not.
 """
@@ -84,6 +93,8 @@ _last_ok: dict[str, float] = {}
 _last_forced: dict[str, float] = {}
 _open_pass_date: date | None = None
 _consecutive_failed_passes = 0
+# Consecutive passes whose re-subscribe was accepted while nothing at all was arriving.
+_consecutive_unanswered_passes = 0
 _last_reconnect: float | None = None
 
 
@@ -208,13 +219,38 @@ def _force_underlying_spots() -> None:
     _logger.info("price-feed watchdog: forced re-subscribe stock spots ok=%s", ok)
 
 
-def _escalate_to_reconnect(now: float) -> None:
-    """Rebuild the socket after repeated whole-pass failure.
+def _ingest_silent() -> bool:
+    """True when nothing but order events has reached the process for a silence window.
 
-    `force_resubscribe_tokens` can only ever fail this way when the socket underneath is
-    dead -- ICICI answers with "Failed to connect to live stream" and every batch reports
-    the same thing. Re-subscribing harder cannot fix that; only a rebuilt handler can."""
-    global _consecutive_failed_passes, _last_reconnect
+    Read from the tick pipeline's arrival clock, not from Redis, so it answers for the
+    socket alone: index spots, stock spots, futures and every chain share it."""
+    from icici_breeze_backend.app.services.ws_tick_pipeline import last_ingest_age_seconds
+
+    age = last_ingest_age_seconds()
+    return age is None or age > _SILENCE_SECONDS
+
+
+def _pipeline_fault() -> bool:
+    """Repair the tick pipeline if a thread died, and report whether its writes are failing.
+
+    While this is True the raw keys the silence checks read are not being written, so a
+    silent chain says nothing about ICICI."""
+    from icici_breeze_backend.app.services.ws_tick_pipeline import (
+        raw_cache_failing,
+        revive_tick_pipeline,
+    )
+
+    revive_tick_pipeline()
+    return raw_cache_failing()
+
+
+def _escalate_to_reconnect(now: float, reason: str) -> None:
+    """Rebuild the socket when re-subscribing has stopped being an answer.
+
+    Either every batch was refused -- ICICI answers "Failed to connect to live stream"
+    when the socket underneath is dead -- or the batches were accepted and nothing came
+    of them. Re-subscribing harder fixes neither; only a rebuilt handler can."""
+    global _consecutive_failed_passes, _consecutive_unanswered_passes, _last_reconnect
 
     from icici_breeze_backend.app.services.breeze_websocket_manager import reconnect_ws
 
@@ -225,14 +261,11 @@ def _escalate_to_reconnect(now: float) -> None:
             _RECONNECT_COOLDOWN_SECONDS - (now - _last_reconnect),
         )
         return
-    _logger.warning(
-        "price-feed watchdog: %s consecutive fully-failed re-subscribe passes; "
-        "rebuilding the WS socket",
-        _consecutive_failed_passes,
-    )
+    _logger.warning("price-feed watchdog: %s; rebuilding the WS socket", reason)
     ok = reconnect_ws()
     _last_reconnect = now
     _consecutive_failed_passes = 0
+    _consecutive_unanswered_passes = 0
     _logger.warning("price-feed watchdog: WS socket rebuild ok=%s", ok)
     # Give the rebuilt socket a full silence window before judging it, and drop the
     # throttle so the next genuine re-subscribe isn't blocked by the pre-rebuild one.
@@ -241,21 +274,40 @@ def _escalate_to_reconnect(now: float) -> None:
 
 
 def _note_pass_outcome(results: list[bool], now: float) -> None:
-    """Track consecutive passes where everything we forced failed.
+    """Track consecutive passes where re-subscribing did not bring the feed back.
+
+    Two ways a pass counts. Everything we forced was refused; or something was accepted
+    while the whole process was hearing nothing, which is a socket that says it is
+    connected and delivers nothing. A single quiet chain never counts as the second kind:
+    that needs every feed on the socket silent, index spot included.
 
     One pass is not enough to act on: a single batch rejection is ordinary, and tearing
     down a working socket costs every live chain its feed. Two in a row -- with the 30s
     interval and 60s per-target throttle, roughly 90s of total failure -- is not noise."""
-    global _consecutive_failed_passes
+    global _consecutive_failed_passes, _consecutive_unanswered_passes
 
+    silent = _ingest_silent()
+    if not silent:
+        _consecutive_unanswered_passes = 0
     if not results:
         return  # nothing was attempted -> no evidence either way
     if any(results):
         _consecutive_failed_passes = 0
+        if not silent:
+            return
+        _consecutive_unanswered_passes += 1
+        if _consecutive_unanswered_passes >= _ESCALATE_AFTER_FAILED_PASSES:
+            _escalate_to_reconnect(
+                now,
+                f"{_consecutive_unanswered_passes} consecutive re-subscribes were accepted "
+                "and no tick has arrived",
+            )
         return
     _consecutive_failed_passes += 1
     if _consecutive_failed_passes >= _ESCALATE_AFTER_FAILED_PASSES:
-        _escalate_to_reconnect(now)
+        _escalate_to_reconnect(
+            now, f"{_consecutive_failed_passes} consecutive fully-failed re-subscribe passes"
+        )
 
 
 def _force_order_feed() -> None:
@@ -305,6 +357,13 @@ def _run_open_pass(now: float) -> None:
 
 
 def _check_silent_feeds(now: float) -> None:
+    if _pipeline_fault():
+        _logger.warning(
+            "price-feed watchdog: raw tick cache writes are failing, so silence here is "
+            "not ICICI's; not re-subscribing this pass"
+        )
+        return
+
     # Every subscribe actually attempted this pass, so `_note_pass_outcome` can tell
     # "all of them failed" (the socket is dead) from "we forced nothing" (all healthy).
     results: list[bool] = []
@@ -409,10 +468,12 @@ async def run_price_feed_watchdog_loop() -> None:
 
 def reset_state_for_tests() -> None:
     """Test-only: reset module state back to a fresh-process baseline."""
-    global _open_pass_date, _consecutive_failed_passes, _last_reconnect
+    global _open_pass_date, _consecutive_failed_passes, _consecutive_unanswered_passes
+    global _last_reconnect
     with _lock:
         _open_pass_date = None
         _consecutive_failed_passes = 0
+        _consecutive_unanswered_passes = 0
         _last_reconnect = None
         _last_ok.clear()
         _last_forced.clear()

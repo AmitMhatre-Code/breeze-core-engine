@@ -248,3 +248,28 @@ def test_tick_past_its_life_builds_no_cell(monkeypatch, tmp_path):
     key = ws_quote_key(cfg.NFO, "NIFTY", "30-Jun-2026", 25000.0, "call")
     assert cache_get_json(key) is None
     close_redis()
+
+
+def test_pubsub_loop_resubscribes_after_a_redis_error(monkeypatch):
+    """One Redis error used to end the pubsub thread, leaving the worker poll-only
+    until it was restarted."""
+    import threading
+
+    from icici_breeze_backend.app.db import redis_client
+    from icici_breeze_backend.workers import chain_builder as worker
+
+    stop = threading.Event()
+    attempts = []
+
+    def listen():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionError("Connection reset by peer")
+        stop.set()
+
+    monkeypatch.setattr(worker, "_stop", stop)
+    monkeypatch.setattr(worker, "_PUBSUB_RETRY_INITIAL_SECONDS", 0.01)
+    monkeypatch.setattr(worker, "_pubsub_listen", listen)
+    monkeypatch.setattr(redis_client, "redis_using_memory_fallback", lambda: False)
+    worker._pubsub_loop()
+    assert len(attempts) == 2

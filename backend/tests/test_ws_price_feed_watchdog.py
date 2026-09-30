@@ -82,6 +82,12 @@ def env(monkeypatch):
         "_force_order_feed",
         lambda: state.__setitem__("forced_order_feed", state["forced_order_feed"] + 1),
     )
+    # Ticks of some kind are reaching the process and the tick pipeline is writing them,
+    # unless a test says otherwise. Both read process-wide state other modules leave behind.
+    state["ingest_silent"] = False
+    state["pipeline_fault"] = False
+    monkeypatch.setattr(wd, "_ingest_silent", lambda: state["ingest_silent"])
+    monkeypatch.setattr(wd, "_pipeline_fault", lambda: state["pipeline_fault"])
     monkeypatch.setattr(bwm, "_sdk", MagicMock())
     monkeypatch.setattr(bwm, "_connected", True)
     monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
@@ -315,6 +321,97 @@ class TestReconnectEscalation:
         self._silent_pass(env, _now(16, 30, 0))
         self._silent_pass(env, _now(16, 31, 0))
         assert failing["reconnect"] == 0
+
+
+class TestAcceptedButSilent:
+    """B-17: socket.io can report itself connected while ICICI has stopped sending. Every
+    re-subscribe is then accepted, so counting only *refused* passes never rebuilt it."""
+
+    @pytest.fixture
+    def accepted(self, env, monkeypatch):
+        """Silent feed, and every re-subscribe attempt is accepted."""
+        calls = {"reconnect": 0}
+        monkeypatch.setattr(wd, "_force_chain", lambda chain_key: True)
+        monkeypatch.setattr(wd, "_force_index_spot", lambda: True)
+        monkeypatch.setattr(
+            bwm, "reconnect_ws", lambda: calls.__setitem__("reconnect", calls["reconnect"] + 1) or True
+        )
+        env["tick_age"] = wd._SILENCE_SECONDS + 5
+        env["spot_ticking"] = False
+        env["ingest_silent"] = True
+        return calls
+
+    def _silent_pass(self, env, at):
+        env["clock"]["t"] += wd._THROTTLE_SECONDS + 1
+        wd.price_feed_watchdog_tick(at)
+
+    def test_two_accepted_passes_with_nothing_arriving_rebuild_the_socket(
+        self, env, monkeypatch, accepted
+    ):
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        assert accepted["reconnect"] == 0
+        self._silent_pass(env, _now(11, 1, 0))
+        assert accepted["reconnect"] == 1
+
+    def test_a_quiet_chain_alone_never_rebuilds(self, env, monkeypatch, accepted):
+        """Other feeds on the socket are ticking, so the socket is fine and only this
+        chain is quiet. A rebuild would cost every live chain its feed for nothing."""
+        env["ingest_silent"] = False
+        _mark_open_pass_done(env, monkeypatch)
+        for minute in range(5):
+            self._silent_pass(env, _now(11, minute, 0))
+        assert accepted["reconnect"] == 0
+
+    def test_ticks_arriving_between_passes_reset_the_count(self, env, monkeypatch, accepted):
+        _mark_open_pass_done(env, monkeypatch)
+        self._silent_pass(env, _now(11, 0, 0))
+        env["ingest_silent"] = False
+        self._silent_pass(env, _now(11, 1, 0))
+        env["ingest_silent"] = True
+        self._silent_pass(env, _now(11, 2, 0))
+        assert accepted["reconnect"] == 0
+
+    def test_cooldown_applies(self, env, monkeypatch, accepted):
+        _mark_open_pass_done(env, monkeypatch)
+        for minute in range(4):
+            self._silent_pass(env, _now(11, minute, 0))
+        assert accepted["reconnect"] == 1
+
+
+class TestPipelineFault:
+    """B-05: silence is read from raw tick keys our own pipeline writes. When that
+    pipeline is failing, the quiet is ours and re-subscribing at ICICI cannot help."""
+
+    def test_no_resubscribe_while_raw_writes_are_failing(self, env, monkeypatch):
+        _mark_open_pass_done(env, monkeypatch)
+        env["tick_age"] = wd._SILENCE_SECONDS + 5
+        env["spot_ticking"] = False
+        env["pipeline_fault"] = True
+        env["clock"]["t"] += wd._THROTTLE_SECONDS + 1
+        wd.price_feed_watchdog_tick(_now(11, 0, 0))
+        assert env["forced_chains"] == []
+        assert env["forced_spot"] == 0
+
+    def test_resubscribes_again_once_the_pipeline_recovers(self, env, monkeypatch):
+        _mark_open_pass_done(env, monkeypatch)
+        env["tick_age"] = wd._SILENCE_SECONDS + 5
+        env["pipeline_fault"] = True
+        env["clock"]["t"] += wd._THROTTLE_SECONDS + 1
+        wd.price_feed_watchdog_tick(_now(11, 0, 0))
+        env["pipeline_fault"] = False
+        env["clock"]["t"] += wd._THROTTLE_SECONDS + 1
+        wd.price_feed_watchdog_tick(_now(11, 1, 0))
+        assert env["forced_chains"] == [_CHAIN]
+
+    def test_pipeline_fault_revives_a_dead_thread(self, monkeypatch):
+        from icici_breeze_backend.app.services import ws_tick_pipeline as pipeline
+
+        revived = []
+        monkeypatch.setattr(pipeline, "revive_tick_pipeline", lambda: revived.append(1) or True)
+        monkeypatch.setattr(pipeline, "raw_cache_failing", lambda: False)
+        assert wd._pipeline_fault() is False
+        assert revived == [1]
 
 
 class TestReconnectWs:

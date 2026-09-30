@@ -22,26 +22,163 @@ def _raw_nifty_put_25000() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-@patch("icici_breeze_backend.app.services.ws_tick_pipeline.cache_publish")
-@patch("icici_breeze_backend.app.services.ws_tick_pipeline.cache_set_json")
-def test_pipeline_writes_raw_ticks_not_normalized_cells(mock_cache, _mock_publish):
+class _FakePipe:
+    def __init__(self, redis: "_FakeRedis") -> None:
+        self._redis = redis
+        self._ops: list[tuple] = []
+
+    def set(self, key, value, ex=None):
+        self._ops.append(("set", key, value, ex))
+        return self
+
+    def publish(self, channel, message):
+        self._ops.append(("publish", channel, message))
+        return self
+
+    def execute(self):
+        self._redis.executes += 1
+        if self._redis.failures:
+            raise self._redis.failures.pop(0)
+        for op in self._ops:
+            if op[0] == "set":
+                self._redis.sets[op[1]] = (json.loads(op[2]), op[3])
+            else:
+                self._redis.published.append(op[1:])
+        return []
+
+
+class _FakeRedis:
+    """Records pipelined raw-tick writes; `failures` are raised by the next executes."""
+
+    def __init__(self, failures: list[BaseException] | None = None) -> None:
+        self.failures = list(failures or [])
+        self.sets: dict[str, tuple[dict, int]] = {}
+        self.published: list[tuple] = []
+        self.executes = 0
+
+    def pipeline(self, transaction=True):
+        return _FakePipe(self)
+
+
+@pytest.fixture
+def fake_redis(monkeypatch):
+    redis = _FakeRedis()
+    monkeypatch.setattr(pipeline, "get_redis", lambda: redis)
+    monkeypatch.setattr(pipeline, "_record_snapshot_cells", lambda entries: None)
+    monkeypatch.setattr(pipeline, "_CACHE_ERROR_BACKOFF_SECONDS", 0.01)
     pipeline.stop_tick_pipeline()
+    yield redis
+    pipeline.stop_tick_pipeline()
+
+
+def _wait_for(predicate, timeout: float = 2.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_pipeline_writes_raw_ticks_not_normalized_cells(fake_redis):
     pipeline.start_tick_pipeline()
-    try:
-        raw = _raw_nifty_call_25000()
-        pipeline.ingest_tick(raw)
-        deadline = time.time() + 2.0
-        while time.time() < deadline and mock_cache.call_count == 0:
-            time.sleep(0.05)
-        assert mock_cache.call_count >= 1
-        key, payload = mock_cache.call_args[0]
-        assert "quotes:ws:raw:NFO:" in key
-        assert isinstance(payload, dict)
-        assert "raw" in payload
-        assert payload["raw"]["last"] == 1.4
-        assert "ltp" not in payload
-    finally:
-        pipeline.stop_tick_pipeline()
+    pipeline.ingest_tick(_raw_nifty_call_25000())
+    assert _wait_for(lambda: fake_redis.sets)
+    (key, (payload, _ttl)), = fake_redis.sets.items()
+    assert "quotes:ws:raw:NFO:" in key
+    assert payload["raw"]["last"] == 1.4
+    assert "ltp" not in payload
+
+
+class TestCacheThreadSurvivesRedisErrors:
+    """B-05: one Redis error used to end the `ws-tick-cache` thread for the life of the
+    process, with `_started` still True so nothing ever restarted it."""
+
+    def test_a_redis_error_does_not_end_the_thread(self, fake_redis):
+        fake_redis.failures.append(TimeoutError("Timeout reading from socket"))
+        pipeline.start_tick_pipeline()
+        pipeline.ingest_tick(_raw_nifty_call_25000())
+        assert _wait_for(lambda: pipeline.pipeline_stats()["cache_errors"] >= 1)
+        assert pipeline.raw_cache_failing() is True
+
+        pipeline.ingest_tick(_raw_nifty_put_25000())
+        assert _wait_for(lambda: fake_redis.sets)
+        stats = pipeline.pipeline_stats()
+        assert stats["cache_alive"] is True
+        assert "TimeoutError" in stats["last_cache_error"]
+        assert pipeline.raw_cache_failing() is False
+
+    def test_a_dead_thread_is_restarted_by_start(self, fake_redis, monkeypatch):
+        """Both loops catch their own errors; this is the backstop for whatever gets
+        past that. `reconnect_ws()` and the watchdog both reach it."""
+        pipeline.start_tick_pipeline()
+        # End the cache thread the way an uncaught error would, leaving `_started` set.
+        dead = MagicMock()
+        dead.is_alive.return_value = False
+        real = pipeline._cache_thread
+        monkeypatch.setattr(pipeline, "_cache_thread", dead)
+        assert pipeline.raw_cache_failing() is True
+
+        pipeline.start_tick_pipeline()
+        assert pipeline._cache_thread is not dead
+        assert pipeline._cache_thread is not real
+        assert pipeline._cache_thread.is_alive()
+        assert pipeline.raw_cache_failing() is False
+
+    def test_revive_leaves_a_stopped_pipeline_alone(self, fake_redis):
+        assert pipeline.revive_tick_pipeline() is False
+        assert pipeline.pipeline_stats()["started"] is False
+
+
+class TestRawTickTimestamps:
+    """B-39: `received_at` is when the tick arrived, not when it was written."""
+
+    def test_received_at_is_the_arrival_time(self, fake_redis):
+        written = pipeline._write_raw_batch([("k", {"last": 1.0}, time.time() - 30.0)], 120)
+        assert len(written) == 1
+        payload, ttl = fake_redis.sets["k"]
+        assert time.time() - payload["received_at"] == pytest.approx(30.0, abs=1.0)
+        # Only the life the tick has left, so a late write cannot outlive the tick.
+        assert 89 <= ttl <= 91
+
+    def test_a_tick_past_its_life_is_not_written(self, fake_redis):
+        written = pipeline._write_raw_batch([("k", {"last": 1.0}, time.time() - 500.0)], 120)
+        assert written == []
+        assert fake_redis.sets == {}
+        assert fake_redis.executes == 0
+
+    def test_one_round_trip_and_one_notice_per_batch(self, fake_redis):
+        now = time.time()
+        pipeline._write_raw_batch([(f"k{i}", {"last": i}, now) for i in range(50)], 120)
+        assert fake_redis.executes == 1
+        assert len(fake_redis.sets) == 50
+        assert len(fake_redis.published) == 1
+
+    def test_backlog_is_conflated_not_queued(self, fake_redis, monkeypatch):
+        """With the cache thread behind, ticks wait in the coalesce map, where the newest
+        one per contract wins, and nothing is dropped."""
+        q = pipeline.queue.Queue(maxsize=1)
+        q.put_nowait([])  # full: the cache thread is "behind"
+        ingest = pipeline.queue.Queue()
+        stop = pipeline.threading.Event()
+        monkeypatch.setattr(pipeline, "_coalesce_seconds", lambda: 0.02)
+        th = pipeline.threading.Thread(target=pipeline._drain_loop, args=(ingest, q, stop), daemon=True)
+        th.start()
+        try:
+            raw = _raw_nifty_call_25000()
+            ingest.put((100.0, dict(raw, last=1.0)))
+            ingest.put((101.0, dict(raw, last=2.0)))
+            assert _wait_for(lambda: len(pipeline._coalesce) == 1 and ingest.empty())
+            time.sleep(0.1)
+            assert q.qsize() == 1  # still only the blocker
+            q.get_nowait()
+            assert _wait_for(lambda: q.qsize() == 1)
+            (_key, tick, received_at), = q.get_nowait()
+            assert tick["last"] == 2.0
+            assert received_at == 101.0
+        finally:
+            stop.set()
+            th.join(timeout=1.0)
 
 
 def test_ingest_drops_when_queue_full(monkeypatch):

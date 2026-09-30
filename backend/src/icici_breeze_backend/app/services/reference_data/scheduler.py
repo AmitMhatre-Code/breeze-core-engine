@@ -38,27 +38,35 @@ def get_scheduler_status() -> dict:
 
 
 def _scheduler_loop() -> None:
-    global _last_run_date
     while not _stop.is_set():
-        sch = load_schedule()
-        if sch.get("enabled"):
-            now = now_ist()
-            today = now.date().isoformat()
-            if (
-                now.hour == int(sch["hour_ist"])
-                and now.minute == int(sch["minute_ist"])
-                and _last_run_date != today
-            ):
-                _last_run_date = today
-                _logger.info("Scheduled reference data load at %s IST", now.isoformat(timespec="seconds"))
-                from icici_breeze_backend.app.services.reference_data.orchestrator import (
-                    run_reference_data_load,
-                )
-
-                run_reference_data_load(force=True, trigger_mode="scheduled")
-            elif _bhavcopy_retry_due(now, sch):
-                _retry_stale_bhavcopy()
+        try:
+            _scheduler_tick()
+        except Exception:  # noqa: BLE001 -- e.g. "database is locked" must not end the thread
+            _logger.exception("Reference data scheduler tick failed")
         _stop.wait(30)
+
+
+def _scheduler_tick() -> None:
+    global _last_run_date
+    sch = load_schedule()
+    if not sch.get("enabled"):
+        return
+    now = now_ist()
+    today = now.date().isoformat()
+    if (
+        now.hour == int(sch["hour_ist"])
+        and now.minute == int(sch["minute_ist"])
+        and _last_run_date != today
+    ):
+        _last_run_date = today
+        _logger.info("Scheduled reference data load at %s IST", now.isoformat(timespec="seconds"))
+        from icici_breeze_backend.app.services.reference_data.orchestrator import (
+            run_reference_data_load,
+        )
+
+        run_reference_data_load(force=True, trigger_mode="scheduled")
+    elif _bhavcopy_retry_due(now, sch):
+        _retry_stale_bhavcopy()
 
 
 def _bhavcopy_retry_due(now: dt.datetime, sch: dict) -> bool:

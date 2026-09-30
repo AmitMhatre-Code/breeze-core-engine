@@ -181,6 +181,38 @@ class TestClaimLoopDutyCycle:
         assert claims == []
         assert not lp._link_pending.is_set()
 
+    def test_a_failed_token_check_does_not_end_the_loop(self, monkeypatch):
+        """B-28: the check ran outside any `try`, so one "database is locked" ended the
+        task and no link or approval tap was claimed again until restart. Unknown now
+        reads as "keep claiming", never as "nothing outstanding"."""
+
+        def locked():
+            raise RuntimeError("database is locked")
+
+        claims = []
+
+        async def fake_claim():
+            claims.append(1)
+            if len(claims) > 1:
+                raise asyncio.CancelledError
+            return []
+
+        async def fake_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(lp, "claim_link_events", fake_claim)
+        monkeypatch.setattr(lp.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(lp, "has_outstanding_link_token", locked)
+        lp._link_pending.set()
+
+        async def _run():
+            with pytest.raises(asyncio.CancelledError):
+                await lp.run_link_claim_loop()
+
+        asyncio.run(_run())
+        assert len(claims) == 2
+        assert lp._link_pending.is_set()
+
     def test_successful_claim_polls_at_the_short_interval(self, monkeypatch):
         _claims, sleeps = self._run_loop_once(monkeypatch, outstanding=True, claim_result=[])
         assert sleeps == [lp._CLAIM_INTERVAL_SEC]

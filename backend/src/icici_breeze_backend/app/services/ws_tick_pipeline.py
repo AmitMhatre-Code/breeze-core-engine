@@ -11,7 +11,9 @@ on a much shorter (~100ms) cadence and a different key scheme.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import queue
 import threading
 import time
@@ -20,7 +22,7 @@ from collections.abc import Callable
 from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.db.redis_client import cache_publish, cache_set_json, get_redis
+from icici_breeze_backend.app.db.redis_client import get_redis
 from icici_breeze_backend.app.services.reference_data.keys import (
     WS_TICK_DIRTY_CHANNEL,
     pnl_quote_key,
@@ -40,13 +42,27 @@ _logger = logging.getLogger(__name__)
 
 TickListener = Callable[[dict[str, Any]], None]
 
-_ingest_queue: queue.Queue[Any] | None = None
-_coalesce: dict[str, dict[str, Any]] = {}
+# (storage_key, raw tick, epoch seconds it reached `ingest_tick`)
+RawBatch = list[tuple[str, dict[str, Any], float]]
+
+# Batches the cache thread may have waiting. Kept short on purpose: when Redis is slow
+# the drain thread holds ticks back in `_coalesce`, where a newer tick replaces an older
+# one for the same contract, instead of queueing minutes of superseded writes.
+_PROCESS_QUEUE_MAX_BATCHES = 8
+# Pause after a failed Redis write, so a refused connection (which fails at once, unlike
+# a timeout) does not spin the cache thread.
+_CACHE_ERROR_BACKOFF_SECONDS = 0.5
+# A Redis outage fails every batch; say so this often, not ten times a second.
+_CACHE_ERROR_LOG_SECONDS = 30.0
+
+_ingest_queue: queue.Queue[tuple[float, Any]] | None = None
+# storage_key -> (received_at, raw)
+_coalesce: dict[str, tuple[float, dict[str, Any]]] = {}
 _coalesce_lock = threading.Lock()
 _stop = threading.Event()
 _drain_thread: threading.Thread | None = None
 _cache_thread: threading.Thread | None = None
-_process_queue: queue.Queue[list[tuple[str, dict[str, Any]]]] | None = None
+_process_queue: queue.Queue[RawBatch] | None = None
 _listeners: list[TickListener] = []
 _raw_listeners: list[TickListener] = []
 # Extra consumers of parsed order-notification events, alongside the hard-wired
@@ -57,6 +73,21 @@ _order_notification_listeners: list[Callable[[Any], None]] = []
 _dropped_ticks = 0
 _started = False
 _start_lock = threading.Lock()
+# Monotonic time anything other than an order event last reached `ingest_tick`. Unlike
+# `_last_tick_monotonic` this does not need the tick to parse as an option quote, and
+# unlike the raw keys it does not need Redis -- it is the one signal that says whether
+# the socket itself is delivering.
+_last_ingest_monotonic: float | None = None
+_cache_stats: dict[str, Any] = {
+    "errors": 0,
+    "last_error": None,
+    "last_error_monotonic": None,
+    "last_ok_monotonic": None,
+    "last_error_log_monotonic": None,
+    "errors_since_log": 0,
+    "stale_skipped": 0,
+    "thread_restarts": 0,
+}
 
 
 class ConflatedTickBuffer:
@@ -234,11 +265,12 @@ def ingest_tick(raw: Any) -> None:
     `on_message` dispatches both it and price ticks to `breeze.on_ticks`. So they must be
     split off here, before anything downstream tries to read them as quotes.
     """
-    global _dropped_ticks
+    global _dropped_ticks, _last_ingest_monotonic
     payload = _raw_tick_payload(raw)
 
     if _route_order_notification(payload):
         return
+    _last_ingest_monotonic = time.monotonic()
 
     for listener in list(_raw_listeners):
         try:
@@ -253,12 +285,15 @@ def ingest_tick(raw: Any) -> None:
     q = _ingest_queue
     if q is None:
         return
+    # Stamped here, on arrival, not when the cache thread gets round to writing it: a
+    # tick that waited in a backlog must not read as fresh.
+    item = (time.time(), raw)
     try:
-        q.put_nowait(raw)
+        q.put_nowait(item)
     except queue.Full:
         try:
             q.get_nowait()
-            q.put_nowait(raw)
+            q.put_nowait(item)
             _dropped_ticks += 1
         except queue.Empty:
             pass
@@ -299,40 +334,55 @@ def unregister_order_notification_listener(cb: "Callable[[Any], None]") -> None:
         pass
 
 
-def _drain_loop() -> None:
+def _drain_loop(
+    ingest_queue: "queue.Queue[tuple[float, Any]]",
+    process_queue: "queue.Queue[RawBatch]",
+    stop: threading.Event,
+) -> None:
+    """Coalesce ticks per contract and hand them to the cache thread in batches.
+
+    The queues and the stop event are passed in, not read from the module globals, so a
+    thread that outlives `stop_tick_pipeline()`'s join cannot pick up the next start's."""
     global _coalesce
-    assert _ingest_queue is not None
-    assert _process_queue is not None
     interval = _coalesce_seconds()
-    while not _stop.is_set():
-        deadline = time.monotonic() + interval
-        while time.monotonic() < deadline and not _stop.is_set():
-            try:
-                raw = _ingest_queue.get(timeout=0.01)
-            except queue.Empty:
+    while not stop.is_set():
+        try:
+            deadline = time.monotonic() + interval
+            while time.monotonic() < deadline and not stop.is_set():
+                try:
+                    received_at, raw = ingest_queue.get(timeout=0.01)
+                except queue.Empty:
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                storage_key = raw_tick_storage_key(raw)
+                if storage_key is None:
+                    continue
+                with _coalesce_lock:
+                    _coalesce[storage_key] = (received_at, dict(raw))
+            if process_queue.full():
+                # The cache thread is behind (Redis slow or down). Keep coalescing: the
+                # latest tick per contract waits here and goes out in one batch later.
                 continue
-            if not isinstance(raw, dict):
-                continue
-            storage_key = raw_tick_storage_key(raw)
-            if storage_key is None:
-                continue
+            batch: RawBatch = []
             with _coalesce_lock:
-                _coalesce[storage_key] = dict(raw)
-        batch: list[tuple[str, dict[str, Any]]] = []
-        with _coalesce_lock:
-            if _coalesce:
-                batch = list(_coalesce.items())
-                _coalesce = {}
-        if batch:
-            try:
-                _process_queue.put_nowait(batch)
-            except queue.Full:
-                _logger.warning("WS tick process queue full; dropping batch of %s", len(batch))
+                if _coalesce:
+                    batch = [(key, raw, ts) for key, (ts, raw) in _coalesce.items()]
+                    _coalesce = {}
+            if batch:
+                try:
+                    process_queue.put_nowait(batch)
+                except queue.Full:
+                    _logger.warning("WS tick process queue full; dropping batch of %s", len(batch))
+        except Exception:  # noqa: BLE001 -- one bad tick must not end the thread
+            _logger.exception("WS tick drain pass failed")
 
 
 def _stage_snapshot_cell(
     raw: Any,
     out: list[tuple[str, str, str, Any, str, dict[str, Any]]],
+    *,
+    received_at: float | None = None,
 ) -> None:
     """Stage one coalesced tick for the durable last-known-good quote snapshot.
 
@@ -345,7 +395,7 @@ def _stage_snapshot_cell(
     if not isinstance(raw, dict):
         return
     try:
-        result = normalize_icici_tick(raw)
+        result = normalize_icici_tick(raw, updated_at=received_at)
         if result is None:
             return
         parsed, cell = result
@@ -376,47 +426,175 @@ def _record_snapshot_cells(
         _logger.debug("Snapshot record failed", exc_info=True)
 
 
-def _cache_loop() -> None:
-    assert _process_queue is not None
+def _write_raw_batch(batch: RawBatch, ttl: int) -> RawBatch:
+    """Write one batch of raw ticks and its dirty notice in a single Redis round trip.
+
+    Returns the ticks written. Raises on a Redis error; the caller owns that.
+
+    One pipeline, not a SET and a PUBLISH per contract: with the client's 2s socket
+    timeout, a stalled Redis would otherwise hold this thread for 2s *per key*. Each key
+    gets only the life its tick has left (the rule the chain builder applies to cells),
+    and a tick already past that is not written at all.
+    """
+    now = time.time()
+    written: RawBatch = []
+    pipe = get_redis().pipeline(transaction=False)
+    for storage_key, raw, received_at in batch:
+        remaining = math.ceil(ttl - (now - received_at))
+        if remaining <= 0:
+            _cache_stats["stale_skipped"] += 1
+            continue
+        payload = json.dumps(
+            {"received_at": received_at, "raw": raw}, separators=(",", ":"), default=str
+        )
+        pipe.set(storage_key, payload, ex=remaining)
+        written.append((storage_key, raw, received_at))
+    if written:
+        # One notice per batch. The chain builder is the only subscriber and reads it as
+        # "something changed", whatever the message says.
+        pipe.publish(WS_TICK_DIRTY_CHANNEL, str(len(written)))
+        pipe.execute()
+    return written
+
+
+def _note_cache_error(exc: BaseException, batch_size: int) -> None:
+    now = time.monotonic()
+    _cache_stats["errors"] += 1
+    _cache_stats["errors_since_log"] += 1
+    _cache_stats["last_error"] = f"{type(exc).__name__}: {exc}"
+    _cache_stats["last_error_monotonic"] = now
+    last_log = _cache_stats["last_error_log_monotonic"]
+    if last_log is not None and (now - last_log) < _CACHE_ERROR_LOG_SECONDS:
+        return
+    _logger.warning(
+        "WS raw tick cache write failed (%s failed batch(es) since the last report; this one "
+        "held %s tick(s)). Live quotes are not reaching the chain builder until Redis answers.",
+        _cache_stats["errors_since_log"],
+        batch_size,
+        exc_info=exc,
+    )
+    _cache_stats["last_error_log_monotonic"] = now
+    _cache_stats["errors_since_log"] = 0
+
+
+def _process_batch(batch: RawBatch, ttl: int) -> None:
+    written = _write_raw_batch(batch, ttl)
+    if _cache_stats["last_error_monotonic"] is not None and (
+        _cache_stats["last_ok_monotonic"] is None
+        or _cache_stats["last_ok_monotonic"] < _cache_stats["last_error_monotonic"]
+    ):
+        _logger.warning("WS raw tick cache writes are landing again")
+    _cache_stats["last_ok_monotonic"] = time.monotonic()
+    snapshot_entries: list[tuple[str, str, str, Any, str, dict[str, Any]]] = []
+    for storage_key, raw, received_at in written:
+        _stage_snapshot_cell(raw, snapshot_entries, received_at=received_at)
+        for listener in list(_listeners):
+            try:
+                listener({"storage_key": storage_key, "raw": raw})
+            except Exception:
+                pass
+    _record_snapshot_cells(snapshot_entries)
+
+
+def _cache_loop(process_queue: "queue.Queue[RawBatch]", stop: threading.Event) -> None:
     ttl = int(getattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 300) or 300)
-    while not _stop.is_set():
+    while not stop.is_set():
         try:
-            batch = _process_queue.get(timeout=0.1)
+            batch = process_queue.get(timeout=0.1)
         except queue.Empty:
             continue
-        dirty_keys: list[str] = []
-        snapshot_entries: list[tuple[str, str, str, Any, str, dict[str, Any]]] = []
-        for storage_key, raw in batch:
-            payload = {
-                "received_at": time.time(),
-                "raw": raw,
-            }
-            cache_set_json(storage_key, payload, ex=ttl)
-            dirty_keys.append(storage_key)
-            _stage_snapshot_cell(raw, snapshot_entries)
-            for listener in list(_listeners):
-                try:
-                    listener({"storage_key": storage_key, "raw": raw})
-                except Exception:
-                    pass
-        _record_snapshot_cells(snapshot_entries)
-        for storage_key in dirty_keys:
-            cache_publish(WS_TICK_DIRTY_CHANNEL, storage_key)
-        _process_queue.task_done()
+        try:
+            _process_batch(batch, ttl)
+        except Exception as exc:  # noqa: BLE001 -- a Redis error must not end the thread
+            # The batch is dropped, not retried: raw ticks are last-value-wins and the
+            # next one for each contract is already on its way.
+            _note_cache_error(exc, len(batch))
+            stop.wait(_CACHE_ERROR_BACKOFF_SECONDS)
+        finally:
+            process_queue.task_done()
+
+
+def _start_threads_locked() -> None:
+    """Start whichever of the two threads is not running. Caller holds `_start_lock`."""
+    global _drain_thread, _cache_thread
+    assert _ingest_queue is not None
+    assert _process_queue is not None
+    if _drain_thread is None or not _drain_thread.is_alive():
+        _drain_thread = threading.Thread(
+            target=_drain_loop,
+            args=(_ingest_queue, _process_queue, _stop),
+            name="ws-tick-drain",
+            daemon=True,
+        )
+        _drain_thread.start()
+    if _cache_thread is None or not _cache_thread.is_alive():
+        _cache_thread = threading.Thread(
+            target=_cache_loop,
+            args=(_process_queue, _stop),
+            name="ws-tick-cache",
+            daemon=True,
+        )
+        _cache_thread.start()
+
+
+def revive_tick_pipeline() -> bool:
+    """Restart a pipeline thread that has died. Returns True when one was restarted.
+
+    Does nothing on a pipeline that was never started or was stopped on purpose. Both
+    loops catch their own errors, so a dead thread here means something got past that;
+    `_started` used to stay True regardless, which left raw ticks unwritten until the
+    process restarted. Called on every `start_tick_pipeline()` and every watchdog pass.
+    """
+    with _start_lock:
+        if not _started:
+            return False
+        dead = [
+            name
+            for name, th in (("ws-tick-drain", _drain_thread), ("ws-tick-cache", _cache_thread))
+            if th is None or not th.is_alive()
+        ]
+        if not dead:
+            return False
+        _start_threads_locked()
+        _cache_stats["thread_restarts"] += 1
+        _logger.error("WS tick pipeline thread(s) had died and were restarted: %s", ", ".join(dead))
+        return True
+
+
+def raw_cache_failing() -> bool:
+    """True when the pipeline is running but its raw tick writes are not landing.
+
+    For the price-feed watchdog, which judges silence from those same keys: when this is
+    True the quiet is on our side of the socket, and re-subscribing at ICICI cannot help.
+    """
+    if not _started:
+        return False
+    for th in (_drain_thread, _cache_thread):
+        if th is None or not th.is_alive():
+            return True
+    last_error = _cache_stats["last_error_monotonic"]
+    if last_error is None:
+        return False
+    last_ok = _cache_stats["last_ok_monotonic"]
+    return last_ok is None or last_ok < last_error
 
 
 def start_tick_pipeline() -> None:
     global _ingest_queue, _process_queue, _drain_thread, _cache_thread, _started, _stop
+    if _started:
+        revive_tick_pipeline()
+        return
     with _start_lock:
         if _started:
             return
         _stop = threading.Event()
         _ingest_queue = queue.Queue(maxsize=_ingest_qsize())
-        _process_queue = queue.Queue(maxsize=256)
-        _drain_thread = threading.Thread(target=_drain_loop, name="ws-tick-drain", daemon=True)
-        _cache_thread = threading.Thread(target=_cache_loop, name="ws-tick-cache", daemon=True)
-        _drain_thread.start()
-        _cache_thread.start()
+        _process_queue = queue.Queue(maxsize=_PROCESS_QUEUE_MAX_BATCHES)
+        _drain_thread = None
+        _cache_thread = None
+        _cache_stats["last_error_monotonic"] = None
+        _cache_stats["last_ok_monotonic"] = None
+        _start_threads_locked()
         _started = True
         _logger.info("WS tick pipeline started")
 
@@ -468,6 +646,14 @@ def clear_retained_pnl_quotes() -> int:
 def pipeline_stats() -> dict[str, Any]:
     return {
         "started": _started,
+        "drain_alive": bool(_drain_thread is not None and _drain_thread.is_alive()),
+        "cache_alive": bool(_cache_thread is not None and _cache_thread.is_alive()),
+        "cache_errors": _cache_stats["errors"],
+        "last_cache_error": _cache_stats["last_error"],
+        "last_cache_write_age_seconds": _age_since(_cache_stats["last_ok_monotonic"]),
+        "stale_ticks_skipped": _cache_stats["stale_skipped"],
+        "thread_restarts": _cache_stats["thread_restarts"],
+        "last_ingest_age_seconds": last_ingest_age_seconds(),
         "dropped_ticks": _dropped_ticks,
         "ingest_qsize": _ingest_queue.qsize() if _ingest_queue else 0,
         "process_qsize": _process_queue.qsize() if _process_queue else 0,
@@ -475,6 +661,18 @@ def pipeline_stats() -> dict[str, Any]:
         "pnl_flush": dict(_pnl_flush_stats),
         "last_tick_age_seconds": last_tick_age_seconds(),
     }
+
+
+def _age_since(monotonic_ts: float | None) -> float | None:
+    if monotonic_ts is None:
+        return None
+    return max(0.0, time.monotonic() - monotonic_ts)
+
+
+def last_ingest_age_seconds() -> float | None:
+    """Seconds since anything but an order event arrived from the socket, or None if
+    nothing has since this process started. Independent of Redis and of parsing."""
+    return _age_since(_last_ingest_monotonic)
 
 
 def last_tick_monotonic() -> float | None:

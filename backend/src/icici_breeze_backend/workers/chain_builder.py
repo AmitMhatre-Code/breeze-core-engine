@@ -18,6 +18,9 @@ _stop = threading.Event()
 # Safety cap while draining a burst of dirty-tick notifications (see _pubsub_loop) --
 # not expected to ever bind in practice, just prevents an unbounded drain loop.
 _PUBSUB_DRAIN_LIMIT = 10_000
+# Wait between attempts to re-subscribe after the pubsub connection fails.
+_PUBSUB_RETRY_INITIAL_SECONDS = 1.0
+_PUBSUB_RETRY_MAX_SECONDS = 30.0
 
 # Serializes the two loops below and enforces the rebuild cadence: both the timer
 # and the tick feed funnel through `_maybe_refresh`, so a burst of ticks can never
@@ -141,21 +144,41 @@ def _refresh_loop() -> None:
 
 
 def _pubsub_loop() -> None:
-    from icici_breeze_backend.app.db.redis_client import get_redis, redis_using_memory_fallback
+    """Rebuild on tick notices. Re-subscribes after a Redis error instead of ending:
+    one timeout used to leave the worker poll-only until it was restarted."""
+    from icici_breeze_backend.app.db.redis_client import redis_using_memory_fallback
 
     if redis_using_memory_fallback():
         return
+    backoff = _PUBSUB_RETRY_INITIAL_SECONDS
+    while not _stop.is_set():
+        started = time.monotonic()
+        try:
+            _pubsub_listen()
+        except Exception:
+            _logger.warning(
+                "chain-builder pubsub lost; poll-only for %.0fs, then re-subscribing",
+                backoff,
+                exc_info=True,
+            )
+        if time.monotonic() - started > _PUBSUB_RETRY_MAX_SECONDS:
+            backoff = _PUBSUB_RETRY_INITIAL_SECONDS  # it had been working; start over
+        _stop.wait(backoff)
+        backoff = min(backoff * 2, _PUBSUB_RETRY_MAX_SECONDS)
+
+
+def _pubsub_listen() -> None:
+    from icici_breeze_backend.app.db.redis_client import get_redis
+
+    pubsub = get_redis().pubsub(ignore_subscribe_messages=True)
     try:
-        client = get_redis()
-        pubsub = client.pubsub(ignore_subscribe_messages=True)
         pubsub.subscribe(WS_TICK_DIRTY_CHANNEL)
         while not _stop.is_set():
             message = pubsub.get_message(timeout=0.5)
             if message is None or message.get("type") != "message":
                 continue
-            # One dirty-notification is published per changed tick, which under a
-            # live tick feed can mean hundreds of messages per second -- but they
-            # all just mean "some active chain changed," so a burst only ever
+            # The API process publishes one notice per batch of changed ticks, and
+            # they all just mean "some active chain changed," so a burst only ever
             # needs one refresh, not one per message. Drain whatever's already
             # queued (non-blocking) before refreshing, or a fast tick feed makes
             # this loop fall permanently behind, redoing the same refresh over
@@ -171,8 +194,11 @@ def _pubsub_loop() -> None:
             # ticks kept arriving -- the drain bounds work *per burst*, not the rate
             # at which bursts are serviced. The cadence gate is what bounds the rate.
             _maybe_refresh()
-    except Exception:
-        _logger.debug("chain-builder pubsub unavailable; poll-only mode", exc_info=True)
+    finally:
+        try:
+            pubsub.close()
+        except Exception:
+            pass
 
 
 def _handle_signal(signum: int, _frame: object) -> None:

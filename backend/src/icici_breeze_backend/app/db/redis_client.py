@@ -51,6 +51,10 @@ class _MemoryPipeline:
         self._ops.append(("expire", (key, seconds), {}))
         return self
 
+    def publish(self, channel: str, message: str) -> "_MemoryPipeline":
+        self._ops.append(("publish", (channel, message), {}))
+        return self
+
     def execute(self) -> list[Any]:
         out: list[Any] = []
         for op, args, kw in self._ops:
@@ -66,6 +70,8 @@ class _MemoryPipeline:
                 out.append(self._store.hget(args[0], args[1]))
             elif op == "expire":
                 out.append(self._store.expire(args[0], args[1]))
+            elif op == "publish":
+                out.append(self._store.publish(args[0], args[1]))
         self._ops = []
         return out
 

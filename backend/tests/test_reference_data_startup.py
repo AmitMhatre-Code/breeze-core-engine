@@ -45,3 +45,28 @@ def test_bootstrap_runs_network_load_when_incomplete():
     orchestrator.run_reference_data_load.assert_called_once_with(
         force=True, trigger_mode="startup"
     )
+
+
+def test_scheduler_loop_survives_a_failed_tick(monkeypatch):
+    """B-28: `load_schedule()` ran with no `try`, so one "database is locked" ended the
+    daily reference-data scheduler for the life of the process."""
+    from icici_breeze_backend.app.services.reference_data import scheduler
+
+    calls = []
+
+    class _Stop:
+        def is_set(self):
+            return len(calls) >= 2
+
+        def wait(self, _seconds):
+            return None
+
+    def flaky_tick():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(scheduler, "_stop", _Stop())
+    monkeypatch.setattr(scheduler, "_scheduler_tick", flaky_tick)
+    scheduler._scheduler_loop()
+    assert len(calls) == 2
