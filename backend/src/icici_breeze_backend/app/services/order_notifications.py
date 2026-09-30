@@ -36,6 +36,9 @@ Fields deliberately NOT surfaced, because the captures prove they lie:
 from __future__ import annotations
 
 import logging
+import sqlite3
+import sys
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -158,6 +161,97 @@ class OrderNotification:
         return self.executed_quantity > 0
 
 
+_WS_MANAGER_MODULE = "icici_breeze_backend.app.services.breeze_websocket_manager"
+_canonical_ids: dict[str, str] = {}
+_canonical_lock = threading.Lock()
+
+
+def canonical_user_id(raw_user_id: str) -> str:
+    """The app's own spelling of the user id an order notification names (B-19).
+
+    Every consumer looks the id up exactly — SQLite `user_id = ?`, dict keys — but ICICI
+    may send it in a different case from the one the user typed at registration (the real
+    capture reads "VIKRAMMH"). Unmatched, every user-keyed consumer misses in silence: SG
+    Completed/Reset, manual-trade detection, order-book cache invalidation, live Day's P&L.
+
+    The socket belongs to one broker session, so its user is checked first; then the
+    account table, case-insensitively, accepting only a single match. Anything else is
+    returned unchanged.
+    """
+    raw = str(raw_user_id or "").strip()
+    if not raw:
+        return raw
+    with _canonical_lock:
+        known = _canonical_ids.get(raw)
+    if known:
+        return known
+    found = _ws_user_matching(raw) or _account_user_matching(raw)
+    _log_first_sighting(raw, found)
+    if found:
+        with _canonical_lock:
+            _canonical_ids[raw] = found
+        return found
+    return raw
+
+
+_sighted: set[str] = set()
+
+
+def _log_first_sighting(raw: str, found: str | None) -> None:
+    """Record, once per id per process, how ICICI spells `userId` in order events.
+
+    The casing was never observable from the app (the API Playground does not show order
+    events), so this line in the log bundle is the live check for B-19. WARNING when the
+    spelling differs or nothing matched, since that is when user-keyed consumers would
+    have missed without `canonical_user_id`.
+    """
+    with _canonical_lock:
+        if raw in _sighted:
+            return
+        _sighted.add(raw)
+    if found == raw:
+        _logger.info("Order feed userId=%r matches the stored user id exactly", raw)
+    elif found:
+        _logger.warning(
+            "Order feed userId=%r differs in case from the stored user id %r; using the stored one",
+            raw,
+            found,
+        )
+    else:
+        _logger.warning("Order feed userId=%r matches no stored user id; kept as sent", raw)
+
+
+def _ws_user_matching(raw: str) -> str | None:
+    ws = sys.modules.get(_WS_MANAGER_MODULE)  # never import the SDK from a parser
+    if ws is None:
+        return None
+    try:
+        current = ws.current_ws_user_id()
+    except Exception:  # noqa: BLE001
+        return None
+    return current if current and current.lower() == raw.lower() else None
+
+
+def _account_user_matching(raw: str) -> str | None:
+    try:
+        from icici_breeze_backend.core import config as cfg
+
+        with sqlite3.connect(cfg.DATA_PATH + cfg.USERS_DB) as conn:
+            rows = conn.execute(
+                "SELECT user_id FROM user_account WHERE user_id = ? COLLATE NOCASE LIMIT 2",
+                (raw,),
+            ).fetchall()
+    except Exception:  # noqa: BLE001 — no account table (tests, first boot): keep as sent
+        return None
+    return str(rows[0][0]) if len(rows) == 1 else None
+
+
+def reset_state_for_tests() -> None:
+    with _canonical_lock:
+        _canonical_ids.clear()
+        _sighted.clear()
+
+
 def parse_order_notification(raw: Any) -> OrderNotification | None:
     """Normalize one raw order-notification dict. Returns None for anything that
     isn't a parseable F&O order event (price ticks, cash-shape payloads, junk).
@@ -173,7 +267,7 @@ def parse_order_notification(raw: Any) -> OrderNotification | None:
             return None
 
         order_id = str(raw.get("orderReference") or "").strip()
-        user_id = str(raw.get("userId") or "").strip()
+        user_id = canonical_user_id(str(raw.get("userId") or ""))
         if not order_id or not user_id:
             return None
 

@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Any, Iterable
+import threading
+from typing import Any, Callable, Iterable
 
 from icici_breeze_backend.app.core.strike import strike_key
 from icici_breeze_backend.app.core.timezone import today_ist_date
@@ -156,15 +157,114 @@ def on_order_notification(n: OrderNotification) -> None:
 
         order_book_cache.invalidate_user(n.user_id)
 
-        rule = repo.get_active_rule_for_group(n.user_id, n.stock_code, n.expiry_display)
-        if rule is None:
-            return  # no live SG for this contract's group — nothing to do
-        if n.order_id in repo.order_ids_for_rule(rule):
-            _handle_own_exit_order(n.user_id, rule, n)
-        else:
-            _handle_foreign_order(n.user_id, rule, n)
+        with _held_lock:
+            rule = repo.get_active_rule_for_group(n.user_id, n.stock_code, n.expiry_display)
+            if rule is None:
+                return  # no live SG for this contract's group — nothing to do
+            if rule.status == "triggered":
+                # The dispatcher is still sending this SG's exits, and an exit can fill
+                # (and be reported here) before `place_order` has even returned its id.
+                # Judging it now would call our own exit the user's trade (B-03), so it
+                # waits until every id is known — see `finish_dispatch`.
+                _held.setdefault(rule.id, []).append(n)
+                return
+        _route(n.user_id, rule, n)
     except Exception:  # noqa: BLE001 — must not break the shared tick callback
         _logger.exception("SG lifecycle failed for order_id=%s", n.order_id)
+
+
+def _route(user_id: str, rule: SquareOffRuleRecord, n: OrderNotification) -> None:
+    if n.order_id in repo.order_ids_for_rule(rule):
+        _handle_own_exit_order(user_id, rule, n)
+    else:
+        _handle_foreign_order(user_id, rule, n)
+
+
+# ---------------------------------------- notifications held while exits go out (B-03)
+
+# rule_id -> notifications for that SG that arrived while it was `triggered`. In memory on
+# purpose: a restart mid-dispatch is resolved from the saved exit orders (B-13), not from
+# these. One lock covers both the read-and-hold above and `finish_dispatch`'s write-and-
+# drain, so a notification can never be held after its SG's hold has been drained.
+_held: dict[str, list[OrderNotification]] = {}
+_held_lock = threading.Lock()
+
+
+def held_fill_not_ours(
+    rule_id: str, our_ids: set[str], unanswered: Iterable[tuple[str, str]] = ()
+) -> OrderNotification | None:
+    """A held fill that no exit order of this dispatch explains: the user trading the group
+    while its exits are going out, and the dispatcher's cue to stand down.
+
+    Asked only between sends, when every order sent so far has either returned its id
+    (`our_ids`) or been looked up. `unanswered` lists the (strike key, right) of orders
+    whose answer was lost and could not be found in the book: a fill on one of those
+    contracts may be that very order, so it is not held against the dispatch.
+    """
+    exempt = {(str(s), str(r)) for s, r in unanswered}
+    with _held_lock:
+        for n in _held.get(rule_id, ()):
+            if not n.moved_position or n.order_id in our_ids:
+                continue
+            if (strike_key(n.strike) or "", n.right) in exempt:
+                continue
+            return n
+    return None
+
+
+def finish_dispatch(
+    user_id: str, rule_id: str, write: Callable[[], bool]
+) -> tuple[bool, list[OrderNotification]]:
+    """Run the dispatcher's final status write and take what was held while it ran.
+
+    The write and the drain happen under the lock that holds notifications, so none can
+    slip in between: an event either was held (and is returned here) or arrives after the
+    write and is judged against the new status. A write that fails (the rule was no longer
+    `triggered`) still drains, so nothing is held forever. The caller passes the held
+    events to `replay_held` once it has said what it did.
+    """
+    with _held_lock:
+        try:
+            written = bool(write())
+        finally:
+            held = _held.pop(rule_id, [])
+    return written, held
+
+
+def replay_held(user_id: str, rule_id: str, held: list[OrderNotification]) -> None:
+    """Judge held events now that every exit order's id is on the row: our own rejection
+    resets a Fired SG, our own fills can complete it, and a fill no exit order explains
+    is the user's trade. Nothing to do unless the SG ended Fired."""
+    try:
+        _replay_held(user_id, rule_id, held)
+    except Exception:  # noqa: BLE001 — the REST reconcile is still the backstop
+        _logger.exception("Replaying held order events failed for SG %s", rule_id)
+
+
+def _replay_held(user_id: str, rule_id: str, held: list[OrderNotification]) -> None:
+    completion_due = False
+    for n in held:
+        rule = repo.get_rule(rule_id)
+        if rule is None or rule.status != "fired":
+            return  # already settled -- a Reset from the final write needs nothing more
+        label = _fmt_leg(n.stock_code, n.strike, n.right)
+        if n.order_id in repo.order_ids_for_rule(rule):
+            if n.is_terminal_failure:
+                _reset(user_id, rule, reason_order_failed(label, n.status))
+                return
+            completion_due = completion_due or n.is_terminal_success
+        elif n.moved_position:
+            _reset(user_id, rule, reason_manual_intervention(label))
+            return
+    if completion_due:
+        rule = repo.get_rule(rule_id)
+        if rule is not None and rule.status == "fired":
+            _maybe_complete(user_id, rule)
+
+
+def reset_state_for_tests() -> None:
+    with _held_lock:
+        _held.clear()
 
 
 def _handle_own_exit_order(

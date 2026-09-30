@@ -44,7 +44,8 @@ export type SquareOffRuleLegResult = {
   strike_price: string;
   right: string;
   quantity: string;
-  status: "success" | "partial" | "failed";
+  /** `placing` only while the rule is `triggered` (exits still going out). */
+  status: "success" | "partial" | "failed" | "placing";
   error?: string | null;
   order_id?: string | null;
   action?: string | null;

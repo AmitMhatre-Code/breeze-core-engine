@@ -93,15 +93,17 @@ def _triggered_rule():
 
 
 def _place(breeze, rule_id, on_first_retry=lambda: None):
-    return d._place_chunk_with_retry(
+    chunk = d._place_chunk_with_retry(
         breeze,
         user_id=USER,
-        rule_id=rule_id,
+        dispatch=d._Dispatch(rule_id, [LEG]),
+        index=0,
         leg=LEG,
         chunk_qty=130,
         limit_price=1.75,
         on_first_retry=on_first_retry,
     )
+    return chunk.order_id, chunk.error
 
 
 # ------------------------------------------------------------------ what is retryable
@@ -178,15 +180,27 @@ def test_retry_aborts_when_the_rule_is_reset_mid_wait(db_path):
     assert breeze.calls == 1, "must not place again once the rule stopped being ours"
 
 
-def test_still_firing_is_true_only_while_triggered(db_path):
+def test_stand_down_only_once_no_longer_triggered(db_path):
     rule = _triggered_rule()
-    assert d._still_firing(rule.id) is True
+    assert d._stand_down_reason(d._Dispatch(rule.id, [LEG])) is None
     repo.mark_reset(rule.id, "whatever")
-    assert d._still_firing(rule.id) is False
+    assert d._stand_down_reason(d._Dispatch(rule.id, [LEG])) is not None
 
 
-def test_missing_rule_is_not_still_firing(db_path):
-    assert d._still_firing("no-such-rule") is False
+def test_missing_rule_stands_down(db_path):
+    assert d._stand_down_reason(d._Dispatch("no-such-rule", [LEG])) is not None
+
+
+def test_a_503_is_not_retried(db_path):
+    """A 503 is not a refusal: the order may already be at the exchange (B-20). It is
+    looked up in the order book, never re-sent."""
+    rule = _triggered_rule()
+    breeze = FakeBreeze([{"Status": 503, "Error": "Service Unavailable", "outcome_unknown": True}])
+    breeze.get_orders = lambda *a, **k: {"Status": 200, "Success": []}
+    order_id, error = _place(breeze, rule.id)
+    assert order_id is None
+    assert breeze.calls == 1
+    assert "not placed" in (error or "")
 
 
 # ------------------------------------------------------------------ user is told

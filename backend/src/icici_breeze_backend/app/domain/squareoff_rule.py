@@ -47,7 +47,9 @@ class SquareOffRuleLegResult(BaseModel):
     strike_price: str
     right: str
     quantity: str
-    status: Literal["success", "partial", "failed"]
+    # `placing` exists only while the SG is `triggered` (the dispatcher's running record,
+    # B-03/B-13); every final write replaces it with one of the other three.
+    status: Literal["success", "partial", "failed", "placing"]
     error: Optional[str] = None
     order_id: Optional[str] = None
     """Legacy singular field, kept for rules fired before order_ids existed (only ever one order per leg then)."""

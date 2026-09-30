@@ -23,10 +23,14 @@ How the question gets answered:
 * `Journal` writes each order onto the row as `detail.intents` just before it is sent, and
   its id the moment ICICI returns one. Unwind orders sent during an aborted entry are
   journaled too, so a crash mid-unwind nets out correctly.
-* `locate_order` finds an order that has no id by reading the order book: same contract,
-  side and quantity, placed within a window around the send. One match is the order; none
-  means it never went in; two or more, an unreadable book or an unreadable order time is
-  "unknown" -- never guessed.
+* `locate_order` finds an order that has no id by reading the order book. Every order goes
+  out with its own `user_remark` tag (`new_tag`), which ICICI returns in the order list, so
+  the row carrying that tag is the order and no such row means it never went in. An intent
+  with no tag (journaled by an older build), or a book that carries no remarks at all, falls
+  back to the older match: same contract, side and quantity, placed within a window around
+  the send. There, one match is the order; none means it never went in; two or more, or an
+  unreadable order time, is "unknown". An unreadable book is always "unknown" -- never
+  guessed.
 * `resolve_pending` reads every journaled order (cancelling any still resting -- nothing is
   managing an entry from a pass that no longer exists), nets what each leg holds, and
   settles the row:
@@ -43,13 +47,17 @@ It runs at startup and on every bot pass. `placing()` marks a row whose orders a
 in this process right now, so the resolver never answers a question that is still being
 asked (CAS Bingo's manual route places from a request thread while its loop runs).
 
-`user_remark` tagging is deliberately absent until a live check shows ICICI echoes it in the
-order list; when it does, a tag match slots into `_matches` ahead of the time window.
+The tag is eight lowercase letters, the one shape checked against ICICI (2026-09-30: a
+limit order placed with `user_remark: "fmtcheck"` came back from `get_order_list` with it).
+A remark ICICI disliked would reject the very orders this exists to protect, so nothing
+longer or fancier is sent until it has been tried on the live account.
 """
 from __future__ import annotations
 
 import datetime
 import logging
+import secrets
+import string
 import threading
 import time
 from contextlib import contextmanager
@@ -110,9 +118,21 @@ def in_flight(cycle_id: str) -> bool:
 # --------------------------------------------------------------------------------------
 
 
-def intent_fields(leg: Any, price: float, sent_at: float) -> dict[str, Any]:
+_TAG_LENGTH = 8
+
+
+def new_tag() -> str:
+    """A fresh `user_remark` for one order: what `locate_order` finds it by if its answer is
+    lost. Random, so two sends of the same contract, side and quantity never look alike."""
+    return "".join(secrets.choice(string.ascii_lowercase) for _ in range(_TAG_LENGTH))
+
+
+def intent_fields(
+    leg: Any, price: float, sent_at: float, tag: Optional[str] = None
+) -> dict[str, Any]:
     """One order, as the journal stores it and the order book is searched for it."""
     return {
+        "tag": tag,
         "stock_code": str(leg.stock_code),
         "exchange_code": str(leg.exchange_code),
         "right": str(leg.right),
@@ -141,9 +161,9 @@ class Journal:
         detail.setdefault("intents", [])
         cycle.detail = detail
 
-    def sending(self, leg: Any, price: float, sent_at: float) -> int:
+    def sending(self, leg: Any, price: float, sent_at: float, tag: Optional[str] = None) -> int:
         intents = self._cycle.detail["intents"]
-        intents.append(intent_fields(leg, price, sent_at))
+        intents.append(intent_fields(leg, price, sent_at, tag))
         self._persist()
         return len(intents) - 1
 
@@ -187,8 +207,8 @@ def _expiry_date(text: Any) -> Optional[datetime.date]:
 def _order_time(text: Any) -> Optional[float]:
     """ICICI's `order_datetime` as an epoch, or None when it cannot be read.
 
-    `DD-MON-YYYY HH:MM:SS` is the shape the GTT order book uses; the plain order list's
-    shape is unverified from here, so the ISO shapes are accepted too. An unreadable time is
+    `DD-MON-YYYY HH:MM:SS` is the shape both the GTT order book and the plain order list
+    use (`30-Sep-2026 12:52:59`, checked live 2026-09-30); the ISO shapes are accepted too. An unreadable time is
     never guessed: the caller treats the match as unknown.
     """
     raw = str(text or "").strip()
@@ -237,6 +257,10 @@ def locate_order(
 
     `claimed` holds ids already known to belong to something else -- another attempt, another
     cycle -- so they can never be mistaken for this send. One `get_order_list` call.
+
+    An intent that carries a `tag` is matched on it alone: the tag went out as the order's
+    `user_remark` and is unique to that send, so an identical order the user placed by hand,
+    or a sibling chunk of the same size, cannot be mistaken for it.
     """
     sent_at = float(intent.get("sent_at") or 0)
     exchange = str(intent.get("exchange_code") or cfg.NFO)
@@ -249,11 +273,25 @@ def locate_order(
     if not isinstance(response, dict) or response.get("Status") != 200:
         return Located("unknown", why="the order book could not be read")
 
+    rows = [row for row in response.get("Success") or [] if isinstance(row, dict)]
+    tag = str(intent.get("tag") or "").strip().lower()
+    # The tag decides only while the book is seen to carry remarks. If ICICI ever stopped
+    # returning the field, "no row has my tag" would prove nothing.
+    if tag and any("user_remark" in row for row in rows):
+        tagged = [
+            str(row.get("order_id") or "")
+            for row in rows
+            if str(row.get("user_remark") or "").strip().lower() == tag and row.get("order_id")
+        ]
+        if not tagged:
+            return Located("absent")
+        if len(tagged) > 1:
+            return Located("unknown", why=f"{len(tagged)} orders carry this order's tag")
+        return Located("found", order_id=tagged[0])
+
     in_window: list[str] = []
     untimed = 0
-    for row in response.get("Success") or []:
-        if not isinstance(row, dict):
-            continue
+    for row in rows:
         order_id = str(row.get("order_id") or "")
         if not order_id or order_id in claimed or not _matches(row, intent):
             continue

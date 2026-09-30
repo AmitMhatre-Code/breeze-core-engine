@@ -157,6 +157,7 @@ def test_fired_rule_is_not_reset(db_path):
     """A fired SG's own exits legitimately empty the group — that is Completed, and
     `reconcile_fired_rules_for_user` owns it."""
     rule = _arm_with_open_leg()
+    repo.mark_triggered(rule.id)
     repo.mark_fired(rule.id, [])
     _sync([])
     assert guard.reconcile_fully_closed_groups(USER) == 0

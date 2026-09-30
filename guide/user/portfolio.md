@@ -103,6 +103,8 @@ A Profit Booking / Stop Loss rule watches a group's total P&L and closes **every
 
 When the rule fires, every leg is closed with a **limit order** priced off its last traded price by the offset: buy legs above the price, sell legs below it. That makes the order likely to fill quickly without being an unprotected market order. The rule is checked on the same cycle as the app's live P&L (see [Engine Settings](settings-automation.md#engine-settings)).
 
+Short legs are bought back first, then long legs are sold. If a short leg's buy-back cannot be placed, the long legs on the same side (calls or puts) are **held back** rather than sold, because selling them would leave that short uncovered. The Telegram message and the rule's details mark those legs **Held back**; close them together yourself. If you trade a leg of the group while the exit orders are still going out, the rule stops placing the rest and resets.
+
 If you have not linked Telegram, the dialog offers a **Register** link. With Telegram linked you get a message the moment a rule fires. See [Telegram Alerts](settings-automation.md#telegram-alerts).
 
 > [!WARNING]
@@ -116,12 +118,14 @@ Armed rules and the orders they place are also listed on the [Order Book](order-
 
 ### When a rule resets
 
-A rule **resets** (stops watching) when it can no longer act safely: for example you changed the group by adding or closing a leg, or one of its exit orders was rejected. A reset rule shows **Reset** and a short explanation under the group's name. Click the explanation to read it in full.
+A rule **resets** (stops watching) when it can no longer act safely: for example you changed the group by adding or closing a leg, one of its exit orders was rejected, you traded the group while its exit orders were going out, or your server restarted while it was placing them. After a restart the rule does not send the remaining exits; it resets and lists the orders it had already sent. A reset rule shows **Reset** and a short explanation under the group's name. Click the explanation to read it in full.
 
 A reset stops **future** automation, but it does **not** cancel exit orders it already placed. Those can still fill:
 
 - **Reset · N live** (amber): exit orders are still working at ICICI.
 - **Reset · action needed** (red): an exit order is still working for a leg that is **already closed**. If it fills it opens a **new position in the opposite direction**. A red banner at the top of every page warns you until it is dealt with.
+
+If the explanation says ICICI's answer to an exit order was **lost**, that order may have reached the exchange even though the app could not confirm it. Check the [Order Book](order-book.md) before placing anything yourself.
 
 Open the rule dialog to see the **Still live** orders. **Cancel remaining exit orders** cancels them for you. You cannot dismiss or re-arm the rule while any of its exit orders is still working.
 

@@ -64,8 +64,8 @@ def _reset_rule(stock="NIFTY", order_id="ORD1", exchange="NFO"):
         stop_loss_premium_pct=5,
         legs_snapshot={SCRIP: 130},
     )
-    repo.mark_fired(
-        rule.id,
+    repo.mark_triggered(rule.id)
+    repo.mark_fired(rule.id,
         [
             {
                 "scrip_key": SCRIP,

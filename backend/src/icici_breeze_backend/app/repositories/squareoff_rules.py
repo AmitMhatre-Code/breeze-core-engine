@@ -362,48 +362,83 @@ def disarm_rule(user_id: str, rule_id: str) -> bool:
         return cur.rowcount > 0
 
 
-def mark_triggered(rule_id: str) -> None:
-    """Transient marker: this poll cycle detected a breach and is dispatching close
-    orders now. Defensive WHERE so a rule that's already moved on (e.g. re-fired by a
-    duplicate event) isn't bounced back to 'triggered'."""
+def mark_triggered(rule_id: str) -> bool:
+    """Armed -> Triggered: this poll cycle detected a breach and is dispatching close
+    orders now. Only from `armed`, and the caller must stop when this returns False --
+    the rule has already moved on (a duplicate event, or someone else acted on it), and
+    dispatching again would stack a second set of exits on the first."""
     with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE portfolio_squareoff_rules SET status = 'triggered' WHERE id = ? AND status = 'armed'",
             (rule_id,),
         )
         conn.commit()
+        return cur.rowcount > 0
 
 
-def mark_fired(rule_id: str, leg_results: list[dict[str, Any]]) -> None:
+def record_exit_orders(rule_id: str, leg_results: list[dict[str, Any]]) -> bool:
+    """Save the exit orders a `triggered` SG has sent so far, while it is still sending.
+
+    Written before each order goes out and again the moment ICICI returns its id, so a
+    crash mid-dispatch leaves the orders on the row (B-13) instead of only in memory.
+    Only while `triggered`: False means the rule is no longer the one being fired.
+    """
     with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
+        cur = conn.execute(
+            "UPDATE portfolio_squareoff_rules SET leg_results = ? "
+            "WHERE id = ? AND status = 'triggered'",
+            (json.dumps(leg_results), rule_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def exit_order_record(rule_id: str) -> list[dict[str, Any]]:
+    """The raw `leg_results` JSON, including the fields `SquareOffRuleLegResult` drops
+    (`placed_quantity`, and `sending` for an order that went out with no answer yet).
+    Only the restart recovery of a `triggered` SG needs those."""
+    with sqlite3.connect(_db_path()) as conn:
+        row = conn.execute(
+            "SELECT leg_results FROM portfolio_squareoff_rules WHERE id = ?", (rule_id,)
+        ).fetchone()
+    data = _json_or_none(row[0]) if row else None
+    return [dict(item) for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
+
+def mark_fired(rule_id: str, leg_results: list[dict[str, Any]]) -> bool:
+    """Triggered -> Fired. Only from `triggered`: the dispatcher's final write must never
+    overwrite a state something else has already settled (B-03)."""
+    with sqlite3.connect(_db_path()) as conn:
+        cur = conn.execute(
             """
             UPDATE portfolio_squareoff_rules
             SET status = 'fired', fired_at = ?, leg_results = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'triggered'
             """,
             (ist_timestamp(), json.dumps(leg_results), rule_id),
         )
         conn.commit()
+        return cur.rowcount > 0
 
 
-def mark_fire_failed(rule_id: str, leg_results: list[dict[str, Any]], reason: str) -> None:
+def mark_fire_failed(rule_id: str, leg_results: list[dict[str, Any]], reason: str) -> bool:
     """A placement failure is one flavour of Reset — the SG is no longer monitoring and
     the user must re-arm. `leg_results` is still stored: any legs that DID get an order
     placed before the failure are live orphans, and that stored set is what the orphan
-    warning and bulk-cancel act on."""
+    warning and bulk-cancel act on. Only from `triggered`, like `mark_fired`."""
     fired = ist_timestamp()
     with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE portfolio_squareoff_rules
             SET status = 'reset', fired_at = ?,
                 resolved_at = ?, leg_results = ?, reset_reason = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'triggered'
             """,
             (fired, fired, json.dumps(leg_results), reason, rule_id),
         )
         conn.commit()
+        return cur.rowcount > 0
 
 
 def get_rule(rule_id: str) -> Optional[SquareOffRuleRecord]:

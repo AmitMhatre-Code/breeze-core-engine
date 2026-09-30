@@ -301,6 +301,51 @@ def test_a_lost_answer_whose_order_is_in_the_book_is_followed_to_its_fill():
     assert len(broker.placed) == 1, "never re-sent"
 
 
+class _TaggingBroker(FakeBroker):
+    """Puts rows in the book while the placement is "lost", as ICICI would: `ours` decides
+    whether the order that carries this send's tag is among them."""
+
+    def __init__(self, *, ours, **kw):
+        super().__init__(place=[{"raise": "socket died"}], book=[], **kw)
+        self._ours = ours
+
+    def place_order(self, *a, **kw):
+        self._book.append({**_book_row("MANUAL", at=NOW + 1), "user_remark": ""})
+        if self._ours:
+            self._book.append({**_book_row("OURS", at=NOW + 1), "user_remark": kw["user_remark"]})
+        return super().place_order(*a, **kw)
+
+
+def test_every_bot_order_goes_out_with_its_own_tag():
+    broker = FakeBroker(
+        place=[{"ok": True, "order_id": "A"}, {"ok": True, "order_id": "B"}],
+        fills={"A": {"quantity_executed": 0, "status": "Cancelled"},
+               "B": {"quantity_executed": 75, "status": "Executed"}},
+    )
+    _place(broker, attempts=2)
+    tags = [o["user_remark"] for o in broker.placed]
+    assert len(tags) == 2 and tags[0] != tags[1]
+    assert all(len(t) == 8 and t.isalpha() and t.islower() for t in tags)
+
+
+def test_a_lost_answer_is_found_by_its_tag_not_by_an_identical_manual_order():
+    """Identical contract, side, quantity and time: before the tag this was "unknown" and
+    the bot stood down."""
+    broker = _TaggingBroker(
+        ours=True, fills={"OURS": {"quantity_executed": 75, "status": "Executed"}}
+    )
+    result = _place(broker)
+    assert result.ok and result.order_id == "OURS"
+
+
+def test_an_identical_manual_order_is_not_adopted_as_the_bots_own():
+    """The bot's order never went in. Matching on contract and time alone would have
+    adopted the user's hand-placed order as the bot's position."""
+    result = _place(_TaggingBroker(ours=False))
+    assert not result.ok and not result.outcome_unknown
+    assert result.order_id in (None, "")
+
+
 def test_a_lost_answer_with_nothing_in_the_book_is_a_refusal():
     broker = FakeBroker(place=[{"raise": "socket died"}], book=[])
     result = _place(broker)

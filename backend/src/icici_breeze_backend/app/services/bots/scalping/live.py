@@ -302,7 +302,8 @@ def place_and_confirm(
         result.attempts = attempt + 1
         price = limit_on_tick(float(price_for_attempt(attempt)), leg.action)
         sent_at = wall()
-        token = journal.sending(leg, price, sent_at) if journal is not None else None
+        tag = order_intents.new_tag()
+        token = journal.sending(leg, price, sent_at, tag) if journal is not None else None
         try:
             response = proc.place_order(
                 user_id,
@@ -315,6 +316,7 @@ def place_and_confirm(
                 leg.expiry_display,
                 leg.quantity,
                 exchange_code=leg.exchange_code,
+                user_remark=tag,
             )
         except Exception as exc:  # noqa: BLE001
             response = {
@@ -339,7 +341,7 @@ def place_and_confirm(
             claimed = set(ours) | (set(journal.order_ids()) if journal is not None else set())
             sleep(order_intents.LOCATE_SETTLE_SECONDS)
             found = order_intents.locate_order(
-                proc, user_id, order_intents.intent_fields(leg, price, sent_at), claimed=claimed,
+                proc, user_id, order_intents.intent_fields(leg, price, sent_at, tag), claimed=claimed,
             )
             if found.state == "absent":
                 result.error = f"{error} The order book shows it was not placed."

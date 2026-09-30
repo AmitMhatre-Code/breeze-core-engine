@@ -20,6 +20,22 @@ def _is_breeze_url(url):
     return bool(u and "api.icicidirect.com" in u and "breezeapi" in u)
 
 
+def is_order_placement(method, url) -> bool:
+    """A new order: breeze_connect POSTs it to `<host>order` (GTT uses `gttorder`).
+
+    The one call whose unclear answer is dangerous. Re-sending a modify or a cancel cannot
+    open a second position; re-sending a placement can (B-20, #24).
+    """
+    path = str(url or "").split("?", 1)[0].rstrip("/")
+    return str(method or "").upper() == "POST" and _is_breeze_url(url) and path.endswith("/order")
+
+
+# Answers to a placement that come from the network path rather than from ICICI deciding:
+# the gateway failing (502/504), or being unavailable (503). None of them says the order
+# was refused. 500 is left out, since ICICI's own rejections may arrive under it.
+_PLACEMENT_UNCLEAR_STATUSES = frozenset({502, 503, 504})
+
+
 def _preview_for_log(text: str, max_len: int = 320) -> str:
     """Single-line preview for logs (avoid multi-line log spam)."""
     if not text:
@@ -99,6 +115,30 @@ class _SafeBreezeResponse:
         return self._raw.iter_content(chunk_size=chunk_size, decode_unicode=decode_unicode)
 
     def json(self):
+        data = self._json()
+        if (
+            isinstance(data, dict)
+            and is_order_placement(self._method, self._url)
+            and self._placement_unclear(data)
+        ):
+            # Not a refusal: the order may have been accepted before the answer went
+            # wrong. Callers look it up in the order book instead of re-sending or
+            # assuming "not placed" (B-20, B-21, `order_intents.locate_order`).
+            return {**data, "outcome_unknown": True}
+        return data
+
+    def _placement_unclear(self, data: dict) -> bool:
+        if data.get("icici_throttled") or data.get("advisory_shed"):
+            return False  # synthetic refusals built before or instead of any send
+        if int(self._raw.status_code or 0) in _PLACEMENT_UNCLEAR_STATUSES:
+            return True
+        try:
+            status = int(data.get("Status") or 0)
+        except (TypeError, ValueError):
+            return False
+        return status in _PLACEMENT_UNCLEAR_STATUSES
+
+    def _json(self):
         text = self.text
         ct = (getattr(self._raw, "headers", {}) or {}).get("Content-Type", "")
         ct = (ct or "").split(";")[0].strip() or None
@@ -193,6 +233,7 @@ def _run_breeze_request(method: str, url: str, perform_http, request_body: str |
         record_body=request_body,
         classify_response=_classify_requests_response,
         build_result=build_result,
+        retry_unavailable=not is_order_placement(m, u),
     )
     return _SafeBreezeResponse(out, method=m, url=u)
 

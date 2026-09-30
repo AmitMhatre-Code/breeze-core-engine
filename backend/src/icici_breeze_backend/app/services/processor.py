@@ -525,8 +525,15 @@ def _breeze_limit_error(user_id: str | None = None) -> dict:
 
 
 def _is_broker_rate_limited(response: dict | None) -> bool:
-    """True when ICICI / Breeze indicates HTTP 429 or equivalent HTML body in Error text."""
+    """True when ICICI / Breeze indicates HTTP 429 or equivalent HTML body in Error text.
+
+    Never for an `outcome_unknown` placement answer (a 503, a gateway error, a garbled
+    body): that order may already be at the exchange, and every caller that sees
+    "rate limited" re-sends — the browser's chunk loop included (B-20).
+    """
     if not response:
+        return False
+    if response.get("outcome_unknown"):
         return False
     if response.get("icici_throttled"):
         return True
@@ -540,7 +547,7 @@ def _is_broker_rate_limited(response: dict | None) -> bool:
 
 def _order_rate_limit_flags(response: dict | None) -> tuple[bool, bool]:
     """Return (rate_limited, daily_limit_exhausted) for client pacing flows."""
-    if not response:
+    if not response or response.get("outcome_unknown"):
         return False, False
     if response.get("icici_throttled"):
         return True, bool(response.get("daily_limit_exhausted"))
@@ -3167,7 +3174,7 @@ class processor():
             "Success": success_payload,
         }
 
-    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO, aggressive_limit: bool = False):
+    def place_order(self,user_id,product_type,stock_code,action,strike_price,right,price,expiry_date,quantity, exchange_code: str = cfg.NFO, aggressive_limit: bool = False, user_remark: str = ""):
         if aggressive_limit and not cfg.AGGRESSIVE_LIMIT_ORDER_ENABLED:
             return _icici_error(AGGRESSIVE_LIMIT_DISABLED_MESSAGE)
         breeze = self.get_session_breeze(user_id)
@@ -3212,6 +3219,9 @@ class processor():
                 disclosed_quantity="0",
                 exchange_code=exchange_code,
                 product=prod,
+                # The caller's tag for finding this order in the book if the answer is
+                # lost (`order_intents.new_tag`); ICICI returns it in the order list.
+                user_remark=str(user_remark or ""),
             )
         except Exception as e:
             place_order_sdk_exception = True
@@ -3669,6 +3679,12 @@ class processor():
         danger_line = None
         if not ok and not rl:
             err = (response or {}).get("Error") or "Unknown error"
+            if (response or {}).get("outcome_unknown"):
+                # Not a refusal: the order may be live. Say so, so it is not re-placed blind.
+                err = (
+                    f"{err} — ICICI's answer was lost, so this order may still have been "
+                    f"placed. Check the Order Book before placing it again."
+                )
             price_label = (
                 "Aggressive limit (LTP-derived)"
                 if aggressive_limit

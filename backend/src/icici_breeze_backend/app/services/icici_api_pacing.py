@@ -57,6 +57,12 @@ def is_breeze_rate_limited(status: Any, error_text: str | None = None) -> bool:
     return False
 
 
+def _is_unavailable(http_status: Any, body: dict[str, Any] | None) -> bool:
+    """A 503 (HTTP or body), as opposed to a 429: unavailable, not refused."""
+    statuses = {http_status, (body or {}).get("Status")}
+    return any(str(s).strip() == "503" for s in statuses if s is not None)
+
+
 def is_icici_daily_limit_exceeded(error_text: str | None) -> bool:
     e = str(error_text or "").lower()
     return (
@@ -324,8 +330,14 @@ class GlobalIciciApiLimiter:
         record_body: str | bytes | None = None,
         classify_response: Callable[[T], tuple[int, dict[str, Any] | None, str | None]],
         build_result: Callable[[dict[str, Any]], T],
+        retry_unavailable: bool = True,
     ) -> T:
-        """Execute one Breeze HTTP call with spacing, per-user lock, retry, and recording."""
+        """Execute one Breeze HTTP call with spacing, per-user lock, retry, and recording.
+
+        `retry_unavailable=False` hands a 503 straight back instead of retrying it. Order
+        placement passes that: a 429 is ICICI refusing, so re-sending is safe (#24), but a
+        503 can follow an order the exchange already accepted (B-20).
+        """
         uid = cls.resolve_user_id(user_id)
         ep = endpoint or cls._endpoint_from_url(record_url)
 
@@ -385,6 +397,8 @@ class GlobalIciciApiLimiter:
                 ):
                     if uid:
                         GlobalIciciApiPacer.on_success(uid)
+                    return raw
+                if not retry_unavailable and _is_unavailable(http_status, body):
                     return raw
 
                 if attempt >= _MAX_HTTP_ATTEMPTS - 1:

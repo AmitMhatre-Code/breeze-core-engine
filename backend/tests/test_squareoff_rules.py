@@ -44,6 +44,12 @@ def _arm(
     )
 
 
+def _fired(rule_id, leg_results=None):
+    """Fired is reached only through Triggered (the dispatcher's own marker)."""
+    assert repo.mark_triggered(rule_id)
+    assert repo.mark_fired(rule_id, leg_results or [])
+
+
 class TestRepository:
     def test_arm_creates_an_armed_rule(self, db_path):
         record = _arm()
@@ -63,7 +69,7 @@ class TestRepository:
         armed = _arm(stock_code="NIFTY")
         fired = _arm(stock_code="BANKNIFTY")
         disarmed = _arm(stock_code="FINNIFTY")
-        repo.mark_fired(fired.id, [])
+        _fired(fired.id)
         repo.disarm_rule("u1", disarmed.id)
 
         active_ids = {r.id for r in repo.list_active_rules("u1")}
@@ -83,6 +89,7 @@ class TestRepository:
             "status": "failed",
             "error": "RMS:Margin Exceeds",
         }
+        assert repo.mark_triggered(rule.id)
         repo.mark_fire_failed(rule.id, [leg_result], "1 of 1 exit orders could not be placed.")
         active = repo.list_active_rules("u1")
         assert len(active) == 1
@@ -93,7 +100,7 @@ class TestRepository:
 
     def test_disarm_succeeds_from_fired_too(self, db_path):
         rule = _arm()
-        repo.mark_fired(rule.id, [])
+        _fired(rule.id)
         assert repo.disarm_rule("u1", rule.id) is True
         assert repo.get_rule(rule.id).status == "disarmed"
 
@@ -118,7 +125,7 @@ class TestRepository:
         SG is still live (waiting on its exits) and still needs its WS pin restored."""
         armed = _arm(user_id="u1", stock_code="NIFTY")
         fired = _arm(user_id="u1", stock_code="BANKNIFTY")
-        repo.mark_fired(fired.id, [])
+        _fired(fired.id)
         disarmed = _arm(user_id="u1", stock_code="FINNIFTY")
         repo.disarm_rule("u1", disarmed.id)
 
@@ -206,10 +213,16 @@ class TestRoutes:
 
 class TestDispatcher:
     @pytest.fixture(autouse=True)
-    def _isolated_rules_db(self, db_path):
+    def _isolated_rules_db(self, db_path, monkeypatch):
         """These tests only stub *some* repo calls, so the rest (mark_triggered,
         mark_fire_failed) write for real. Point the repo at a migrated temp DB rather than
-        the developer's actual users.sqlite3."""
+        the developer's actual users.sqlite3, holding an armed rule to fire."""
+        self.rule_id = _arm(user_id="u1").id
+        monkeypatch.setattr(squareoff_dispatcher.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.strategy_group_lifecycle.release_subscription",
+            lambda *a, **k: None,
+        )
         return db_path
 
     @pytest.fixture(autouse=True)
@@ -241,13 +254,13 @@ class TestDispatcher:
         *,
         reason="group_target_hit",
         legs=None,
-        rule_id="rule-1",
+        rule_id=None,
         target_premium_pct=10,
         stop_loss_premium_pct=5,
     ):
         return {
             "user_id": "u1",
-            "rule_id": rule_id,
+            "rule_id": rule_id or self.rule_id,
             "reason": reason,
             "stock_code": "NIFTY",
             "expiry_display": "30-Jun-2026",
@@ -283,7 +296,7 @@ class TestDispatcher:
 
         assert len(fired_calls) == 1
         rule_id, results = fired_calls[0]
-        assert rule_id == "rule-1"
+        assert rule_id == self.rule_id
         assert results[0]["status"] == "success"
 
     def test_leg_quantity_exceeding_freeze_limit_is_split_into_chunk_orders(self, monkeypatch):

@@ -51,8 +51,8 @@ def _arm(user_id="VIKRAMMH", stock="NIFTY", expiry="21-Jul-2026", snapshot=None)
 
 
 def _fire(rule, order_id="202607173800017846", scrip_key=SCRIP):
-    repo.mark_fired(
-        rule.id,
+    repo.mark_triggered(rule.id)
+    repo.mark_fired(rule.id,
         [{
             "scrip_key": scrip_key,
             "stock_code": "NIFTY",
@@ -140,6 +140,7 @@ class TestOwnExitOrders:
 
     def test_not_completed_when_one_of_two_exits_is_still_working(self, db_path, monkeypatch):
         rule = _arm()
+        repo.mark_triggered(rule.id)
         repo.mark_fired(rule.id, [
             {"scrip_key": SCRIP, "stock_code": "NIFTY", "strike_price": "26000",
              "right": "Call", "quantity": "130", "status": "success",
