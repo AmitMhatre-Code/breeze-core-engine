@@ -996,3 +996,153 @@ def test_an_exit_that_dies_partway_keeps_the_remainder_at_the_price_it_sold(
     assert row.legs[0]["quantity"] == 25
     assert row.detail["realized_gross"] == pytest.approx((sold_at - 100.0) * 50)
     assert not row.detail.get("unwind_orders_halted"), "a dead order is not a failed cancel"
+
+
+# --- B-22: fills are booked at the traded price ------------------------------------------
+
+
+def _feed_fill(order_id, executed=75):
+    from types import SimpleNamespace
+
+    live._tracker.watch(order_id)
+    live._tracker._on_notification(
+        SimpleNamespace(order_id=order_id, executed_quantity=executed, status="executed")
+    )
+
+
+def test_a_fill_confirmed_on_the_feed_is_booked_at_icicis_average_not_the_limit():
+    """The feed carries no usable average, so a feed-confirmed fill was booked at its limit."""
+    broker = FakeBroker(fills={"OID1": {"quantity_executed": 75, "status": "Executed",
+                                        "average_price": 100.35}})
+    _feed_fill("OID1")
+    result = live.place_and_confirm(
+        broker, USER, LEG, price_for_attempt=lambda i: 101.0, timeout_seconds=5,
+        now=_clock(), sleep=_no_sleep,
+    )
+    assert result.filled_quantity == 75
+    assert result.average_price == pytest.approx(100.35)
+
+
+def test_an_average_past_the_limit_is_not_trusted():
+    broker = FakeBroker(fills={"OID1": {"quantity_executed": 75, "status": "Executed",
+                                        "average_price": 155.0}})
+    _feed_fill("OID1")
+    result = live.place_and_confirm(
+        broker, USER, LEG, price_for_attempt=lambda i: 101.0, timeout_seconds=5,
+        now=_clock(), sleep=_no_sleep,
+    )
+    assert result.average_price == pytest.approx(101.0)
+
+
+def test_with_no_average_anywhere_the_limit_is_booked():
+    broker = FakeBroker(fills={})
+    _feed_fill("OID1")
+    result = live.place_and_confirm(
+        broker, USER, LEG, price_for_attempt=lambda i: 101.0, timeout_seconds=5,
+        now=_clock(), sleep=_no_sleep,
+    )
+    assert result.average_price == pytest.approx(101.0)
+
+
+# --- B-23 / B-44: an exit is priced from a live touch or one ICICI quote -----------------
+
+
+class _QuoteBroker(FakeBroker):
+    def __init__(self, rows=None, **kw):
+        super().__init__(**kw)
+        self.quote_calls = []
+        self._rows = rows
+
+    def get_quotes(self, **kw):
+        self.quote_calls.append(kw)
+        if self._rows is None:
+            return {"Status": 500, "Error": "down"}
+        return {"Status": 200, "Success": self._rows}
+
+
+def _touch(broker, quote=None, is_buy=False, now=lambda: 0.0):
+    return live.exit_touch(
+        broker, USER, stock_code="NIFTY", exchange_code=cfg.NFO, expiry_display="10-Sep-2026",
+        strike_price=24_000.0, right="call", is_buy=is_buy, quote=quote, now=now,
+    )
+
+
+def test_a_live_quote_prices_the_exit_without_a_broker_call():
+    from icici_breeze_backend.app.services.bots.scalping.momentum_bot import Quote
+
+    broker = _QuoteBroker(rows=[])
+    assert _touch(broker, Quote(99.0, 101.0, 100.0, "websocket")) == 99.0
+    assert _touch(broker, Quote(99.0, 101.0, 100.0, "websocket"), is_buy=True) == 101.0
+    assert broker.quote_calls == []
+
+
+def test_a_stand_in_or_missing_quote_asks_icici_once():
+    from icici_breeze_backend.app.services.bots.scalping.momentum_bot import Quote
+
+    broker = _QuoteBroker(rows=[{"exchange_code": "NFO", "best_bid_price": "98.5", "best_offer_price": "99.5"}])
+    assert _touch(broker, Quote(120.0, 121.0, 120.0, "snapshot")) == 98.5
+    assert broker.quote_calls[0]["product_type"] == "options"
+    assert broker.quote_calls[0]["right"] == "call"
+
+
+def test_rest_exit_quotes_are_spaced_per_contract():
+    broker = _QuoteBroker(rows=None)
+    clock = {"t": 0.0}
+    assert _touch(broker, now=lambda: clock["t"]) is None
+    clock["t"] = 5.0
+    assert _touch(broker, now=lambda: clock["t"]) is None
+    assert len(broker.quote_calls) == 1, "a pass two seconds later must not ask again"
+    clock["t"] = live.EXIT_QUOTE_SPACING_SECONDS + 1
+    _touch(broker, now=lambda: clock["t"])
+    assert len(broker.quote_calls) == 2
+
+
+def test_an_unpriceable_leg_is_recorded_as_nothing_sent():
+    result = live.no_price_result(75)
+    assert result.filled_quantity == 0 and not result.ok and not result.unaccounted
+    assert "nothing was sent" in result.error
+
+
+# --- B-33: orders are sliced under the freeze quantity -----------------------------------
+
+
+class _FreezeBroker(FakeBroker):
+    def fetch_qty_limits(self, stock_code, exchange_code=cfg.NFO):
+        return 1800
+
+    def fetch_lot_size(self, stock_code, expiry_display, exchange_code=cfg.NFO):
+        return 75
+
+
+def test_a_leg_above_the_freeze_quantity_goes_out_in_slices():
+    big = live.LegOrder(**{**LEG.__dict__, "quantity": 4500})
+    broker = _FreezeBroker(
+        place=[{"ok": True, "order_id": "S1"}, {"ok": True, "order_id": "S2"}, {"ok": True, "order_id": "S3"}],
+        fills={
+            "S1": {"quantity_executed": 1800, "status": "Executed", "average_price": 100.0},
+            "S2": {"quantity_executed": 1800, "status": "Executed", "average_price": 101.0},
+            "S3": {"quantity_executed": 900, "status": "Executed", "average_price": 102.0},
+        },
+    )
+    result = live.place_and_confirm(
+        broker, USER, big, price_for_attempt=lambda a: 102.0, timeout_seconds=0,
+        now=_clock(), sleep=_no_sleep,
+    )
+    assert [p["qty"] for p in broker.placed] == [1800, 1800, 900]
+    assert result.ok and result.filled_quantity == 4500
+    assert result.average_price == pytest.approx((1800 * 100 + 1800 * 101 + 900 * 102) / 4500)
+
+
+def test_a_slice_that_does_not_fill_stops_the_rest():
+    big = live.LegOrder(**{**LEG.__dict__, "quantity": 4500})
+    broker = _FreezeBroker(
+        place=[{"ok": True, "order_id": "S1"}, {"ok": False, "error": "RMS: margin"}],
+        fills={"S1": {"quantity_executed": 1800, "status": "Executed", "average_price": 100.0}},
+    )
+    result = live.place_and_confirm(
+        broker, USER, big, price_for_attempt=lambda a: 101.0, timeout_seconds=0,
+        now=_clock(), sleep=_no_sleep,
+    )
+    assert len(broker.placed) == 2, "the third slice is never sent"
+    assert result.partial and result.filled_quantity == 1800
+    assert "RMS" in result.error

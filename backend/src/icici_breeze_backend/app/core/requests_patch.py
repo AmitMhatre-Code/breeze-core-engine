@@ -35,6 +35,13 @@ def is_order_placement(method, url) -> bool:
 # was refused. 500 is left out, since ICICI's own rejections may arrive under it.
 _PLACEMENT_UNCLEAR_STATUSES = frozenset({502, 503, 504})
 
+# (connect, read) seconds for every Breeze REST call. breeze_connect passes no timeout, and
+# the call runs with the per-user broker lock held (#24), so one stalled read used to freeze
+# every later call for that user -- stop-loss exits and cancels included -- until the OS gave
+# up (B-07). A timeout raises into the SDK like any transport error: a placement is then
+# looked up in the order book, never assumed refused (#54, #55).
+BREEZE_HTTP_TIMEOUT = (5.0, 30.0)
+
 
 def _preview_for_log(text: str, max_len: int = 320) -> str:
     """Single-line preview for logs (avoid multi-line log spam)."""
@@ -241,6 +248,8 @@ def _run_breeze_request(method: str, url: str, perform_http, request_body: str |
 def _patched_request(method, url, **kwargs):
     m = method.upper()
     u = str(url) if url else ""
+    if _is_breeze_url(u) and kwargs.get("timeout") is None:
+        kwargs["timeout"] = BREEZE_HTTP_TIMEOUT
     if m == "GET" and kwargs.get("data") is not None and isinstance(kwargs["data"], (str, bytes)):
         from requests import PreparedRequest, Session
 

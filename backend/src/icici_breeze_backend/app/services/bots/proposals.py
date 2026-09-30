@@ -160,9 +160,12 @@ def price_edited_leg(user_id: str, leg, edit, fresh_by_scrip: dict):
     lots = int(edit.lots) if edit.lots is not None else leg.lots
     if leg.right == "call":
         source = reference or leg
-        held = int(source.held_quantity or 0)
+        # Deliverable, not held: blocked-for-trade stock cannot back a call (B-11). An older
+        # stored proposal has no deliverable figure and falls back to the holding.
+        deliverable = source.deliverable_quantity
+        held = int(deliverable if deliverable is not None else (source.held_quantity or 0))
         lot_size = int(source.lot_size or leg.lot_size or 0)
-        if held and lot_size:
+        if lot_size and (held or deliverable is not None):
             covered = held // lot_size - int(source.existing_short_lots or 0)
             lots = max(1, min(lots, covered)) if covered > 0 else 0
     if lots <= 0:
@@ -184,6 +187,7 @@ def price_edited_leg(user_id: str, leg, edit, fresh_by_scrip: dict):
         lot_size=int(leg.lot_size),
         margin_source=MARGIN_SOURCE_BREEZE,  # live bots always ask ICICI (design-decisions #48)
         held_quantity=leg.held_quantity,
+        deliverable_quantity_value=(reference or leg).deliverable_quantity,
         pledged_quantity=leg.pledged_quantity,
         existing_short_lots=leg.existing_short_lots,
         scrip_priority=leg.scrip_priority,

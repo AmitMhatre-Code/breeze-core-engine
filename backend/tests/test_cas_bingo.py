@@ -890,3 +890,36 @@ def test_a_resting_sensex_entry_is_cancelled_on_bfo(db, monkeypatch):
     runtime.resolve_pending_entries(broker, USER, force=True)
     assert broker.cancelled == ["b1|BFO"]
     assert not repo.open_cycles(USER, BOT_CAS_BINGO)
+
+
+# --- B-43: a missed expiry settles at that day's close or not at all ---------------------
+
+
+def test_settlement_uses_only_the_expiry_days_close(monkeypatch):
+    import datetime as dt
+
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.services.bots.cas_bingo import market as cas_market
+
+    expiry = dt.date(2026, 9, 24)  # a Thursday
+    store = {}
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.db.redis_client.cache_get_json", lambda key: store.get("v")
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar._previous_trading_day",
+        lambda d: d - dt.timedelta(days=1),
+    )
+
+    def at(day, hour=15):
+        return dt.datetime(day.year, day.month, day.day, hour, 45, tzinfo=IST).timestamp()
+
+    store["v"] = {"ltp": 25010.0, "previous_close": 24900.0, "updated_at": at(expiry)}
+    assert cas_market.settlement_level("NIFTY", expiry) == 25010.0
+
+    next_day = expiry + dt.timedelta(days=1)
+    store["v"] = {"ltp": 25300.0, "previous_close": 25012.5, "updated_at": at(next_day, 10)}
+    assert cas_market.settlement_level("NIFTY", expiry) == 25012.5, "the next session's previous close"
+
+    store["v"] = {"ltp": 25400.0, "previous_close": 25300.0, "updated_at": at(expiry + dt.timedelta(days=2), 10)}
+    assert cas_market.settlement_level("NIFTY", expiry) is None, "a later day's level is never used"

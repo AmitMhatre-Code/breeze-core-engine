@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { BasketLegsPanel } from "@/components/basket-order/BasketLegsPanel";
 import { BasketPayoffPanel } from "@/components/basket-order/BasketPayoffPanel";
+import { netPremiumOfPricedLegs } from "@/lib/strategy-builder/leg-quote";
 import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
 import {
   filterRecentStockCodes,
@@ -318,16 +319,8 @@ export default function BasketOrderPage() {
     marginScope: "app",
   });
 
-  const totalsNetPremium = useMemo(() => {
-    let t = 0;
-    for (const l of legs) {
-      if (l.lots <= 0 || l.aggressiveLimit) continue;
-      const units = l.lots * lotSize;
-      const prem = (l.premiumPerUnit ?? 0) * units;
-      t += l.side === "Sell" ? prem : -prem;
-    }
-    return t;
-  }, [legs, lotSize]);
+  // Unpriced legs are left out, not counted at ₹0 (B-57); the panel says so.
+  const totalsNetPremium = useMemo(() => netPremiumOfPricedLegs(legs, lotSize), [legs, lotSize]);
 
   /** Legs with a resolved per-unit price — aggressive legs fall back to the last-known chain mid. */
   const scaleLegs = useMemo<ScaleLeg[]>(

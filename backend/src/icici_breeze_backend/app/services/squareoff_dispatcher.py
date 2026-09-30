@@ -16,7 +16,6 @@ from typing import Any, Callable
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.strike import strike_key
 from icici_breeze_backend.app.repositories import squareoff_rules as repo
-from icici_breeze_backend.app.services.deployment_license_status import trading_mutations_allowed
 from icici_breeze_backend.app.services.icici_api_pacing import is_breeze_rate_limited
 from icici_breeze_backend.app.services.portfolio_pnl_engine import (
     register_rule_hit_listener,
@@ -136,6 +135,12 @@ def hydrate_group_rules_on_startup() -> None:
         warm_positions_for_user,
     )
 
+    from icici_breeze_backend.app.services.squareoff_protection_guard import expire_lapsed_rules
+
+    try:
+        expire_lapsed_rules()  # an SG over options that expired while we were down (B-12)
+    except Exception:  # noqa: BLE001
+        _logger.exception("Could not complete expired SGs at startup")
     armed_order_feed: set[str] = set()
     warmed_positions: set[str] = set()
     for row in repo.list_all_live_rules():
@@ -630,42 +635,9 @@ def _handle_group_rule_hit(payload: dict[str, Any]) -> None:
         )
         return
 
-    if not trading_mutations_allowed():
-        leg_results = [
-            {
-                "scrip_key": leg["scrip_key"],
-                "stock_code": leg["stock_code"],
-                "strike_price": leg["strike_price"],
-                "right": leg["right"],
-                "quantity": leg["quantity"],
-                "status": "failed",
-                "error": "Trading is read-only (license not active) — no orders were placed.",
-            }
-            for leg in legs
-        ]
-        written, _held = sg.finish_dispatch(
-            user_id,
-            rule_id,
-            lambda: repo.mark_fire_failed(
-                rule_id,
-                leg_results,
-                "trading is in read-only mode (licence not active), so no exit orders "
-                "could be placed.",
-            ),
-        )
-        if written:
-            sg.release_subscription(rule_id)
-        AuditLogger(None).log_operation(
-            user_id,
-            OperationType.SQUAREOFF_RULE_FIRE_FAILED,
-            "PortfolioSquareOffRule",
-            rule_id,
-            action_status="failure",
-            error_details="Trading read-only at fire time (license not active)",
-        )
-        notify_squareoff_fired(user_id, reason=reason, payload=payload, leg_results=leg_results, failed=True)
-        return
-
+    # No licence check here, on purpose (B-09). Read-only mode stops a deployment opening
+    # trades; an armed stop firing is the user leaving one, and "read-only" also covers a
+    # missed heartbeat. Blocking the exit then would strand the position it protects.
     breeze = processor()
     dispatch = _Dispatch(rule_id, legs)
     dispatch.save()

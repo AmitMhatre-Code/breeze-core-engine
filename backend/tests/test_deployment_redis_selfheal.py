@@ -33,7 +33,8 @@ def _managed_deployment(monkeypatch, tmp_path):
     """Look like a portal-managed deployment with its data volume in tmp_path."""
     monkeypatch.setattr(heal.cfg, "DEPLOYMENT_GHCR_IMAGE", "ghcr.io/org/breeze-core-engine:latest")
     monkeypatch.setattr(heal.cfg, "DEPLOYMENT_CONTAINER_NAME", "breeze-core-engine")
-    monkeypatch.setattr(heal.cfg, "USERS_DB", str(tmp_path / "users.sqlite3"))
+    monkeypatch.setattr(heal.cfg, "USERS_DB", "users.sqlite3")
+    monkeypatch.setattr(heal.cfg, "DATA_PATH", str(tmp_path) + "/")
     monkeypatch.delenv("DEPLOYMENT_REDIS_SELF_HEAL", raising=False)
 
 
@@ -203,3 +204,18 @@ def test_survives_sidecar_provisioning_failure(monkeypatch, _mock_docker):
     heal.run_redis_self_heal_if_needed()  # must not raise
 
     recreate.assert_not_called()
+
+
+def test_the_attempt_marker_is_on_the_data_volume(monkeypatch, tmp_path):
+    """B-35: `dirname("users.sqlite3")` is "", so the marker went to the container layer."""
+    import os
+
+    import icici_breeze_backend.app.core.config as cfg
+    from icici_breeze_backend.app.services import deployment_redis_selfheal as heal
+
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + os.sep)
+    monkeypatch.setattr(cfg, "USERS_DB", "users.sqlite3", raising=False)
+    assert heal._state_path() == os.path.join(str(tmp_path) + os.sep, heal._STATE_FILENAME)
+    heal._write_attempts(1)
+    assert heal._read_attempts() == 1
+    assert (tmp_path / heal._STATE_FILENAME).exists()

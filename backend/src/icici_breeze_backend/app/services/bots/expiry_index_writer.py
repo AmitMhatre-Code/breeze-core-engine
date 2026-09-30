@@ -32,6 +32,10 @@ from icici_breeze_backend.app.domain.bots import (
 
 _logger = logging.getLogger(__name__)
 
+# How many smaller sizes are re-checked with ICICI when the first verified margin is over
+# the cap (B-26). Each is one margin call.
+_MARGIN_RECHECKS = 4
+
 # ICICI codes. SENSEX trades on BFO; NIFTY on NFO.
 INDEX_EXCHANGE = {"NIFTY": cfg.NFO, "BSESEN": cfg.BFO}
 INDEX_LABEL = {"NIFTY": "NIFTY", "BSESEN": "SENSEX"}
@@ -672,14 +676,34 @@ def plan_index(
         legs=[(leg.right, leg.strike_price, lots * lot_size) for leg in best.legs],
     )
     if verified is not None:
-        while lots > 1 and verified > budget:
-            lots -= 1
-            verified = best.margin_per_lot * lots
+        # Each smaller size is asked of ICICI too (B-26). Its margin is not linear in
+        # quantity (the basket 28L -> 73L incident), so scaling the per-lot figure down could
+        # still leave the real figure over the cap -- and record the estimate as verified.
+        # Each step jumps to the size the last answer says would fit, so a few calls settle it.
+        checks = 0
+        while verified is not None and verified > budget and lots > 1 and checks < _MARGIN_RECHECKS:
+            lots = max(1, min(lots - 1, int(lots * budget / verified)))
+            verified = margin_for_legs(
+                proc,
+                user_id,
+                exchange_code=exchange,
+                stock_code=index_code,
+                expiry_display=expiry_display,
+                legs=[(leg.right, leg.strike_price, lots * lot_size) for leg in best.legs],
+            )
+            checks += 1
+        if verified is None:
+            result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
+            result.error = (
+                f"ICICI could not confirm the margin for {lots} lot(s) of {best.label}, so "
+                "nothing was placed."
+            )
+            return result
         if verified > budget:
             result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
             result.error = (
-                f"Verified margin Rs {verified:,.0f} for one lot of {best.label} exceeds "
-                f"the Rs {budget:,.0f} cap."
+                f"Verified margin Rs {verified:,.0f} for {lots} lot(s) of {best.label} "
+                f"exceeds the Rs {budget:,.0f} cap."
             )
             return result
         result.margin_total = round(verified, 2)
@@ -868,6 +892,7 @@ def arm_exit_rule(
     """
     from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
     from icici_breeze_backend.app.services import portfolio_pnl_engine
+    from icici_breeze_backend.app.services import strategy_group_lifecycle
     from icici_breeze_backend.app.services.strategy_group_arm_guard import assert_can_arm
 
     premium_collected = float(terms.get("premium_collected") or 0)
@@ -876,6 +901,7 @@ def arm_exit_rule(
     # `BreezeConnect` itself only has the raw `get_order_list`.
     # One exchange's book, not both: an index's contracts live on exactly one of them.
     assert_can_arm(proc, user_id, stock_code, expiry_display, exchange_code)
+    legs = _arm_baseline_legs(user_id, stock_code, expiry_display)
     rule = sq_repo.arm_rule(
         user_id,
         stock_code=stock_code,
@@ -890,7 +916,10 @@ def arm_exit_rule(
         target_premium_pct=5,
         stop_loss_premium_pct=5,
         target_option_price=terms.get("target_option_price"),
+        legs_snapshot=strategy_group_lifecycle.snapshot_from_legs(legs),
     )
+    # Hold the chain's feed for as long as the stop is armed, as the manual route does.
+    strategy_group_lifecycle.pin_subscription(user_id, rule)
     portfolio_pnl_engine.set_group_rule(
         user_id,
         rule.id,
@@ -904,6 +933,29 @@ def arm_exit_rule(
         target_option_price=rule.target_option_price,
     )
     return rule.id
+
+
+def _arm_baseline_legs(user_id: str, stock_code: str, expiry_display: str) -> list:
+    """The legs the stop covers, read fresh, as the SG's drift baseline (B-12).
+
+    The manual arm route records this; the bot's arm did not, so drift detection had
+    nothing to compare. Legs the user added later were pooled into the bot's stop, and a
+    group closed elsewhere was never reset. Read from the broker, not the registry: the
+    registry may not hold the fills yet, and an empty baseline would read as drift the
+    moment they land. Either failure is "not yet", which `exit_arming` waits out.
+    """
+    from icici_breeze_backend.app.services import portfolio_pnl_engine
+    from icici_breeze_backend.app.services.squareoff_protection_guard import (
+        warm_positions_for_user,
+    )
+    from icici_breeze_backend.app.services.strategy_group_arm_guard import ArmPreconditionError
+
+    if not warm_positions_for_user(user_id):
+        raise ArmPreconditionError("Your positions could not be read to record what the stop covers.")
+    legs = portfolio_pnl_engine.group_legs_for_user(user_id, stock_code, expiry_display)
+    if not legs:
+        raise ArmPreconditionError("The filled position is not showing in your positions yet.")
+    return legs
 
 
 def _arm_exit(

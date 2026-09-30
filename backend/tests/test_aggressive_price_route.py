@@ -1,7 +1,6 @@
 """POST /order/aggressive-price: server-side LTP -> tick-rounded aggressive limit price."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,9 +39,7 @@ def _req(action="Buy", tolerance_pct=5.0):
 def test_disabled_returns_403(monkeypatch):
     monkeypatch.setattr(route_order.cfg, "AGGRESSIVE_LIMIT_ORDER_ENABLED", False)
     with pytest.raises(Exception) as exc:
-        asyncio.run(
-            route_order.post_aggressive_price(body=_req(), context=_ctx(), _trading_ok=None)
-        )
+        route_order.post_aggressive_price(body=_req(), context=_ctx(), _trading_ok=None)
     assert getattr(exc.value, "status_code", None) == 403
 
 
@@ -53,9 +50,7 @@ def test_buy_prices_above_ltp(monkeypatch):
         "fetch_group_ltps_batch",
         return_value={"0": 100.0},
     ):
-        out = asyncio.run(
-            route_order.post_aggressive_price(body=_req("Buy", 5.0), context=_ctx(), _trading_ok=None)
-        )
+        out = route_order.post_aggressive_price(body=_req("Buy", 5.0), context=_ctx(), _trading_ok=None)
     assert out.results[0].price == "105.0"
     assert out.results[0].ltp == 100.0
     assert out.results[0].error is None
@@ -66,9 +61,7 @@ def test_sell_prices_below_ltp(monkeypatch):
     with patch.object(
         route_order.breeze, "fetch_group_ltps_batch", return_value={"0": 100.0}
     ):
-        out = asyncio.run(
-            route_order.post_aggressive_price(body=_req("Sell", 5.0), context=_ctx(), _trading_ok=None)
-        )
+        out = route_order.post_aggressive_price(body=_req("Sell", 5.0), context=_ctx(), _trading_ok=None)
     assert out.results[0].price == "95.0"
 
 
@@ -77,9 +70,7 @@ def test_missing_ltp_returns_error_not_price(monkeypatch):
     with patch.object(
         route_order.breeze, "fetch_group_ltps_batch", return_value={"0": None}
     ):
-        out = asyncio.run(
-            route_order.post_aggressive_price(body=_req(), context=_ctx(), _trading_ok=None)
-        )
+        out = route_order.post_aggressive_price(body=_req(), context=_ctx(), _trading_ok=None)
     assert out.results[0].price is None
     assert out.results[0].error is not None
 
@@ -90,10 +81,8 @@ def test_tolerance_clamped_in_response(monkeypatch):
     with patch.object(
         route_order.breeze, "fetch_group_ltps_batch", return_value={"0": 100.0}
     ):
-        out = asyncio.run(
-            route_order.post_aggressive_price(
-                body=_req("Buy", 999.0), context=_ctx(), _trading_ok=None
-            )
+        out = route_order.post_aggressive_price(
+            body=_req("Buy", 999.0), context=_ctx(), _trading_ok=None
         )
     assert out.tolerance_pct == 25.0
     assert out.results[0].price == "125.0"

@@ -812,6 +812,16 @@ def _stub_arming(monkeypatch, captured):
         "icici_breeze_backend.app.services.portfolio_pnl_engine.set_group_rule",
         lambda *a, **k: None,
     )
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.expiry_index_writer._arm_baseline_legs",
+        lambda *a, **k: [SimpleNamespace(scrip_key="NFO|NIFTY|X|24000|PE", action="Sell", quantity=75)],
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.strategy_group_lifecycle.pin_subscription",
+        lambda *a, **k: None,
+    )
 
 
 # --- strategy shortlist ---------------------------------------------------------------
@@ -942,3 +952,68 @@ def test_a_one_sided_strangle_names_the_rejected_leg_and_waits_for_its_stop(
     # The rejection is the run's headline; the stop is waiting, not failed.
     assert result.reason_code == ReasonCode.ORDER_REJECTED
     assert result.arm_pending is True
+
+
+def test_the_bots_stop_records_a_legs_baseline_and_pins_its_chain(patch_chain, monkeypatch):
+    """B-12: without a baseline, legs added later were pooled into the bot's stop and the
+    SG could never reset; without a pin its quotes went cold with the browser."""
+    captured, pinned = {}, []
+    _stub_arming(monkeypatch, captured)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.strategy_group_lifecycle.pin_subscription",
+        lambda user_id, rule: pinned.append(rule.id),
+    )
+    proc = FakeProc(span_per_lot=120000.0, bid=42.0)
+    patch_chain(proc)
+
+    result = fire(proc)
+
+    assert result.rule_id == "rule-1"
+    assert captured["legs_snapshot"] == {"NFO|NIFTY|X|24000|PE": 75}
+    assert pinned == ["rule-1"]
+
+
+def test_arming_waits_while_the_filled_legs_are_not_in_positions_yet(monkeypatch):
+    from icici_breeze_backend.app.services.strategy_group_arm_guard import ArmPreconditionError
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.squareoff_protection_guard.warm_positions_for_user",
+        lambda user_id: True,
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.portfolio_pnl_engine.group_legs_for_user",
+        lambda *a, **k: [],
+    )
+    with pytest.raises(ArmPreconditionError, match="not showing"):
+        bot2._arm_baseline_legs("u1", "NIFTY", EXPIRY)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.squareoff_protection_guard.warm_positions_for_user",
+        lambda user_id: False,
+    )
+    with pytest.raises(ArmPreconditionError, match="could not be read"):
+        bot2._arm_baseline_legs("u1", "NIFTY", EXPIRY)
+
+
+def test_a_smaller_size_is_verified_with_icici_not_scaled_down(patch_chain, no_arm):
+    """B-26: margin is not linear in quantity. The old loop dropped a lot and replaced the
+    verified figure with per-lot x lots, then recorded that estimate as verified."""
+
+    class NonLinear(FakeProc):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.margin_sizes = []
+
+        def margin_calculator(self, payload, exchange_code=cfg.NFO):
+            rows = payload if isinstance(payload, list) else payload.get("list_of_positions", [])
+            qty = sum(int(float(r.get("quantity") or 0)) for r in rows if isinstance(r, dict))
+            self.margin_sizes.append(qty)
+            lots = qty // 75
+            # 1.2L per lot, plus a surcharge that grows with size: 2 lots cost 3.2L, 1 lot 1.4L.
+            return {"Status": 200, "Success": {"span_margin_required": 120000.0 * lots + 20000.0 * lots * lots}}
+
+    proc = NonLinear(span_per_lot=120000.0)
+    patch_chain(proc)
+    result = fire(proc)  # 3L budget: the per-lot estimate says 2 lots
+    assert result.lots == 1
+    assert result.margin_total == 140000.0, "the recorded margin is ICICI's answer for 1 lot"
+    assert proc.margin_sizes[-1] == 75

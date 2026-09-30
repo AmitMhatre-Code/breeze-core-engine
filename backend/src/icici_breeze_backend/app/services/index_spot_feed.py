@@ -71,6 +71,8 @@ _listener_registered = False
 # index scrips these carry no navbar `index_spot_key`/previous_close -- the
 # SPOT column and chain-completeness gate only need the raw live spot.
 _underlying_targets: dict[str, tuple[str, str]] = {}
+# token -> monotonic time of its last tick, or of its subscribe while none has come (B-50).
+_underlying_last_seen: dict[str, float] = {}
 # Every cash ws stock_token we've already called subscribe_feeds for (indices +
 # dynamic underlyings), so the two subsystems never double-subscribe the same
 # token (e.g. a portfolio holding NIFTY, already subscribed by the index feed).
@@ -157,6 +159,8 @@ def _on_raw_tick(raw: dict[str, Any]) -> None:
                 break
 
     if underlying is not None:
+        with _lock:
+            _underlying_last_seen[symbol] = time.monotonic()
         opt_exchange, opt_stock_code = underlying
         try:
             from icici_breeze_backend.app.services.quote_source_router import (
@@ -475,6 +479,7 @@ def sync_underlying_spot_subscriptions(
                 # already seeds remember_chain_spot for it.
                 if token not in _symbol_to_label:
                     _underlying_targets[token] = (opt_exchange, opt_stock_code)
+                    _underlying_last_seen.setdefault(token, time.monotonic())
                 already_subscribed = token in _subscribed_cash_tokens
                 _subscribed_cash_tokens.add(token)
             if not already_subscribed:
@@ -516,11 +521,27 @@ def _forget_underlying_subscriptions_locked() -> None:
         _subscribed_cash_tokens.discard(token)
 
 
+def silent_underlying_spots(silence_seconds: float, now: float | None = None) -> list[str]:
+    """Subscribed stock spots with no tick for `silence_seconds`, counted from the later of
+    their last tick and their subscribe. For the price watchdog's mid-session re-arm."""
+    now = time.monotonic() if now is None else now
+    with _lock:
+        return sorted(
+            token
+            for token in _underlying_targets
+            if token in _subscribed_cash_tokens
+            and now - _underlying_last_seen.get(token, now) >= silence_seconds
+        )
+
+
 def resync_underlying_spot_subscriptions(proc: "Processor", user_id: str) -> bool:
     """Re-subscribe every stock spot ever asked for. For a rebuilt socket, which has
     none of the old one's subscriptions."""
     with _lock:
         _forget_underlying_subscriptions_locked()
+        now = time.monotonic()
+        for token in _underlying_targets:
+            _underlying_last_seen[token] = now  # a fresh subscribe restarts the clock
         known = list(_known_underlyings.values())
     if not known:
         return True
@@ -609,12 +630,18 @@ def _fetch_eod_quote(proc: "Processor", user_id: str, cash_exchange: str, cash_s
         prev_close = None
     change = ltp - prev_close if prev_close else None
     change_pct = (change / prev_close * 100.0) if change is not None and prev_close else None
+    from icici_breeze_backend.app.services.quote_source_router import latest_concluded_trading_day
+
     return {
         "ltp": ltp,
         "previous_close": prev_close,
         "change": change,
         "change_pct": change_pct,
         "updated_at": time.time(),
+        # A REST quote outside the session, not a tick: the watchdog must not read it as
+        # ticks arriving, and its `ltp` is the close of this session, whatever the fetch time.
+        "source": REST_CLOSE_SOURCE,
+        "session_date": latest_concluded_trading_day().isoformat(),
     }
 
 
@@ -647,6 +674,21 @@ def _ensure_rest_previous_close(proc: "Processor", user_id: str) -> None:
             _store_rest_close(label, prev_close)
 
 
+REST_CLOSE_SOURCE = "rest_close"
+
+
+def _rest_close_ttl_seconds(now: datetime | None = None) -> int:
+    """Until the next session opens, so the first minutes of a session never show the
+    previous close as the live level."""
+    from icici_breeze_backend.app.services.market_calendar import next_session_open
+
+    now = now or datetime.now(IST)
+    try:
+        return max(60, int((next_session_open(now) - now).total_seconds()))
+    except Exception:  # noqa: BLE001
+        return 3600
+
+
 def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
     """Live NIFTY/SENSEX spot for the navbar ticker.
 
@@ -655,9 +697,10 @@ def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
     (`_INDEX_SPOT_TTL_SECONDS`) that an empty cache just means "not subscribed
     yet" and will fill in on its own. Outside market hours nothing is ticking,
     so an empty cache means "market closed, nobody's fetched today's close
-    yet" -- fetch it once via REST and cache it with no TTL (the key gets
-    naturally overwritten by the first live tick the next time the market is
-    open, so there's no separate cleanup step)."""
+    yet" -- fetch it once via REST and cache it until the next open, marked
+    `source: rest_close` (B-18). It used to be cached with no TTL: if no index tick came
+    after the open, the navbar kept showing that close as the current level, and the
+    price watchdog read the key's presence as proof the feed was ticking."""
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
     market_open = is_market_open()
@@ -669,7 +712,7 @@ def get_index_quotes_status(proc: "Processor", user_id: str) -> dict[str, Any]:
         if payload is None and not market_open:
             payload = _fetch_eod_quote(proc, user_id, cash_exchange, cash_stock_code)
             if payload is not None:
-                cache_set_json(index_spot_key(label), payload, ex=None)
+                cache_set_json(index_spot_key(label), payload, ex=_rest_close_ttl_seconds())
         quotes[label] = payload if isinstance(payload, dict) else None
     return {"quotes": quotes}
 
@@ -688,5 +731,6 @@ def reset_state_for_tests() -> None:
         _rest_close_attempt_at.clear()
         _day_open.clear()
         _underlying_targets.clear()
+        _underlying_last_seen.clear()
         _subscribed_cash_tokens.clear()
         _synced_underlying_scrips.clear()

@@ -4,7 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
 import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenarioControls";
-import { blendedSigmaForLegs, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { sigmaAtPrice, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
@@ -123,7 +123,7 @@ export function StrategyPayoffPanel({
     return estimateProbabilityOfProfit(
       spot,
       T,
-      blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, sigma),
+      sigmaAtPrice(sigmaSmiles, spot, sigma),
       legs,
       lotSize,
     );

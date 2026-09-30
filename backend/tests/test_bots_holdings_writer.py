@@ -475,3 +475,89 @@ def test_broker_failure_raises_rather_than_reporting_nothing_eligible(patch_chai
 
     with pytest.raises(hw.BotScanError, match="Broker down"):
         run_scan(Failing([], {}, {}))
+
+
+# --- B-11: the coverage cap fails closed ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "positions",
+    [
+        {"Status": 429, "Error": "Limit exceed", "Success": None},
+        {"Status": 400, "Error": "Unable to connect to broker.", "Success": None},
+        None,
+    ],
+)
+def test_unreadable_positions_propose_nothing(patch_chain, positions):
+    """An unreadable positions call used to read as "no calls written yet"."""
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100])})
+
+    class Unreadable(FakeProcessor):
+        def get_positions(self, user_id):
+            return positions
+
+    proc = Unreadable([holding("CIPLA", 1275)], {"CIPLA": [FUTURE_EXPIRY]}, {"CIPLA": 425})
+    with pytest.raises(hw.BotScanError, match="open positions"):
+        run_scan(proc)
+
+
+def test_an_older_short_after_a_lot_revision_is_rounded_up(patch_chain):
+    """500 short at an old lot of 250 is 2 old lots but 1.18 new lots of 425. It still
+    commits 500 shares, so it must count as 2 new lots, not 1."""
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100])})
+    positions = {
+        "Status": 200,
+        "Success": [
+            {"stock_code": "CIPLA", "action": "Sell", "right": "Call", "quantity": "500",
+             "expiry_date": FUTURE_EXPIRY},
+        ],
+    }
+    proc = FakeProcessor(
+        [holding("CIPLA", 1700)], {"CIPLA": [LATER_EXPIRY]}, {"CIPLA": 425}, positions
+    )
+    result = run_scan(proc)
+    # 1700 / 425 = 4 coverable lots, 2 committed -> 2 left (1 would be left over-written).
+    assert result.legs[0].existing_short_lots == 2
+    assert result.legs[0].lots == 2
+
+
+def test_price_contract_drops_a_leg_whose_margin_cannot_be_priced(patch_chain):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100])})
+    proc = FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500}, margin=None)
+    leg = hw.price_contract(
+        proc, "u1", stock_code="NTPC", right="call", expiry_display=FUTURE_EXPIRY,
+        strike_price=1050.0, lots=2, lot_size=1500, margin_source="breeze_api",
+    )
+    assert leg is None
+
+
+def test_scan_leg_carries_the_deliverable_quantity(patch_chain):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1050, 1100])})
+    h = {**holding("NTPC", 4500), "blocked_quantity": 1500}
+    proc = FakeProcessor([h], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+    leg = run_scan(proc).legs[0]
+    assert leg.held_quantity == 4500
+    assert leg.deliverable_quantity == 3000
+    assert leg.lots == 2
+
+
+def test_an_edited_call_is_capped_at_deliverable_stock_not_the_holding(monkeypatch):
+    """B-11: blocked-for-trade stock cannot back a call, so an edit up to the full holding
+    would have sold one uncovered."""
+    from types import SimpleNamespace
+
+    from icici_breeze_backend.app.domain.bots import ProposalLeg
+    from icici_breeze_backend.app.services.bots import proposals
+    import icici_breeze_backend.app.services.processor as proc_mod
+
+    monkeypatch.setattr(proc_mod, "processor", lambda: object())
+    seen = {}
+    monkeypatch.setattr(hw, "price_contract", lambda proc, user_id, **kw: seen.update(kw) or "priced")
+    leg = ProposalLeg(
+        stock_code="NTPC", exchange_code="NFO", right="call", expiry_display=FUTURE_EXPIRY,
+        strike_price=1050.0, lots=1, lot_size=1500, quantity=1500, premium_per_share=5.0,
+        premium_total=7500.0, held_quantity=4500, deliverable_quantity=3000,
+    )
+    assert proposals.price_edited_leg("u1", leg, SimpleNamespace(lots=3, strike_price=None, distance_pct=None), {}) == "priced"
+    assert seen["lots"] == 2
+    assert seen["deliverable_quantity_value"] == 3000

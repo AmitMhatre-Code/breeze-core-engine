@@ -165,3 +165,24 @@ def isolate_quote_snapshot_keys():
     cache_delete_pattern("quotes:snapshot:*")
     yield
     cache_delete_pattern("quotes:snapshot:*")
+
+
+@pytest.fixture(autouse=True)
+def _inline_background_dispatch(monkeypatch):
+    """Run SG dispatch, SG completion and the Day's P&L reconcile on the calling thread, so a
+    test can assert on what they did. In the app each runs on a thread of its own (B-16, B-38); the tests
+    that cover that set these back to False."""
+    from icici_breeze_backend.app.services import (
+        dashboard_day_pnl_live,
+        portfolio_pnl_engine,
+        strategy_group_lifecycle,
+    )
+
+    monkeypatch.setattr(portfolio_pnl_engine, "_dispatch_inline", True)
+    monkeypatch.setattr(strategy_group_lifecycle, "_complete_inline", True)
+
+    from icici_breeze_backend.app.services import squareoff_protection_guard
+
+    # Fixtures arm SGs on fixed dates the real clock has already passed.
+    monkeypatch.setattr(squareoff_protection_guard, "_expiry_sweep_enabled", False)
+    monkeypatch.setattr(dashboard_day_pnl_live, "_reconcile_inline", True)

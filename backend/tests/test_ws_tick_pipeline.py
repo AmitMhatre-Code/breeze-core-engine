@@ -530,3 +530,27 @@ class TestQuoteRetentionHousekeeping:
         store.scan_iter.side_effect = RuntimeError("redis down")
         with patch.object(wtp, "get_redis", return_value=store):
             assert wtp.clear_retained_pnl_quotes() == 0
+
+
+class TestZeroLtpIsNotAPrice:
+    """B-15: a `last` of 0 is an untraded contract. Valued at 0 it tripped group rules."""
+
+    def test_a_traded_price_is_used_as_is(self):
+        assert pipeline._pnl_mark(12.5, 12.0, 13.0) == 12.5
+
+    def test_zero_last_with_a_two_sided_book_is_valued_at_the_mid(self):
+        assert pipeline._pnl_mark(0.0, 4.0, 5.0) == 4.5
+
+    def test_zero_last_with_a_one_sided_or_empty_book_is_unpriced(self):
+        assert pipeline._pnl_mark(0.0, 0.0, 5.0) == ""
+        assert pipeline._pnl_mark(0.0, None, None) == ""
+
+    def test_a_tick_without_a_last_field_leaves_the_stored_price_alone(self):
+        assert pipeline._pnl_mark(None, 4.0, 5.0) is None
+
+    def test_the_engine_reads_an_unpriced_mark_and_a_stored_zero_as_no_quote(self):
+        from icici_breeze_backend.app.services import portfolio_pnl_engine as engine
+
+        assert engine._parse_quote_fields({"ltp": "", "timestamp": "100.0"}) == (None, 100.0)
+        assert engine._parse_quote_fields({"ltp": "0.0", "timestamp": "100.0"}) == (None, 100.0)
+        assert engine._parse_quote_fields({"ltp": "4.5", "timestamp": "100.0"}) == (4.5, 100.0)

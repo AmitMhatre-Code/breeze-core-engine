@@ -116,29 +116,20 @@ export function sigmaForLeg(
   return sigmaForStrike(curve, leg.strike, spot, fallback);
 }
 
-/** Notional-weighted (quantity × |premium|, falling back to quantity-only if premium is
- * unknown/zero) blend of each leg's own interpolated sigma into ONE sigma — needed only
- * because the Monte Carlo PoP shares one simulated terminal price across all legs per sample,
- * so a multi-strike basket can't give each leg its own diffusion path. Degenerates correctly
- * to that leg's own `sigmaForLeg` for a single-leg list. */
-export function blendedSigmaForLegs(
+/** Volatility at a price level for PoP: the put curve below spot, the call curve at and
+ * above it, each falling back to `fallback` (ATM) when a side has fewer than 2 trusted
+ * quotes, then scaled by `multiplier` (the Basket IV-shock slider). Matches the backend,
+ * which reads the put smile at the short put and the call smile at the short call (B-56). */
+export function sigmaAtPrice(
   smiles: SigmaSmiles | null,
-  legs: StrategyLeg[],
   spot: number,
-  lotSize: number,
   fallback: number,
-): number {
-  if (!legs.length) return fallback;
-  let weightedSum = 0;
-  let totalWeight = 0;
-  for (const leg of legs) {
-    const units = Math.max(0, leg.lots) * Math.max(0, lotSize);
-    const premium = leg.premiumPerUnit ?? 0;
-    let weight = units * Math.abs(premium);
-    if (!(weight > 0)) weight = units;
-    if (!(weight > 0)) continue;
-    weightedSum += weight * sigmaForLeg(smiles, leg, spot, fallback);
-    totalWeight += weight;
-  }
-  return totalWeight > 0 ? weightedSum / totalWeight : fallback;
+  multiplier = 1,
+): (price: number) => number {
+  return (price: number) => {
+    if (!smiles || !(spot > 0) || !(price > 0)) return fallback * multiplier;
+    const curve = price < spot ? smiles.put : smiles.call;
+    return sigmaForStrike(curve, price, spot, fallback) * multiplier;
+  };
 }
+

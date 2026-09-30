@@ -479,10 +479,18 @@ def _close_leg(
             float(leg["strike_price"]), str(leg["right"]),
         )
     band = config.execution.exit_limit_band_pct
+    touch = live.exit_touch(
+        proc, user_id, stock_code=str(leg["stock_code"]),
+        exchange_code=str(leg.get("exchange_code") or market.INDEX_EXCHANGE[str(leg["stock_code"])]),
+        expiry_display=str(leg["expiry_display"]), strike_price=float(leg["strike_price"]),
+        right=str(leg["right"]), is_buy=is_short, quote=quote,
+    )
+    if touch is None:
+        return live.no_price_result(quantity), 0.0
     if is_short:
-        action, ladder = cfg.BUY, live.buyback_price_ladder(float(quote.ask or 0.05), band)
+        action, ladder = cfg.BUY, live.buyback_price_ladder(touch, band)
     else:
-        action, ladder = cfg.SELL, live.exit_price_ladder(float(quote.bid or 0.05), band)
+        action, ladder = cfg.SELL, live.exit_price_ladder(touch, band)
     result = live.place_and_confirm(
         proc, user_id, _order(leg, action=action, quantity=quantity),
         price_for_attempt=ladder,

@@ -40,12 +40,34 @@ def _span_baseline_meta(exchange_code: str, prefix: str) -> dict[str, Any]:
     }
 
 
+def _freshness() -> dict[str, Any]:
+    """What is older than the latest concluded session, for the panel's warning (B-57)."""
+    from icici_breeze_backend.app.services.reference_data.orchestrator import (
+        last_scrip_master_ingest,
+        stale_reference_sources,
+    )
+
+    try:
+        stale = stale_reference_sources()
+    except Exception:  # noqa: BLE001 -- the panel must still load
+        stale = []
+    try:
+        last = last_scrip_master_ingest()
+    except Exception:  # noqa: BLE001
+        last = None
+    return {
+        "stale_sources": stale,
+        "scrip_last_loaded_at": last.isoformat(timespec="seconds") if last else None,
+    }
+
+
 def get_reference_data_admin_status() -> dict[str, Any]:
     sch = get_scheduler_status()
     prog = load_progress_state()
     nse_date = get_bhavcopy_source_date(cfg.NFO)
     bse_date = get_bhavcopy_source_date(cfg.BFO)
     return {
+        **_freshness(),
         "enabled": sch["enabled"],
         "hour_ist": sch["hour_ist"],
         "minute_ist": sch["minute_ist"],

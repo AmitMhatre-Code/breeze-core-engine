@@ -30,6 +30,8 @@ from icici_breeze_backend.app.services.bots.cas_bingo.plan import build_plan, st
 from icici_breeze_backend.app.services.bots.scalping import held_legs
 
 _logger = logging.getLogger(__name__)
+# Expired cycles whose settlement level is missing, logged once each (B-43).
+_unsettled_logged: set = set()
 
 # The auction matches 15:30-15:35; after this the last index level is the auction's close.
 SETTLE_AFTER_IST = "15:40"
@@ -322,9 +324,16 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
         expired = expiry is not None and (expiry < now.date() or (expiry == now.date() and hhmm >= SETTLE_AFTER_IST))
         try:
             if expired:
-                level = market.last_index_level(index_code)
+                level = market.settlement_level(index_code, expiry)
                 if level:
                     execution.settle(cycle, level)
+                elif cycle.id not in _unsettled_logged:
+                    _unsettled_logged.add(cycle.id)
+                    _logger.warning(
+                        "cas bingo: cycle %s expired on %s but that day's %s close is not "
+                        "cached; it stays open rather than settling at another day's level",
+                        cycle.id, expiry, index_code,
+                    )
                 continue
             if not market_open:
                 continue

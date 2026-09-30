@@ -57,6 +57,8 @@ def stubbed(monkeypatch, tmp_path):
     monkeypatch.setattr(
         runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
+    # The position's own contracts are ticking (B-24 judges staleness on them).
+    monkeypatch.setattr(runtime, "_leg_tick_age", lambda leg, now=None: 0.0)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )
@@ -772,3 +774,53 @@ def test_the_standdown_reaches_the_run_row(db_path, stubbed, monkeypatch):
 def test_an_ordinary_day_writes_no_standdown(db_path, stubbed):
     runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, _scalper("expansion"))
     assert repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)[0].detail["signal_standdown"] is None
+
+
+# --- B-24: staleness is the position's own contracts' ------------------------------------
+
+
+def _fly_cycle():
+    from types import SimpleNamespace
+
+    def leg(right, strike, action):
+        return {"stock_code": "NIFTY", "exchange_code": "NFO", "right": right,
+                "strike_price": strike, "expiry_display": "10-Sep-2026", "action": action}
+
+    return SimpleNamespace(legs=[
+        leg("put", 23800, "Buy"), leg("put", 24000, "Sell"),
+        leg("call", 24000, "Sell"), leg("call", 24200, "Buy"),
+    ])
+
+
+def test_a_quiet_short_leg_is_stale_while_the_socket_ticks(monkeypatch):
+    ages = {("call", 24000): 75.0, ("put", 24000): 2.0, ("put", 23800): 500.0, ("call", 24200): 500.0}
+    monkeypatch.setattr(
+        runtime, "_leg_tick_age", lambda leg, now=None: ages[(leg["right"], leg["strike_price"])]
+    )
+    fresh_socket = FeedHealth(warm=True, stale=False, stale_seconds=0.0)
+    feed = runtime._position_feed(fresh_socket, _fly_cycle())
+    # The wings are not judged: their silence alone does not flatten the fly.
+    assert feed.stale and feed.stale_seconds == 75.0
+
+
+def test_a_dead_socket_still_counts_when_the_legs_look_fresh(monkeypatch):
+    monkeypatch.setattr(runtime, "_leg_tick_age", lambda leg, now=None: 1.0)
+    dead_socket = FeedHealth(warm=True, stale=True, stale_seconds=90.0)
+    assert runtime._position_feed(dead_socket, _fly_cycle()).stale_seconds == 90.0
+
+
+def test_no_position_keeps_the_socket_reading(monkeypatch):
+    feed = FeedHealth(warm=True, stale=False, stale_seconds=0.0)
+    assert runtime._position_feed(feed, None) is feed
+
+
+def test_a_contract_with_no_cell_has_no_tick_age(monkeypatch):
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.db.redis_client.cache_get_json", lambda key: None
+    )
+    assert runtime._leg_tick_age(_fly_cycle().legs[1]) == float("inf")
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.db.redis_client.cache_get_json",
+        lambda key: {"updated_at": 1000.0},
+    )
+    assert runtime._leg_tick_age(_fly_cycle().legs[1], now=1030.0) == 30.0

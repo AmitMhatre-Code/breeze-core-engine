@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sigmaAtPrice, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { bsCallDelta, bsCallPrice, bsPutDelta, bsPutPrice, normCdf } from "@/lib/strategy-builder/blackScholes";
 import {
   estimateProbabilityOfProfit,
@@ -223,5 +224,65 @@ describe("estimateProbabilityOfProfit (P of OTM expiry, deterministic)", () => {
     const pop = estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
     // debit => premium IS included: profit needs S_T > strike + premium
     expect(pop / 100).toBeCloseTo(1 - pBelow(strike + premium), 4);
+  });
+});
+
+// --- B-56: multi-leg PoP reads each side's own volatility ----------------------------------
+
+
+describe("estimateProbabilityOfProfit with per-side volatility (B-56)", () => {
+  // SENSEX, expiry 01-Oct-2026, from the Strategy Builder audit file of 2026-09-30.
+  const SPOT = 72730.62;
+  const T = 2 / 365; // the backend's whole days + 1, used on both sides of the comparison
+  const flat = (putIv: number, callIv: number): SigmaSmiles => ({
+    put: [{ x: -1, iv: putIv }, { x: 0, iv: putIv }],
+    call: [{ x: 0, iv: callIv }, { x: 1, iv: callIv }],
+  });
+  const strangle = (kp: number, kc: number): StrategyLeg[] => [
+    { id: "p", right: "Put", side: "Sell", strike: kp, lots: 1, premiumPerUnit: 20 },
+    { id: "c", right: "Call", side: "Sell", strike: kc, lots: 1, premiumPerUnit: 20 },
+  ];
+  const pop = (legs: StrategyLeg[], smiles: SigmaSmiles) =>
+    estimateProbabilityOfProfit(SPOT, T, sigmaAtPrice(smiles, SPOT, 0.2), legs, 20);
+
+  it.each([
+    [69300, 77300, 0.268, 0.295, 99.01],
+    [69000, 76500, 0.284, 0.256, 99.0],
+    [69500, 75000, 0.256, 0.186, 97.83],
+  ])("strangle %i/%i matches the backend's per-side PoP", (kp, kc, putIv, callIv, backend) => {
+    expect(pop(strangle(kp, kc), flat(putIv, callIv))).toBeCloseTo(backend, 1);
+  });
+
+  it("an iron condor scores like the strangle on its short strikes", () => {
+    const smiles = flat(0.256, 0.186);
+    const condor = [
+      ...strangle(69500, 75000),
+      { id: "lp", right: "Put" as const, side: "Buy" as const, strike: 69000, lots: 1, premiumPerUnit: 5 },
+      { id: "lc", right: "Call" as const, side: "Buy" as const, strike: 75500, lots: 1, premiumPerUnit: 5 },
+    ];
+    expect(pop(condor, smiles)).toBeCloseTo(pop(strangle(69500, 75000), smiles), 6);
+  });
+
+  it("a put credit spread reads only the put side at its short strike", () => {
+    const spread = [
+      { id: "s", right: "Put" as const, side: "Sell" as const, strike: 72000, lots: 1, premiumPerUnit: 120 },
+      { id: "l", right: "Put" as const, side: "Buy" as const, strike: 71800, lots: 1, premiumPerUnit: 60 },
+    ];
+    const perSide = pop(spread, flat(0.3, 0.1));
+    const putOnly = estimateProbabilityOfProfit(SPOT, T, 0.3, spread, 20);
+    expect(perSide).toBeCloseTo(putOnly, 6);
+  });
+
+  it("a short straddle stays in range and moves smoothly with its strike", () => {
+    const smiles = flat(0.25, 0.2);
+    const straddle = (k: number) => [
+      { id: "p", right: "Put" as const, side: "Sell" as const, strike: k, lots: 1, premiumPerUnit: 400 },
+      { id: "c", right: "Call" as const, side: "Sell" as const, strike: k, lots: 1, premiumPerUnit: 400 },
+    ];
+    const a = pop(straddle(72700), smiles);
+    const b = pop(straddle(72800), smiles);
+    expect(a).toBeGreaterThan(0);
+    expect(a).toBeLessThan(100);
+    expect(Math.abs(a - b)).toBeLessThan(3);
   });
 });

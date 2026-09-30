@@ -365,7 +365,6 @@ class GlobalIciciApiLimiter:
                 return build_result(cls.build_shed_error(uid, endpoint=ep))
 
             base_pause = get_icici_rate_limit_pause_seconds(uid)
-            GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
             user_lock = cls._user_lock(uid)
         else:
             base_pause = 0.0
@@ -380,7 +379,20 @@ class GlobalIciciApiLimiter:
                     # counted, or a throttle storm would be invisible to the window that
                     # exists to prevent it.
                     GlobalIciciApiPacer.note_call(uid)
-                raw = perform_http()
+                try:
+                    raw = perform_http()
+                except Exception:
+                    # A timeout or a dropped connection may still have reached ICICI, so it
+                    # is counted and spaced like a call that answered.
+                    if uid:
+                        cls._record_call(
+                            uid,
+                            record_url,
+                            record_method=record_method,
+                            record_body=record_body,
+                        )
+                        GlobalIciciApiPacer.mark_call_complete(uid)
+                    raise
                 http_status, body, err_text = classify_response(raw)
                 broker_error = err_text or broker_error
                 if uid:
@@ -414,6 +426,10 @@ class GlobalIciciApiLimiter:
 
         if user_lock is not None:
             with user_lock:
+                # Spacing is measured once the lock is held. Measured before it, calls that
+                # queued on the lock all saw the same "last call" and fired back to back
+                # when it freed (B-40).
+                GlobalIciciApiPacer.wait_for_slot(uid, base_pause, endpoint=ep)
                 return _attempt_loop()
         return _attempt_loop()
 

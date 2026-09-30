@@ -47,9 +47,9 @@ In semi-auto, Telegram approval works like this: the bot sends the priced trade 
 
 ## Safety rails every bot shares
 
-- **A stopped ICICI feed pauses the bots that need it.** Every bot opens, sizes and judges its exits only on prices from ICICI's live feed. When the feed for a strike, the index or the NIFTY futures stops, the bots that use it pause and try again once live prices return. They never fall back to a snapshot, the previous close or a one-off price lookup. With Telegram linked, you get **ICICI feed stopped — bots paused** naming the paused bots. If the stopped feed is one an open bot position is watched on, the message also says those positions are **unmonitored**: watch them yourself. **ICICI feed back** follows once the feed has worked for 5 minutes in a row. A new stop after that is always reported straight away. Holdings Writer positions have no automatic exit at any time, and Expiry Writer positions are covered by the Profit Booking / Stop Loss alerts instead.
+- **A stopped ICICI feed pauses the bots that need it.** Every bot opens, sizes and judges its exits only on prices from ICICI's live feed. When the feed for a strike, the index or the NIFTY futures stops, the bots that use it pause and try again once live prices return. They never open or judge a trade on a snapshot, the previous close or a one-off price lookup. The one exception is **closing**: when a bot has decided to close a position and the feed has no live price for a leg, it asks ICICI for one quote to price that exit, rather than wait for a feed that has stopped. If ICICI cannot give one either, nothing is sent for that leg and the bot tries again shortly. With Telegram linked, you get **ICICI feed stopped — bots paused** naming the paused bots. If the stopped feed is one an open bot position is watched on, the message also says those positions are **unmonitored**: watch them yourself. **ICICI feed back** follows once the feed has worked for 5 minutes in a row. A new stop after that is always reported straight away. Holdings Writer positions have no automatic exit at any time, and Expiry Writer positions are covered by the Profit Booking / Stop Loss alerts instead.
 - **Your ICICI login must be live.** ICICI sessions end every night. When a bot needs a session and there is none, it sends Telegram reminders and waits, up to a cut-off. It never trades on stale credentials.
-- **Read-only mode stops new trades.** If your license is not active, bots do not open positions.
+- **Read-only mode stops new trades, never exits.** If your license is not active, bots do not open positions, but a bot still closes a position it already holds, and you can still switch a bot off.
 - **One order at a time.** Orders go to ICICI strictly one after another, never in parallel, so a refused order can be retried without any risk of a double fill.
 - **An order the bot cannot account for is never guessed at.** This applies to the Long Scalper, the Intraday Iron Fly and CAS Bingo. An entry can be interrupted (the app restarts mid-order, ICICI's answer is lost, or an order cannot be cancelled). When that happens, the bot checks ICICI's order book before doing anything else, and it places no order for that entry until the question is settled:
   - If the whole entry filled, the bot manages it as normal, and Telegram says **interrupted entry recovered**.
@@ -57,7 +57,8 @@ In semi-auto, Telegram approval works like this: the bot sends the priced trade 
   - If nothing filled, the entry is dropped and nothing is counted as a loss.
   - If the order book cannot answer, you get **needs checking**. The bot opens nothing new and checks again after 30 seconds, then 1, 2 and 5 minutes. If it still cannot tell, it switches itself off, says so, and keeps checking every 5 minutes.
 - **Never partly funded.** If even one lot does not fit the budget or margin, the bot skips with a logged reason rather than trading a smaller version of the idea.
-- **Limit orders, not market orders.** Entries and exits use limit prices a small band beyond the quote.
+- **Limit orders, not market orders.** Entries and exits use limit prices a small band beyond the quote. A fill is recorded at the average price ICICI reports for the order, not at the limit sent.
+- **Orders above the freeze quantity are split.** The Long Scalper, the Intraday Iron Fly and CAS Bingo send a large leg as several orders, each under the exchange's freeze quantity, one after another. If one does not fill, the rest are not sent.
 - **Protection is armed as soon as the trade exists.** If a stop cannot be armed, the run is marked **Partial**, not failed, and the card tells you to set one by hand (see [Profit Booking / Stop Loss](portfolio.md#profit-booking--stop-loss)).
 - **Costs are real.** Every rupee figure a bot shows is after brokerage, taxes, exchange fees and an allowance for the bid-ask spread, from [Trading Costs](settings-trading.md#trading-costs).
 - **Live bots always ask ICICI for margin**, whatever the SPAN-file settings say.
@@ -79,7 +80,7 @@ Earns premium on stock you already hold, without ever selling naked calls. It wr
 
 How it decides:
 
-- **Calls are always covered.** Call lots can never exceed the shares you can deliver, minus calls already open on that stock. **Pledged** shares count but are flagged (you would need to unpledge them to deliver); **blocked** shares do not count.
+- **Calls are always covered.** Call lots can never exceed the shares you can deliver, minus calls already open on that stock. If your open positions cannot be read from ICICI, the bot proposes nothing that run, because it cannot tell how many calls are already written. **Pledged** shares count but are flagged (you would need to unpledge them to deliver); **blocked** shares do not count.
 - **Puts are opt-in** and limited by the delivery-cash budget.
 - Strikes are rounded **further** from spot, never closer. Premium is quoted at the **bid**, and margin is netted against your existing positions.
 - Stocks are funded in your priority order; one that does not fit is skipped and the rest still get written.
@@ -97,7 +98,7 @@ Collects the rapid time decay of NIFTY and SENSEX options on their expiry day. I
 | **Schedule** | **Entry (IST)** (default 09:30), **Remind from (IST)**, **Until (IST)** (default 12:00; no session by then and it skips the day) and **Remind every (min)**. |
 | **Exits** | **Book at % of premium** (default 50%: buy back when the option has halved; 100% lets it expire with only the stop live) and **Stop at N × premium** (default 1: exit when the loss equals the premium collected). |
 
-With more than one strategy shortlisted, it picks the one that pays the most **premium per rupee of margin**, pricing a strangle's margin as one position. Size is confirmed with ICICI's margin calculator before any order goes out. The stop and target are armed the moment the fills are confirmed. On a strangle, profit is booked only when **both** legs have decayed. It needs a **live index level** to place strikes; without one it skips that pass and says so in the Activity log.
+With more than one strategy shortlisted, it picks the one that pays the most **premium per rupee of margin**, pricing a strangle's margin as one position. Size is confirmed with ICICI's margin calculator before any order goes out; if the full size is over the cap, each smaller size is confirmed with ICICI too. The stop and target are armed the moment the fills are confirmed and show in your positions. The stop covers exactly the legs held at that moment: if you later add legs on the same index and expiry, it **Resets** with an alert, as a stop you armed yourself would, and does not quietly cover your new legs. Once the options expire, the stop is marked **Completed** the next day. On a strangle, profit is booked only when **both** legs have decayed. It needs a **live index level** to place strikes; without one it skips that pass and says so in the Activity log.
 
 ### Long Scalper
 
@@ -126,7 +127,7 @@ How it trades:
 | Square-off | 15:15 | Exit |
 
 - **A call simply ending does not close the trade.** Only the stops, an opposite call, or the square-off do.
-- It trades only on **live prices**: the option's quote from the live feed and NIFTY from a live index tick. If either lapses, it opens nothing and holds any open position without moving its stop until prices return. The Activity log records these passes as "No live quote" or "No live NIFTY index tick".
+- It trades only on **live prices**: the option's quote from the live feed and NIFTY from a live index tick. If either lapses, it opens nothing and holds any open position without moving its stop until prices return. The Activity log records these passes as "No live quote" or "No live NIFTY index tick". If the option it holds has had no tick for a minute, even while other options are still ticking, it closes the position, pricing the exit from one ICICI quote.
 - A round trip on one NIFTY lot costs roughly ₹100, so costs matter a great deal to a scalper; every report shows them.
 
 ### Intraday Iron Fly
@@ -136,13 +137,13 @@ Earns premium from a calm midday NIFTY market with a strictly limited worst case
 | Tab | Settings |
 |---|---|
 | **Schedule** | Trading windows (default 11:30–13:30), square-off time, and **Trade on expiry day**. |
-| **Structure** | **Wing width** (pts; default 150, always rounded outward), **Margin ceiling** (₹; default ₹25,000: the largest whole-lot fly that fits, checked with ICICI on all four legs), and **Widen above VIX** / **Widened wing width** (0 switches the rule off). |
+| **Structure** | **Wing width** (pts; default 150, always rounded outward), **Margin ceiling** (₹; default ₹25,000: the largest whole-lot fly that ICICI confirms fits, checked on all four legs), and **Widen above VIX** / **Widened wing width** (0 switches the rule off). |
 | **Exits** | **Book at credit decay of** % (default 15%), **Stop at credit loss of** % (default 20%), **Spot drift stop** % (default 0.35%; checked first, because once spot moves away from the short strikes losses accelerate), and **Hard stop** (₹; 0 switches it off). |
 | **Re-entry** | **Cooldown** (min; default 15) and **Range window** / **Spot must stay within** (default 10 minutes within 0.15%). Both must clear before another fly. |
 | **Entry filter** | **Filter**: **None — the re-entry gate only**, **India VIX not rising** (with **Look back** and **Skip if VIX rose more than**), or **Only while a signal is quiet** (the fly opens only while the chosen signal has no live call either way). Both filters fail closed: if VIX or the signal cannot be read, the fly waits. |
 | **Risk** | Daily loss cap, consecutive losses, cooldown and broker calls held back, as for the Long Scalper. |
 
-It places the **wings first**, then the short legs; if a wing will not fill, anything filled is unwound. Profit and loss are measured at what it would actually cost to close (shorts at the ask, wings at the bid). On exit it buys back the shorts first, then sells the wings.
+It places the **wings first**, then the short legs; if a wing will not fill, anything filled is unwound. Profit and loss are measured at what it would actually cost to close (shorts at the ask, wings at the bid). On exit it buys back the shorts first, then sells the wings. If a short leg has had no tick for a minute, even while other options are still ticking, it closes the fly.
 
 Like the Long Scalper, it needs **live prices** on all four legs and a live NIFTY index tick to open a fly, and it centres the fly on that live NIFTY level. A fly is never worth more than its widest wing, so a price that says otherwise is treated as bad data: it is ignored rather than counted towards the stops or the daily loss cap.
 

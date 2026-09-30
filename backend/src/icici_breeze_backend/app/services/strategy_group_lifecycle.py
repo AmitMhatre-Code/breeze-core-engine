@@ -33,6 +33,7 @@ Consequences that follow, and are easy to get wrong later:
 """
 from __future__ import annotations
 
+import contextvars
 import datetime
 import logging
 import threading
@@ -289,7 +290,47 @@ def _handle_own_exit_order(
         # self-resolves at EOD — an unfilled Day order goes Expired, which IS a Reset.
         return
 
-    _maybe_complete(user_id, rule)
+    _complete_off_the_feed_thread(user_id, rule)
+
+
+# Tests set this to run the completion check on the calling thread.
+_complete_inline = False
+_completing: set[str] = set()
+_completing_lock = threading.Lock()
+
+
+def _complete_off_the_feed_thread(user_id: str, rule: SquareOffRuleRecord) -> None:
+    """Check for Completed on a thread of its own (B-38).
+
+    The check reads the order book: a REST call behind the pacer, which can wait up to 20 s
+    for a minute slot. This is called from the SDK's order-socket callback, where that wait
+    held up every later order event -- including the fills the bots' fill tracker and exit
+    arming are waiting on. One check per SG at a time; a fill that lands during one is
+    covered by the next fill or by the REST reconcile.
+    """
+    if _complete_inline:
+        _maybe_complete(user_id, rule)
+        return
+    with _completing_lock:
+        if rule.id in _completing:
+            return
+        _completing.add(rule.id)
+
+    def _work() -> None:
+        try:
+            fresh = repo.get_rule(rule.id)
+            if fresh is not None and fresh.status == "fired":
+                _maybe_complete(user_id, fresh)
+        except Exception:  # noqa: BLE001 — the REST reconcile is still the backstop
+            _logger.exception("SG completion check failed for %s", rule.id)
+        finally:
+            with _completing_lock:
+                _completing.discard(rule.id)
+
+    threading.Thread(
+        target=contextvars.copy_context().run, args=(_work,),
+        name=f"sg-complete-{rule.id}", daemon=True,
+    ).start()
 
 
 def _maybe_complete(

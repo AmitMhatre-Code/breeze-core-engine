@@ -321,6 +321,23 @@ def mark_completed(rule_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def mark_expired(rule_id: str) -> bool:
+    """Armed -> Completed for an SG whose options have expired (B-12).
+
+    Expiry sends no order event and simply removes the legs, so nothing else ever resolves
+    such a rule: it stayed Armed for good, re-hydrated at every start and kept the user in
+    the protection guard's sweep. Only from `armed`; a fired rule's exits settle it."""
+    with sqlite3.connect(_db_path()) as conn:
+        cur = conn.execute(
+            "UPDATE portfolio_squareoff_rules "
+            "SET status = 'completed', resolved_at = ? "
+            "WHERE id = ? AND status = 'armed'",
+            (ist_timestamp(), rule_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def mark_reset(rule_id: str, reason: str) -> bool:
     """Retire a live SG with a user-facing explanation.
 
@@ -451,10 +468,18 @@ def get_rule(rule_id: str) -> Optional[SquareOffRuleRecord]:
         return _row_to_record(row) if row else None
 
 
-def update_leg_order_ids(rule_id: str, scrip_key: str, order_ids: list[str]) -> bool:
+def update_leg_order_ids(rule_id: str, scrip_key: str, order_ids: list[str], *, user_id: str) -> bool:
     """Patch one leg's `order_ids` within a fired rule's stored leg_results, after a
     leg-modify has cancelled/modified/added orders for it — so the next read (PB/SL
-    table, future modify/cancel matching) resolves the currently-live set."""
+    table, future modify/cancel matching) resolves the currently-live set.
+
+    Only the rule's owner may: the id alone let one user rewrite another's SG (B-48)."""
+    with sqlite3.connect(_db_path()) as conn:
+        owner = conn.execute(
+            "SELECT user_id FROM portfolio_squareoff_rules WHERE id = ?", (rule_id,)
+        ).fetchone()
+    if owner is None or str(owner[0]) != str(user_id):
+        return False
     rule = get_rule(rule_id)
     if rule is None or not rule.leg_results:
         return False
@@ -469,8 +494,8 @@ def update_leg_order_ids(rule_id: str, scrip_key: str, order_ids: list[str]) -> 
         return False
     with sqlite3.connect(_db_path()) as conn:
         conn.execute(
-            "UPDATE portfolio_squareoff_rules SET leg_results = ? WHERE id = ?",
-            (json.dumps([leg.model_dump() for leg in new_legs]), rule_id),
+            "UPDATE portfolio_squareoff_rules SET leg_results = ? WHERE id = ? AND user_id = ?",
+            (json.dumps([leg.model_dump() for leg in new_legs]), rule_id, user_id),
         )
         conn.commit()
     return True

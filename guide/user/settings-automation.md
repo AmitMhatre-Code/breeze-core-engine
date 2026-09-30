@@ -23,7 +23,11 @@ Breeze Modern keeps its own copies of the exchanges' daily files so it can show 
 | **Save schedule** | Saves the time and switch. **Unsaved schedule changes** reminds you if you have not. |
 | **Load now** | Loads everything immediately. Progress bars appear under **Active load**. |
 
-If an exchange has not yet published the day's bhavcopy when the daily load runs, the app keeps the previous session's file and tries again every 30 minutes, through the evening and overnight, until the new file appears. It never retries during market hours. A successful retry appears in the load history like any other load.
+If an exchange has not yet published the day's bhavcopy when the daily load runs, the app keeps the previous session's file and tries again every 30 minutes, through the evening and overnight, until the new file appears. The same applies to the scrip master if the daily load was missed (the server was off at that time) or failed: a full load is tried every 30 minutes until it succeeds. These retries never run during market hours. A successful retry appears in the load history like any other load.
+
+When the server starts, it checks the age of what is loaded. If the scrip master or a bhavcopy is older than the last trading session, it loads fresh files straight away in the background, during market hours too, while carrying on with the old ones until the new load is complete. This matters most for the scrip master: it decides which contracts are tradeable and so which get a live price, so an old one leaves newly tradeable strikes with no quote.
+
+A warning at the top of this screen says when the scrip master or a bhavcopy is older than the last session, and when the scrip master was last loaded. Use **Load now**, or wait for the automatic reload.
 
 SPAN files follow the exchanges' own intraday releases instead, loading automatically at **09:15, 11:15, 12:45, 14:15, 15:45, 18:00 and 21:45 IST**, and picking up the next trading day's file as soon as it is published.
 

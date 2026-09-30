@@ -1,9 +1,10 @@
 "use client";
 
+import { pricedLegs, unpricedNote } from "@/lib/strategy-builder/leg-quote";
 import { useId, useMemo } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
-import { blendedSigmaForLegs, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { sigmaAtPrice, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
@@ -121,7 +122,7 @@ function StatCell({
 
 export function BasketPayoffPanel({
   sectionLabel,
-  legs,
+  legs: allLegs,
   spot,
   atmIv,
   sigmaSmiles = null,
@@ -149,6 +150,9 @@ export function BasketPayoffPanel({
   showGreeks: boolean;
   onShowGreeksChange: (v: boolean) => void;
 }) {
+  // A leg with no quote is left out of every figure here rather than valued at ₹0 (B-57).
+  const legs = useMemo(() => pricedLegs(allLegs), [allLegs]);
+  const unpriced = unpricedNote(allLegs);
   const T = useMemo(() => expiryDisplayToYears(expiryDate), [expiryDate]);
   const baseSigma = atmIv != null && atmIv > 0 ? atmIv : 0.2;
   const { minS, maxS } = useMemo(
@@ -191,7 +195,8 @@ export function BasketPayoffPanel({
 
   const pop = useMemo(() => {
     if (spot == null || !legs.length) return 0;
-    const sigma = blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, baseSigma) * (1 + ivShockPct / 100);
+    // The IV shock scales each side's volatility, not a blend (B-56).
+    const sigma = sigmaAtPrice(sigmaSmiles, spot, baseSigma, 1 + ivShockPct / 100);
     return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
   }, [spot, T, baseSigma, sigmaSmiles, ivShockPct, legs, lotSize]);
 
@@ -247,6 +252,12 @@ export function BasketPayoffPanel({
           />
         </div>
       </div>
+
+      {unpriced ? (
+        <p className="border-b border-border-soft px-[18px] py-2 text-hint text-amber-accent" role="note">
+          {unpriced}
+        </p>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-px bg-border-soft sm:grid-cols-4">
         <StatCell

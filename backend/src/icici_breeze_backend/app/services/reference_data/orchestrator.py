@@ -226,6 +226,59 @@ def _run_reference_data_load(*, force: bool, trigger_mode: str) -> dict[str, Any
         return {"ok": False, "message": str(exc)}
 
 
+def last_scrip_master_ingest() -> dt.datetime | None:
+    """When the ICICI scrip master last loaded successfully, from the ingest history."""
+    from icici_breeze_backend.app.services.reference_data.state import fetch_ingest_history
+
+    kind = _SOURCE_LABELS["scrip"][0]
+    for row in fetch_ingest_history():
+        if row.get("kind") != kind or not row.get("ok"):
+            continue
+        try:
+            at = dt.datetime.fromisoformat(str(row.get("ingested_at") or ""))
+        except ValueError:
+            continue
+        from icici_breeze_backend.app.core.timezone import IST
+
+        return at if at.tzinfo else at.replace(tzinfo=IST)
+    return None
+
+
+def scrip_master_is_stale(now: dt.datetime | None = None) -> bool:
+    """True when the scrip master last loaded before the latest concluded session closed.
+
+    The scrip master decides which contracts are tradeable (`MarginPercentage > 0`), and so
+    which get a live quote at all, their tokens and lot sizes; that set changes from one
+    session to the next. An instance off at the scheduled load kept an old one indefinitely:
+    on 2026-09-30 a master from 27-Sep left SENSEX 71,900 PE with no quote (B-57).
+    """
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.services.market_calendar import get_calendar_config
+    from icici_breeze_backend.app.services.quote_source_router import latest_concluded_trading_day
+
+    now = now or now_ist()
+    concluded = latest_concluded_trading_day(now)
+    close_at = get_calendar_config().close_time(
+        dt.datetime.combine(concluded, dt.time(0, 0), tzinfo=IST)
+    )
+    last = last_scrip_master_ingest()
+    return last is None or last < close_at
+
+
+def stale_reference_sources(now: dt.datetime | None = None) -> list[str]:
+    """Which loaded sources are older than the latest concluded session: "scrip", and the
+    options exchanges whose bhavcopy is behind."""
+    out: list[str] = []
+    try:
+        if scrip_master_is_stale(now):
+            out.append("scrip")
+    except Exception:  # noqa: BLE001 -- unreadable history: reload rather than trust it
+        _logger.warning("Could not judge the scrip master's age", exc_info=True)
+        out.append("scrip")
+    out.extend(stale_bhavcopy_segments(now))
+    return out
+
+
 def stale_bhavcopy_segments(now: dt.datetime | None = None) -> list[str]:
     """Options exchanges whose loaded bhavcopy predates the latest concluded session."""
     from icici_breeze_backend.app.services.quote_source_router import bhavcopy_is_fresh

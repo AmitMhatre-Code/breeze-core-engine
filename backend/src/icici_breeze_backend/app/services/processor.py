@@ -2,6 +2,7 @@ import hashlib
 import math
 import copy
 import datetime
+import threading
 import sys
 import time
 from breeze_connect import BreezeConnect
@@ -147,6 +148,21 @@ def _scrip_master_expiry_sql_values(expiry: str) -> tuple[str, ...]:
     )
 
     return scrip_master_expiry_sql_values(expiry)
+
+
+def _new_order_tag() -> str:
+    from icici_breeze_backend.app.services.bots.scalping.order_intents import new_tag
+
+    return new_tag()
+
+
+def _freeze_below_lot_message(stock_code: str, qty_limits: Any, lot_size: Any) -> str:
+    """Why an order cannot be split: the freeze limit rounds down to zero lots (B-47)."""
+    return (
+        f"The freeze quantity for {stock_code} is {qty_limits}, which is less than one lot "
+        f"({lot_size}), so the order cannot be split into chunks. Check the quantity limit "
+        "for this scrip."
+    )
 
 
 def _expiry_to_breeze_place_order(expiry_date) -> str:
@@ -562,7 +578,9 @@ class processor():
 
     def __init__(self):
         super().__init__()
-        self.errors: list = []
+        # Per thread (B-08): route handlers that do broker work now run on the threadpool,
+        # and one shared list let two concurrent requests take each other's errors.
+        self._errors_local = threading.local()
 
     def get_login_url(self,user_id):
         data = self.fetch_credentials(user_id)
@@ -3150,7 +3168,7 @@ class processor():
                             stock_code, exchange_code=exchange_code
                         )
                         if qty_limits is not None:
-                            freeze_quantity = (max(1, int(qty_limits)) // ls) * ls
+                            freeze_quantity = (max(1, int(qty_limits)) // ls) * ls or None
             except (TypeError, ValueError):
                 freeze_quantity = None
 
@@ -3221,7 +3239,9 @@ class processor():
                 product=prod,
                 # The caller's tag for finding this order in the book if the answer is
                 # lost (`order_intents.new_tag`); ICICI returns it in the order list.
-                user_remark=str(user_remark or ""),
+                # Every app order carries a tag, so the Order Book can tell it from one a
+                # GTT fired (B-51); callers that look a lost answer up pass their own.
+                user_remark=str(user_remark or _new_order_tag()),
             )
         except Exception as e:
             place_order_sdk_exception = True
@@ -3524,6 +3544,8 @@ class processor():
         if ls <= 0:
             return {"ok": False, "error": "Invalid lot size for this contract."}
         freeze_aligned = (max(1, int(qty_limits)) // ls) * ls
+        if freeze_aligned <= 0:
+            return {"ok": False, "error": _freeze_below_lot_message(stock_code, qty_limits, ls)}
         return {
             "ok": True,
             "lot_size": ls,
@@ -3628,7 +3650,11 @@ class processor():
             )
 
         lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
+        if not lot_size or int(lot_size) <= 0:
+            return _terminal("Could not resolve lot size for this contract.")
         default_per = (max(1, int(qty_limits)) // lot_size) * lot_size
+        if default_per <= 0:
+            return _terminal(_freeze_below_lot_message(stock_code, qty_limits, lot_size))
         qty_per_order = default_per
 
         raw_chunk = str(chunk_qty).strip() if chunk_qty is not None else ""
@@ -3758,9 +3784,23 @@ class processor():
                     "message": self._market_closed_park_message(closed_reason),
                 }
             )
+        elif not (lot_size := self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)) or (
+            (max(1, int(qty_limits)) // lot_size) * lot_size <= 0
+        ):
+            # A freeze limit below one lot rounds every chunk to 0 lots, which divided by
+            # zero below and failed the request with a 500 (B-47).
+            messages.append(
+                {
+                    "type": cfg.DANGER,
+                    "message": (
+                        _freeze_below_lot_message(stock_code, qty_limits, lot_size)
+                        if lot_size
+                        else "Could not resolve lot size for this contract."
+                    ),
+                }
+            )
         else:
-            lot_size = self.fetch_lot_size(stock_code, expiry_date, exchange_code=exchange_code)
-            qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size  # avoid ZeroDivisionError when qty_limits is 1
+            qty_per_order = (max(1, int(qty_limits)) // lot_size) * lot_size
             iterations = int(int(total_qty) / qty_per_order)
             remainder = int(total_qty) % int(qty_per_order)
             success_qty_chunks: list[int] = []
@@ -4203,6 +4243,17 @@ class processor():
             performance['Error'] = trades['Error']
 
         return performance
+
+    @property
+    def errors(self) -> list:
+        local = self._errors_local
+        if not hasattr(local, "errors"):
+            local.errors = []
+        return local.errors
+
+    @errors.setter
+    def errors(self, value: list) -> None:
+        self._errors_local.errors = value
 
     def store_error(self, error):
         self.errors.append(error.copy() if isinstance(error, dict) else {"contents": str(error)})

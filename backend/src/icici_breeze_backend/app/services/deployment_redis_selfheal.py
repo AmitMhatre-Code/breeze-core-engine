@@ -46,9 +46,12 @@ def _self_heal_enabled() -> bool:
 
 
 def _state_path() -> str:
-    """Marker lives in the data volume — the only mount that survives a recreate."""
-    users_db = (getattr(cfg, "USERS_DB", "") or "").strip()
-    data_dir = os.path.dirname(users_db) if users_db else "/app/backend/data"
+    """Marker lives in the data volume — the only mount that survives a recreate.
+
+    `DATA_PATH`, not `dirname(USERS_DB)`: `USERS_DB` is a bare file name, so its dirname was
+    "" and the marker landed in the working directory, inside the container layer that the
+    recreate it counts throws away. The 2-attempt cap never bound (B-35)."""
+    data_dir = (getattr(cfg, "DATA_PATH", "") or "").strip() or "/app/backend/data"
     return os.path.join(data_dir, _STATE_FILENAME)
 
 
@@ -139,13 +142,12 @@ def run_redis_self_heal_if_needed() -> None:
         return
 
     if _on_redis_network(container):
-        # Already correctly homed, so the sidecar was simply down. It is back now,
-        # but this process cached the in-memory fallback at init, so it stays
-        # degraded until something restarts it. Not worth a self-inflicted
-        # recreate: a transient Redis outage would then bounce the app.
+        # Already correctly homed, so the sidecar was simply down. It is back now, and
+        # every process on the in-memory fallback moves onto it at its next probe
+        # (redis_client, B-32). Not worth a self-inflicted recreate.
         logger.warning(
-            "redis self-heal: sidecar restored; this process keeps its in-memory "
-            "fallback until the next restart"
+            "redis self-heal: sidecar restored; processes on the in-memory fallback "
+            "switch to it within about 30 seconds"
         )
         return
 

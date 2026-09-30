@@ -73,11 +73,10 @@ def warm_positions_for_user(user_id: str) -> bool:
     can legitimately hold zero open positions for a moment, and treating that as failure
     would report protection as suspended when the session is perfectly healthy.
 
-    Critically, `sync_positions_from_response` calls `clear_positions` for any response it
-    cannot read as a position list — including error payloads. Handing it a failed fetch
-    would therefore *wipe* a registry that was already warm, turning one transient broker
-    hiccup into exactly the inert state this module exists to prevent. So the Status check
-    happens here, before the sync, and a bad response is left to the caller as False.
+    A failed fetch says nothing about what is held, so it must never wipe a registry that
+    was already warm. `sync_positions_from_response` itself now leaves the registry alone
+    for anything that is not a readable position list (B-06); the Status check here is what
+    tells the caller the warm failed.
     """
     try:
         from icici_breeze_backend.app.services.portfolio_pnl_engine import (
@@ -263,6 +262,42 @@ def check_rule_feed_staleness(user_id: str, now: float, blind_floor: float | Non
         telegram_alerts.notify_rule_prices_restored(user_id, back, hold_minutes=hold_minutes)
 
 
+# Tests turn this off: their fixtures arm SGs on fixed dates that the real clock has passed.
+_expiry_sweep_enabled = True
+
+
+def expire_lapsed_rules(today=None) -> int:
+    """Complete every armed SG whose expiry date has passed (B-12). Reads the database only,
+    so it runs on every guard pass, market open or not, and at startup hydration."""
+    from icici_breeze_backend.app.services import portfolio_pnl_engine as engine
+    from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+
+    if not _expiry_sweep_enabled:
+        return 0
+    today = today or now_ist().date()
+    done = 0
+    for row in repo.list_all_live_rules():
+        if str(row.get("status")) != "armed":
+            continue
+        try:
+            expiry = datetime.strptime(str(row.get("expiry_display") or "").strip(), "%d-%b-%Y").date()
+        except ValueError:
+            continue
+        if expiry >= today:
+            continue
+        rule_id = str(row["id"])
+        if not repo.mark_expired(rule_id):
+            continue
+        engine.clear_group_rule(str(row["user_id"]), str(row["stock_code"]), str(row["expiry_display"]))
+        sg.release_subscription(rule_id)
+        done += 1
+        _logger.info(
+            "SG %s completed: %s %s expired while it was armed",
+            rule_id, row.get("stock_code"), row.get("expiry_display"),
+        )
+    return done
+
+
 def protection_guard_tick() -> None:
     """One sweep over every user holding live SGs.
 
@@ -273,6 +308,10 @@ def protection_guard_tick() -> None:
     """
     from icici_breeze_backend.app.services.market_calendar import is_market_open
 
+    try:
+        expire_lapsed_rules()
+    except Exception:  # noqa: BLE001 — never stop the sweep over bookkeeping
+        _logger.exception("Could not complete expired SGs")
     if not is_market_open():
         # Every quote goes stale at the close; an open incident ends with the session,
         # not with a "back" message the next morning.

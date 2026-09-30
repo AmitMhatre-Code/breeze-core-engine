@@ -28,6 +28,7 @@ falls back to its REST snapshot for those (see the frontend).
 """
 from __future__ import annotations
 
+import contextvars
 import datetime
 import logging
 import threading
@@ -349,8 +350,8 @@ def on_order_notification(n: Any) -> None:
 
 def _run_reconcile(user_id: str) -> None:
     """Single get_trades() call: replace every contract's Σδ / Σδp with the
-    authoritative trade book so approximate fill prices are trued up. Runs on the
-    P&L loop's worker thread, so a blocking broker call here is fine."""
+    authoritative trade book so approximate fill prices are trued up. Runs on its own
+    thread (`_start_reconcile`), so a blocking broker call here is fine."""
     today_iso = _today().isoformat()
     try:
         resp = _get_processor().get_trades(user_id, today_iso, today_iso)
@@ -407,6 +408,37 @@ def _run_reconcile(user_id: str) -> None:
             c.sum_dp += delta * price
         st.reconcile_due = None
         st.meta["trades_source_ok"] = True
+
+
+# Tests set this to reconcile on the calling thread.
+_reconcile_inline = False
+_reconciling: set[str] = set()
+
+
+def _start_reconcile(user_id: str) -> None:
+    """Run the reconcile off the P&L loop's thread (B-16). Its `get_trades` waits on the
+    broker lock and the pacer, and the same loop evaluates every PB/SL rule next."""
+    if _reconcile_inline:
+        _run_reconcile(user_id)
+        return
+    with _lock:
+        if user_id in _reconciling:
+            return
+        _reconciling.add(user_id)
+
+    def _work() -> None:
+        try:
+            _run_reconcile(user_id)
+        except Exception:
+            _logger.exception("day-pnl live: reconcile failed for %s", user_id)
+        finally:
+            with _lock:
+                _reconciling.discard(user_id)
+
+    threading.Thread(
+        target=contextvars.copy_context().run, args=(_work,),
+        name="day-pnl-reconcile", daemon=True,
+    ).start()
 
 
 # --------------------------------------------------------------------------- recompute
@@ -517,7 +549,7 @@ def run_tick() -> None:
                 _latest.pop(user_id, None)
             continue
         if st.reconcile_due is not None and now_mono >= st.reconcile_due:
-            _run_reconcile(user_id)
+            _start_reconcile(user_id)
         try:
             # Fetch quotes outside the lock (a Redis round trip), then do the
             # arithmetic under it so a concurrent order-notification mutation of

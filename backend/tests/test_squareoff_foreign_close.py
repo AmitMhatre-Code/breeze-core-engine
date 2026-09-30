@@ -215,3 +215,25 @@ def test_other_groups_are_untouched(db_path):
     assert guard.reconcile_fully_closed_groups(USER) == 1
     assert repo.get_rule(nifty.id).status == "reset"
     assert repo.get_rule(bank.id).status == "armed"
+
+
+def test_an_armed_sg_over_expired_options_is_completed(db_path, monkeypatch):
+    """B-12: expiry sends no order event and just removes the legs, so an armed SG over
+    options that expired stayed Armed for good."""
+    import datetime
+
+    monkeypatch.setattr(guard, "_expiry_sweep_enabled", True)
+    released = []
+    monkeypatch.setattr(sg, "release_subscription", lambda rule_id: released.append(rule_id))
+    rule = _arm_with_open_leg()
+    expiry = datetime.datetime.strptime(EXPIRY, "%d-%b-%Y").date()
+
+    assert guard.expire_lapsed_rules(today=expiry) == 0  # expiry day itself: still live
+    assert repo.get_rule(rule.id).status == "armed"
+
+    assert guard.expire_lapsed_rules(today=expiry + datetime.timedelta(days=1)) == 1
+    assert repo.get_rule(rule.id).status == "completed"
+    assert released == [rule.id]
+    assert engine.group_rule_for(USER, STOCK, EXPIRY) is None
+    # Idempotent: nothing left to complete.
+    assert guard.expire_lapsed_rules(today=expiry + datetime.timedelta(days=2)) == 0

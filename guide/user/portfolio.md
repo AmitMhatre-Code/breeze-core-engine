@@ -8,8 +8,8 @@ The Portfolio page lists your **open option positions on NFO and BFO** (NSE and 
 
 | Tile | What it shows |
 |---|---|
-| **Total MTM** | Mark-to-market P&L across all open positions, with the number of groups and legs. |
-| **Total carry** | What your positions would make **if held to expiry** and every option you sold expired worthless (and every option you bought were worth nothing). It is the premium still to be earned or lost from here. |
+| **Total MTM** | Mark-to-market P&L across all open positions, with the number of groups and legs. While any leg has no price yet it shows **—** and **Waiting on N unpriced legs**, because a sum of the priced legs alone would look like the total. |
+| **Total carry** | What your positions would make **if held to expiry** and every option you sold expired worthless (and every option you bought were worth nothing). It is the premium still to be earned or lost from here. Like Total MTM, it waits until every leg is priced. |
 | **Span + ELM margin** | Margin blocked by your positions, split into what ICICI has **blocked** (SPAN) plus the app's **ELM buffer**. The **i** icon explains why it can differ slightly from ICICI's screens. See [Margins](margins.md). |
 | **Carry return** | Total carry as an **annualised** return on that margin. |
 
@@ -53,7 +53,7 @@ The second line under a group's name shows its automated-exit status:
 - A small gauge when a rule is armed: the stop on the left, the target on the right, and a dot showing where the group's P&L sits between them.
 - A short explanation when a rule has **reset** (see [When a rule resets](#when-a-rule-resets)).
 
-A badge next to the name shows the rule's state: **Armed**, **Fired** (exit orders placed, waiting for fills), **Completed** (every exit order filled) or **Reset**.
+A badge next to the name shows the rule's state: **Armed**, **Fired** (exit orders placed, waiting for fills), **Completed** (every exit order filled, or the options expired while it was armed) or **Reset**. A scalping bot that trades the same expiry switches the rule off, and it then shows **Reset** with that reason.
 
 ## Inside an expanded group
 
@@ -108,7 +108,7 @@ Short legs are bought back first, then long legs are sold. If a short leg's buy-
 If you have not linked Telegram, the dialog offers a **Register** link. With Telegram linked you get a message the moment a rule fires. See [Telegram Alerts](settings-automation.md#telegram-alerts).
 
 > [!WARNING]
-> **This is best-effort protection, not a guaranteed stop-loss.** Your server does the watching, not ICICI. A rule can only fire while your server is running, connected to the live quote feed, signed in to ICICI for the day and licensed. If any of those is not true at the moment the threshold is crossed, no exit orders are placed. The target and loss limit are **triggers**, not guaranteed exit prices: in a fast market the limit orders may fill partly, at a worse price, or not at all.
+> **This is best-effort protection, not a guaranteed stop-loss.** Your server does the watching, not ICICI. A rule can only fire while your server is running, connected to the live quote feed and signed in to ICICI for the day. If any of those is not true at the moment the threshold is crossed, no exit orders are placed. The target and loss limit are **triggers**, not guaranteed exit prices: in a fast market the limit orders may fill partly, at a worse price, or not at all.
 
 A rule is only checked while **every leg** in its group has a recent price. If any leg goes about two minutes without one, the rule **pauses**: it still shows as armed, but it is not checked. This happens when a far strike has not traded or quoted, or when the price feed drops. The rule starts checking again by itself as soon as every leg has a fresh price, so you do not need to re-arm it. With Telegram linked, a pause of more than about 30 seconds sends a **PB/SL rules unmonitored** message naming the rules. Watch those positions yourself until **PB/SL rules monitored again** arrives. That message is sent only once the feed has worked for 5 minutes in a row, so a feed that keeps dropping does not flood you. A new stop after that message is always reported straight away.
 

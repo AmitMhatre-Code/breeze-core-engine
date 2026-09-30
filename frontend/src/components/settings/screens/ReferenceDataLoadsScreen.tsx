@@ -7,6 +7,7 @@ import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
 import { MarginHarnessPanel } from "@/components/settings/MarginHarnessPanel";
 import { apiClient } from "@/lib/api-client";
+import { staleSourcesText } from "@/lib/reference-data-freshness";
 import { formatApiDateTime, formatSourceFileDate } from "@/lib/format-iso-date";
 
 type IngestHistoryItem = {
@@ -109,6 +110,8 @@ type ReferenceDataState = {
   bse_span_source_date: string | null;
   bse_span_refreshed_at: string | null;
   bse_span_row_count: number | null;
+  stale_sources?: string[];
+  scrip_last_loaded_at?: string | null;
   ingest_history: IngestHistoryItem[];
 };
 
@@ -317,6 +320,12 @@ export function ReferenceDataLoadsScreen() {
       {q.error && (
         <div className="app-alert-error text-xs">
           {q.error instanceof Error ? q.error.message : "Unable to load status"}
+        </div>
+      )}
+
+      {server && (server.stale_sources ?? []).length > 0 && (
+        <div className="mb-4 max-w-[760px] rounded-[8px] border border-amber-accent/40 bg-amber-tint px-3 py-2 text-xs text-amber-on-tint" role="status">
+          {staleSourcesText(server.stale_sources ?? [], server.scrip_last_loaded_at ?? null, server.refresh_in_progress)}
         </div>
       )}
 

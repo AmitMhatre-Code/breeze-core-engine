@@ -458,3 +458,37 @@ class TestResetSemantics:
         assert fresh.id != rule.id
         assert fresh.status == "armed"
         assert repo.get_rule(rule.id).status == "reset"
+
+
+def test_completion_check_does_not_hold_the_order_feed_thread(db_path, monkeypatch):
+    """B-38: the check reads the order book over REST, behind the pacer. Run on the feed's
+    callback thread it delayed every later order event, including the bots' fills."""
+    import threading
+    import time
+
+    monkeypatch.setattr(sg, "_complete_inline", False)
+    rule = _fire(_arm())
+    _no_open_legs(monkeypatch)
+    release, reading = threading.Event(), threading.Event()
+
+    class _SlowBreeze:
+        def get_orders(self, user_id, start=None, end=None, *, exchange_codes=None):
+            reading.set()
+            release.wait(5)  # a call waiting on a minute slot
+            return {"Status": 200, "Success": [{"order_id": "202607173800017846", "status": "Executed"}]}
+
+    import icici_breeze_backend.app.services.processor as proc_mod
+
+    monkeypatch.setattr(proc_mod, "processor", lambda: _SlowBreeze())
+
+    started = time.monotonic()
+    sg.on_order_notification(parse_order_notification(executed()))
+    assert time.monotonic() - started < 1.0, "the feed callback waited on the order book"
+    assert reading.wait(2)
+    assert repo.get_rule(rule.id).status == "fired"
+
+    release.set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and repo.get_rule(rule.id).status != "completed":
+        time.sleep(0.02)
+    assert repo.get_rule(rule.id).status == "completed"

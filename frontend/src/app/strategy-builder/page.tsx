@@ -1,5 +1,6 @@
 "use client";
 
+import { netPremiumOfPricedLegs } from "@/lib/strategy-builder/leg-quote";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
@@ -719,16 +720,8 @@ export default function StrategyBuilderPage() {
     [],
   );
 
-  const totalsNetPremium = useMemo(() => {
-    let t = 0;
-    for (const l of legs) {
-      if (l.lots <= 0 || l.aggressiveLimit) continue;
-      const units = l.lots * lotSize;
-      const prem = (l.premiumPerUnit ?? 0) * units;
-      t += l.side === "Sell" ? prem : -prem;
-    }
-    return t;
-  }, [legs, lotSize]);
+  // Unpriced legs are left out, not counted at ₹0 (B-57); the panel says so.
+  const totalsNetPremium = useMemo(() => netPremiumOfPricedLegs(legs, lotSize), [legs, lotSize]);
 
 
   const { chunkQty, setChunkQty, defaultsQuery: chunkDefaultsQ, chunkReady } =

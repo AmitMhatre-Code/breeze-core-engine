@@ -180,6 +180,9 @@ class ReferenceDataLoadsStateResponse(BaseModel):
     bse_span_source_date: Optional[str] = None
     bse_span_refreshed_at: Optional[str] = None
     bse_span_row_count: Optional[int] = None
+    # Sources older than the latest concluded session: "scrip", "NFO", "BFO" (B-57).
+    stale_sources: list[str] = Field(default_factory=list)
+    scrip_last_loaded_at: Optional[str] = None
     ingest_history: list[ReferenceDataIngestHistoryItem] = Field(default_factory=list)
 
 

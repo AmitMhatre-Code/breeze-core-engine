@@ -1,4 +1,4 @@
-import { blendedSigmaForLegs, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { sigmaAtPrice, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import { proposedLegsToStrategyLegs } from "@/lib/strategy-builder/map-proposed-legs";
 import { estimateProbabilityOfProfit } from "@/lib/strategy-builder/payoff";
@@ -43,7 +43,7 @@ export function computeTradePop(
   const T = expiryDisplayToYears(expiryDate);
   const fallback = atmIv != null && atmIv > 0 ? atmIv : 0.2;
   const legs = proposedLegsToStrategyLegs(trade.legs, lotSize);
-  const sigma = blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, fallback);
+  const sigma = sigmaAtPrice(sigmaSmiles, spot, fallback);
   return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
 }
 

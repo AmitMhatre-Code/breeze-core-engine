@@ -137,7 +137,7 @@ def _guard_scalper_live_transition(
 
 
 @router.get("/list", response_model=list[BotRecord])
-async def list_bots(ctx: RequestContext = Depends(get_request_context)):
+def list_bots(ctx: RequestContext = Depends(get_request_context)):
     return repo.list_bots(ctx.user_id)
 
 
@@ -186,7 +186,7 @@ def _attach_audit_logs(user_id: str, runs: list[BotRunRecord]) -> None:
 
 
 @router.get("/runs", response_model=list[BotRunRecord])
-async def list_runs(
+def list_runs(
     bot_type: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     date_from: Optional[date] = Query(None),
@@ -227,7 +227,7 @@ async def list_runs(
 
 
 @router.get("/runs/bundles", response_model=list[BotRunBundle])
-async def list_run_bundles(
+def list_run_bundles(
     date_from: date = Query(...),
     date_to: date = Query(...),
     ctx: RequestContext = Depends(get_request_context),
@@ -251,7 +251,7 @@ async def list_run_bundles(
 
 
 @router.get("/cycles", response_model=list[BotCycleRecord])
-async def list_cycles(
+def list_cycles(
     run_id: Optional[str] = Query(None),
     bot_type: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
@@ -269,7 +269,7 @@ async def list_cycles(
 
 
 @router.get("/charges", response_model=TradingCharges)
-async def get_charges(ctx: RequestContext = Depends(get_request_context)):
+def get_charges(ctx: RequestContext = Depends(get_request_context)):
     """The shared round-trip cost model.
 
     Deployment-wide rather than per-bot or per-user: both scalpers and the backtest harness
@@ -280,7 +280,7 @@ async def get_charges(ctx: RequestContext = Depends(get_request_context)):
 
 
 @router.patch("/charges", response_model=TradingCharges)
-async def update_charges(
+def update_charges(
     payload: TradingChargesUpdate,
     ctx: RequestContext = Depends(get_request_context),
     _: None = Depends(require_trading_not_revoked),
@@ -300,14 +300,14 @@ async def update_charges(
 
 
 @router.get("/scrip-prefs", response_model=list[ScripPref])
-async def list_scrip_prefs(ctx: RequestContext = Depends(get_request_context)):
+def list_scrip_prefs(ctx: RequestContext = Depends(get_request_context)):
     """Only deviations from policy are stored, so an empty list is the normal state and
     means "every holding follows the defaults", not "nothing is configured"."""
     return repo.list_scrip_prefs(ctx.user_id)
 
 
 @router.put("/scrip-prefs", response_model=list[ScripPref])
-async def update_scrip_prefs(
+def update_scrip_prefs(
     payload: UpdateScripPrefsRequest,
     ctx: RequestContext = Depends(get_request_context),
 ):
@@ -315,23 +315,28 @@ async def update_scrip_prefs(
 
 
 @router.get("/config", response_model=BotRecord)
-async def get_bot(
+def get_bot(
     bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
 ):
     return repo.get_or_create_bot(ctx.user_id, _validate_bot_type(bot_type))
 
 
 @router.patch("/config", response_model=BotRecord)
-async def update_bot(
+def update_bot(
     payload: UpdateBotRequest,
     bot_type: str = Query(...),
     ctx: RequestContext = Depends(get_request_context),
-    _: None = Depends(require_trading_not_revoked),
 ):
     """Guarded by the license check even though it places no orders: enabling a bot is
     arming something that will trade later, so it must be refused in read-only mode rather
-    than accepted and then silently skipped every run."""
+    than accepted and then silently skipped every run. Switching a bot off, and nothing
+    else, is always allowed: read-only mode must not keep something armed (B-09)."""
     _validate_bot_type(bot_type)
+    switching_off_only = (
+        payload.enabled is False and payload.config is None and payload.priority is None
+    )
+    if not switching_off_only:
+        require_trading_not_revoked()
     if payload.config is not None:
         # Validate the *incoming* blob strictly. The repository is forgiving when reading
         # stored config (so an old blob still loads); a user submitting a bad value must be
@@ -377,7 +382,7 @@ async def update_bot(
 
 
 @router.get("/live-eligibility", response_model=LiveEligibility)
-async def live_eligibility(
+def live_eligibility(
     bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
 ):
     """Whether this scalper may be armed `live`, and the paper record behind that answer.
@@ -436,7 +441,7 @@ async def live_eligibility(
 
 
 @router.get("/proposal", response_model=Optional[ProposalRecord])
-async def get_pending_proposal(
+def get_pending_proposal(
     bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
 ):
     """Returns null when there is nothing to approve. Expired proposals are retired on
@@ -445,7 +450,7 @@ async def get_pending_proposal(
 
 
 @router.post("/proposal/reject", response_model=Optional[ProposalRecord])
-async def reject_pending_proposal(
+def reject_pending_proposal(
     bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
 ):
     _validate_bot_type(bot_type)
@@ -483,7 +488,7 @@ def _run_scan(user_id: str, trigger: str):
 
 
 @router.post("/scan", response_model=ScanResponse)
-async def scan_bot(
+def scan_bot(
     bot_type: str = Query(...),
     ctx: RequestContext = Depends(get_request_context),
     _: None = Depends(require_trading_not_revoked),
@@ -499,7 +504,7 @@ async def scan_bot(
 
 
 @router.post("/proposal/approve", response_model=ApprovalResult)
-async def approve_proposal(
+def approve_proposal(
     payload: ApproveProposalRequest,
     bot_type: str = Query(...),
     ctx: RequestContext = Depends(get_request_context),
@@ -524,7 +529,7 @@ async def approve_proposal(
 
 
 @router.get("/holdings", response_model=list[HoldingRow])
-async def list_holdings(ctx: RequestContext = Depends(get_request_context)):
+def list_holdings(ctx: RequestContext = Depends(get_request_context)):
     """Live holdings, F&O eligibility resolved, for Bot 1's per-scrip settings.
 
     Read on every open rather than stored: holdings change without the bot being told, and
@@ -554,7 +559,7 @@ def _index_expiring_today(proc, index_code: str) -> Optional[str]:
 
 
 @router.post("/plan", response_model=ScanResponse)
-async def plan_bot(
+def plan_bot(
     bot_type: str = Query(...),
     ctx: RequestContext = Depends(get_request_context),
     _: None = Depends(require_trading_not_revoked),
@@ -694,7 +699,7 @@ class CasBingoExecuteRequest(BaseModel):
 
 
 @router.post("/cas-bingo/plan")
-async def cas_bingo_plan(
+def cas_bingo_plan(
     ctx: RequestContext = Depends(get_request_context),
     _: None = Depends(require_trading_not_revoked),
 ):
@@ -710,7 +715,7 @@ async def cas_bingo_plan(
 
 
 @router.post("/cas-bingo/execute")
-async def cas_bingo_execute(
+def cas_bingo_execute(
     payload: CasBingoExecuteRequest,
     ctx: RequestContext = Depends(get_request_context),
     _: None = Depends(require_trading_not_revoked),
@@ -734,7 +739,7 @@ async def cas_bingo_execute(
 
 
 @router.post("/proposal/reprice", response_model=ProposalRecord)
-async def reprice_proposal(
+def reprice_proposal(
     payload: RepriceRequest,
     bot_type: str = Query(...),
     ctx: RequestContext = Depends(get_request_context),

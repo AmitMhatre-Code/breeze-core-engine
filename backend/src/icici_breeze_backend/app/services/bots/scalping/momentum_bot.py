@@ -912,11 +912,18 @@ def _close_live(
     if not legs or int((legs[0] or {}).get("quantity") or 0) <= 0:
         _logger.warning("momentum bot [LIVE]: cycle %s has nothing to sell", cycle.id)
         return
-    if not context.quote or not context.quote.bid:
-        _logger.warning("momentum bot [LIVE]: cannot price an exit; will retry next pass")
-        return
-
     def close_leg(leg: dict[str, Any], quantity: int) -> Any:
+        # The feed's bid when it is live, else one ICICI quote. Returning early here on a
+        # missing bid meant the stale-feed exit, and a square-off during a feed outage,
+        # never placed an order (B-23).
+        touch = live.exit_touch(
+            proc, user_id, stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE,
+            expiry_display=str(leg.get("expiry_display") or ""),
+            strike_price=float(leg.get("strike_price") or 0),
+            right=str(leg.get("right") or "call"), is_buy=False, quote=context.quote,
+        )
+        if touch is None:
+            return live.no_price_result(quantity)
         return live.place_and_confirm(
             proc,
             user_id,
@@ -929,9 +936,7 @@ def _close_live(
             ),
             # An exit must complete -- there is a live position with no stop behind it -- so
             # unlike an entry it steps progressively further through the touch.
-            price_for_attempt=live.exit_price_ladder(
-                float(context.quote.bid), config.execution.exit_limit_band_pct
-            ),
+            price_for_attempt=live.exit_price_ladder(touch, config.execution.exit_limit_band_pct),
             timeout_seconds=config.execution.entry_fill_timeout_seconds,
             attempts=3,
         )

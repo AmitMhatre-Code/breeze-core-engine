@@ -309,6 +309,18 @@ def _armed_rule_health() -> dict[str, int]:
         return {"armed_legs": 0, "unevaluable_legs": 0}
 
 
+def _stale_reference_note() -> str:
+    """Said before the open, so an old scrip master is seen before the first trade (B-57)."""
+    try:
+        from icici_breeze_backend.app.services.reference_data.orchestrator import scrip_master_is_stale
+
+        if scrip_master_is_stale():
+            return ". The scrip master is older than the last session: new strikes may have no quote"
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def get_system_health_status() -> dict[str, Any]:
     from icici_breeze_backend.app.services.breeze_websocket_manager import get_playground_status
 
@@ -320,7 +332,7 @@ def get_system_health_status() -> dict[str, Any]:
         return {
             **base,
             "status": "gray",
-            "reason": f"Market closed ({market_closed_reason(now)})",
+            "reason": f"Market closed ({market_closed_reason(now)}){_stale_reference_note()}",
             "market_open": False,
             "prefetch_done": False,
             "detail": {},

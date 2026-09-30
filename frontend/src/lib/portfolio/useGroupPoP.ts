@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { chainLotSize, rowsToStrategyLegs } from "@/lib/portfolio/legsFromRows";
 import type { PortfolioPositionGroup } from "@/lib/portfolio/groupPositions";
-import { atmSigmaFromChain, blendedSigmaForLegs, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { atmSigmaFromChain, buildSigmaSmiles, sigmaAtPrice } from "@/lib/strategy-builder/chainIv";
 import {
   chainSuccessForExpiry,
   payoffQuoteQueryOptions,
@@ -41,7 +41,7 @@ export function useGroupPoP(group: PortfolioPositionGroup): number | null {
     }
     const T = expiryDisplayToYears(group.expiryDate || "01-Jan-2099");
     const fallback = atmSigmaFromChain(chainSuccess, T);
-    const sigma = blendedSigmaForLegs(buildSigmaSmiles(chainSuccess, T), legs, spot, lotSize, fallback);
+    const sigma = sigmaAtPrice(buildSigmaSmiles(chainSuccess, T), spot, fallback);
     return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
   }, [chainSuccess, group.rows, group.expiryDate]);
 }

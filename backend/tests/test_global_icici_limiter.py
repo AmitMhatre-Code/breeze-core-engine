@@ -186,3 +186,63 @@ class TestApiUsageWarning(unittest.TestCase):
             return_value=3999,
         ):
             self.assertIsNone(get_usage_warning("u1"))
+
+
+class TestBreezeHttpTimeout(unittest.TestCase):
+    """B-07: a stalled ICICI call must give up while it holds the per-user broker lock."""
+
+    URL = "https://api.icicidirect.com/breezeapi/api/v1/portfoliopositions"
+
+    def setUp(self) -> None:
+        GlobalIciciApiPacer.reset_user("limit-user")
+
+    def _capture(self, url, **kwargs):
+        from icici_breeze_backend.app.core import requests_patch as rp
+
+        seen = {}
+
+        def fake_orig(method, u, **kw):
+            seen.update(kw)
+            raw = MagicMock()
+            raw.status_code = 200
+            raw.text = '{"Status": 200, "Success": []}'
+            raw.json.return_value = {"Status": 200, "Success": []}
+            return raw
+
+        with patch.object(rp, "_orig_request", fake_orig):
+            rp._patched_request("POST", url, **kwargs)
+        return seen
+
+    def test_breeze_call_without_a_timeout_gets_the_default(self):
+        from icici_breeze_backend.app.core import requests_patch as rp
+
+        self.assertEqual(self._capture(self.URL)["timeout"], rp.BREEZE_HTTP_TIMEOUT)
+
+    def test_an_explicit_timeout_is_kept(self):
+        self.assertEqual(self._capture(self.URL, timeout=3)["timeout"], 3)
+
+    def test_other_hosts_are_left_alone(self):
+        self.assertNotIn("timeout", self._capture("https://example.com/x"))
+
+    @patch("icici_breeze_backend.app.services.icici_api_pacing.time.sleep")
+    @patch(
+        "icici_breeze_backend.app.services.user_rate_limit_prefs.get_icici_rate_limit_pause_seconds",
+        return_value=0.0,
+    )
+    @patch(
+        "icici_breeze_backend.app.services.api_usage.is_daily_limit_reached",
+        return_value=False,
+    )
+    def test_a_timed_out_call_is_counted_and_frees_the_lock(self, *_mocks):
+        def perform():
+            raise TimeoutError("read timed out")
+
+        with patch.object(GlobalIciciApiLimiter, "_record_call") as record:
+            with self.assertRaises(TimeoutError):
+                GlobalIciciApiLimiter.request_breeze_dict(
+                    perform, user_id="limit-user", endpoint="quotes", record_url=self.URL
+                )
+        self.assertEqual(record.call_count, 1)
+        lock = GlobalIciciApiLimiter._user_lock("limit-user")
+        self.assertTrue(lock.acquire(blocking=False))
+        lock.release()

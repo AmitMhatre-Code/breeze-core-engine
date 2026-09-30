@@ -79,10 +79,25 @@ def disarm_conflicting_rule(user_id: str, conflict: SgConflict) -> None:
     -- a Strategy Builder trade, say -- those lose their stop too. `other_legs` is how the
     message says so.
     """
+    from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
+    from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
     from icici_breeze_backend.app.services.portfolio_pnl_engine import clear_group_rule
     from icici_breeze_backend.app.services.telegram_alerts import _notify
 
     clear_group_rule(user_id, INDEX_STOCK_CODE, conflict.expiry_display)
+    # Written through to the row, not only cleared from memory (B-29). A memory-only clear
+    # left the SG showing Armed while nothing evaluated it, and every restart re-armed it,
+    # disarmed it again and re-sent this alert. Reset is what it is: monitoring stopped.
+    if conflict.rule_id:
+        try:
+            if sq_repo.mark_reset(
+                conflict.rule_id,
+                "switched off by a scalping bot trading this expiry: the rule would have "
+                "squared off the bot's legs along with its own.",
+            ):
+                sg.release_subscription(conflict.rule_id)
+        except Exception:  # noqa: BLE001 -- the in-memory clear above already stopped it
+            _logger.exception("scalping: could not record the PB/SL disarm for %s", conflict.rule_id)
     _logger.warning(
         "scalping: disarmed PB/SL rule %s on %s %s -- it would have squared off this bot's "
         "legs (%d other leg(s) in that group)",

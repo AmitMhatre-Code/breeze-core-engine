@@ -1274,6 +1274,8 @@ async def settings_breeze_ws_connect(ctx: RequestContext = Depends(get_request_c
 
 @router.post("/breeze-api-tester/ws/disconnect")
 async def settings_breeze_ws_disconnect(ctx: RequestContext = Depends(get_request_context)):
+    if not is_breeze_api_tester_risk_accepted(ctx.user_id):
+        raise HTTPException(status_code=403, detail="Accept the risk disclaimer first.")
     from icici_breeze_backend.app.services.breeze_websocket_manager import ws_disconnect_playground
 
     out = ws_disconnect_playground()

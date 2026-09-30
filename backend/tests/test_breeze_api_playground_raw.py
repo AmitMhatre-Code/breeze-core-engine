@@ -293,6 +293,49 @@ def test_release_keeps_socket_ws_disconnect_closes(monkeypatch):
     sdk.ws_disconnect.assert_not_called()
 
     ws_disconnect_playground()
+    sdk.ws_disconnect.assert_not_called()  # B-30: the socket is shared; it stays up
+
+
+def test_playground_disconnect_releases_only_the_playgrounds_feeds(monkeypatch):
+    """B-30: it used to unsubscribe every feed in the process and drop the session the
+    watchdog needs, leaving PB/SL and the bots blind."""
+    sdk = MagicMock()
+    sdk.subscribe_feeds.return_value = {"message": "ok"}
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = sdk
+    _reset_bwm(monkeypatch)
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    monkeypatch.setattr(bwm, "_playground_holders", set())
+    monkeypatch.setattr(ws_tick_pipeline, "start_tick_pipeline", lambda: None)
+    monkeypatch.setattr(ws_tick_pipeline, "stop_tick_pipeline", lambda: None)
+    monkeypatch.setattr(bwm, "_sdk", sdk)
+    monkeypatch.setattr(bwm, "_connected", True)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.reference_data.ws_token_index.lookup_token_for_contract",
+        lambda *_args, **_kwargs: 44684,
+    )
+    bwm.subscribe_option(proc, "u1", "NFO", "NIFTY", "30-Jun-2026", 25000.0, "call", holder_id="sg:rule-1")
+    bwm._track_playground_sub("pg-1", {"stock_token": "4.1!99999"})
+
+    out = ws_disconnect_playground()
+
+    assert out["ok"] is True
+    sdk.ws_disconnect.assert_not_called()
+    assert "pg-1" not in bwm._holders
+    assert bwm._holders.get("sg:rule-1"), "the app's own subscriptions are untouched"
+    assert bwm._sdk is sdk and bwm._sdk_user_id == "u1"
+
+
+def test_app_shutdown_still_closes_the_socket(monkeypatch):
+    sdk = MagicMock()
+    _reset_bwm(monkeypatch)
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    monkeypatch.setattr(ws_tick_pipeline, "stop_tick_pipeline", lambda: None)
+    monkeypatch.setattr(bwm, "_sdk", sdk)
+    bwm.shutdown_websocket()
     sdk.ws_disconnect.assert_called_once()
 
 
@@ -409,3 +452,33 @@ def test_playground_listener_not_on_normalized_path(monkeypatch):
 
     assert len(raw_received) == 1
     assert norm_received == []
+
+
+def test_a_socket_on_yesterdays_session_is_rebuilt(monkeypatch):
+    """B-31: `_ensure_ws` reused the SDK whenever the user matched, so after the overnight
+    rollover the socket kept reconnecting with yesterday's session key."""
+    from icici_breeze_backend.app.services.processor import _SESSION_OWNER_ATTR
+
+    _reset_bwm(monkeypatch)
+    import icici_breeze_backend.app.services.breeze_websocket_manager as bwm
+
+    old_sdk = MagicMock()
+    setattr(old_sdk, _SESSION_OWNER_ATTR, ("u1", "token-monday"))
+    monkeypatch.setattr(bwm, "_sdk", old_sdk)
+    monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
+    monkeypatch.setattr(bwm, "_connected", True)
+    proc = MagicMock()
+    proc._resolve_broker_token.return_value = "token-tuesday"
+    rebuilt = []
+    monkeypatch.setattr(bwm, "reconnect_ws", lambda: rebuilt.append(True) or True)
+
+    bwm._ensure_ws(proc, "u1")
+    assert rebuilt == [True]
+
+    rebuilt.clear()
+    proc._resolve_broker_token.return_value = "token-monday"
+    assert bwm._ensure_ws(proc, "u1") is old_sdk
+    assert rebuilt == [], "the current session's socket is reused"
+
+    proc._resolve_broker_token.return_value = ""
+    assert bwm._ensure_ws(proc, "u1") is old_sdk, "an unknown token is not a reason to rebuild"

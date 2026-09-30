@@ -73,12 +73,15 @@ function cardMode(bot: Bot): ScalperCardMode {
 function ModePill({
   mode,
   disabled,
+  offOnly,
   liveLocked,
   liveLockedReason,
   onChange,
 }: {
   mode: ScalperCardMode;
   disabled: boolean;
+  /** Read-only licence: the bot can still be switched off, and nothing else. */
+  offOnly: boolean;
   /** The paper-evidence gate's answer. Live is not selectable until this bot has completed
    *  a paper trading day on its current settings — the same check the server enforces on
    *  PATCH, read from the same source, so the card can never offer a control that would
@@ -101,7 +104,7 @@ function ModePill({
             key={value}
             type="button"
             aria-pressed={active}
-            disabled={disabled || blocked}
+            disabled={disabled || blocked || (offOnly && value !== "off")}
             title={blocked ? liveLockedReason ?? undefined : undefined}
             onClick={() => onChange(value)}
             className={[
@@ -198,7 +201,8 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
       await update.mutateAsync({
         botType: bot.bot_type,
         enabled: next !== "off",
-        config: { mode: next === "live" ? "live" : "paper" },
+        // Switching off sends nothing else: it is the one change read-only mode accepts.
+        ...(next === "off" ? {} : { config: { mode: next === "live" ? "live" : "paper" } }),
       });
       setConfirmLiveOpen(false);
     } catch (e) {
@@ -309,7 +313,8 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
         <div className="mt-auto pt-4">
           <ModePill
             mode={mode}
-            disabled={readOnly || update.isPending}
+            disabled={update.isPending}
+            offOnly={readOnly}
             liveLocked={liveLocked}
             liveLockedReason={eligibility?.blocked_reason ?? null}
             onChange={setMode}

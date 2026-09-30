@@ -225,7 +225,7 @@ def test_get_index_quotes_status_market_closed_fetches_rest_fallback(monkeypatch
     assert nifty["change"] == pytest.approx(150.25)
     assert fake_sdk.get_quotes.call_count == 2  # nifty + sensex
 
-    # Cached with no TTL so a second read doesn't re-fetch.
+    # Cached until the next open (B-18), so a second read doesn't re-fetch.
     cached = cache_get_json(index_spot_key("nifty"))
     assert cached["ltp"] == 24850.25
     fake_sdk.get_quotes.reset_mock()
@@ -420,3 +420,64 @@ def test_get_index_quotes_status_market_closed_no_session_returns_null(monkeypat
     status = isf.get_index_quotes_status(proc, "u1")
     assert status["quotes"]["nifty"] is None
     assert status["quotes"]["sensex"] is None
+
+
+
+def test_the_after_hours_close_expires_at_the_open_and_is_marked(monkeypatch):
+    """B-18: cached with no TTL, the close survived into the session and hid a dead feed."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.is_market_open", lambda now=None: False
+    )
+    now = datetime(2026, 9, 29, 20, 0, tzinfo=IST)
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.next_session_open",
+        lambda now=None: datetime(2026, 9, 30, 9, 15, tzinfo=IST),
+    )
+    assert isf._rest_close_ttl_seconds(now) == int(timedelta(hours=13, minutes=15).total_seconds())
+
+    ttls = []
+    real = isf.cache_set_json
+    monkeypatch.setattr(isf, "cache_set_json", lambda key, value, ex=None: (ttls.append(ex), real(key, value, ex=ex))[1])
+    fake_sdk = MagicMock()
+    fake_sdk.get_quotes.return_value = {"Status": 200, "Success": [{"ltp": "24850.25", "previous_close": "24700.0"}]}
+    proc = MagicMock()
+    proc.get_session_breeze.return_value = fake_sdk
+    isf.get_index_quotes_status(proc, "u1")
+    assert ttls and all(t is not None and t >= 60 for t in ttls)
+    assert cache_get_json(index_spot_key("nifty"))["source"] == isf.REST_CLOSE_SOURCE
+
+
+def test_the_watchdog_does_not_read_a_rest_close_as_ticks(monkeypatch):
+    import time as _time
+
+    from icici_breeze_backend.app.db.redis_client import cache_set_json
+    from icici_breeze_backend.app.services import ws_price_feed_watchdog as wd
+
+    cache_set_json(index_spot_key("nifty"), {"ltp": 1.0, "updated_at": _time.time(), "source": "rest_close"}, ex=60)
+    assert wd._index_spot_ticking() is False
+    cache_set_json(index_spot_key("nifty"), {"ltp": 1.0, "updated_at": _time.time() - 300}, ex=60)
+    assert wd._index_spot_ticking() is False, "an old tick is not ticking"
+    cache_set_json(index_spot_key("nifty"), {"ltp": 1.0, "updated_at": _time.time()}, ex=60)
+    assert wd._index_spot_ticking() is True
+
+
+def test_a_stock_spot_silent_mid_session_is_reported_and_re_armed(monkeypatch):
+    """B-50: stock spots were re-armed only at the open and on a rebuild."""
+    from icici_breeze_backend.app.services import ws_price_feed_watchdog as wd
+
+    isf._underlying_targets["4.1!2885"] = ("NFO", "RELIANCE")
+    isf._subscribed_cash_tokens.add("4.1!2885")
+    isf._underlying_last_seen["4.1!2885"] = 1000.0
+    assert isf.silent_underlying_spots(45.0, now=1030.0) == []
+    assert isf.silent_underlying_spots(45.0, now=1050.0) == ["4.1!2885"]
+
+    isf._on_raw_tick({"symbol": "4.1!2885", "last": 2900.0})
+    assert isf.silent_underlying_spots(45.0) == [], "a tick restarts its clock"
+
+    forced = []
+    monkeypatch.setattr(wd, "_force_underlying_spots", lambda: forced.append(1))
+    monkeypatch.setattr(isf, "silent_underlying_spots", lambda secs, now=None: ["4.1!2885"])
+    wd._last_forced.pop(wd._STOCK_SPOT_TARGET, None)
+    wd._check_stock_spots(5000.0)
+    wd._check_stock_spots(5010.0)
+    assert forced == [1], "throttled like every other re-subscribe"

@@ -18,8 +18,12 @@ function coerceNum(v: unknown): number | null {
 }
 
 export type PortfolioTotals = {
+  /** Null unless every leg is priced: a partial sum reads exactly like a total (B-36, #27). */
   totalMtm: number | null;
   totalCarry: number | null;
+  /** Legs with no MTM / carry figure, which is why the total above is withheld. */
+  mtmUnpricedLegs: number;
+  carryUnpricedLegs: number;
   /** Netted Span + ELM across the whole portfolio (per-underlying netted, summed). */
   totalMargin: number | null;
   /** Netted SPAN only — matches what ICICI actually blocks. */
@@ -35,7 +39,8 @@ export type PortfolioTotals = {
 
 /**
  * Rolls the page-level summary tiles. MTM and Carry are additive, so they stay
- * per-leg sums. Margin and Carry-Return come from the server's netted portfolio
+ * per-leg sums, and are withheld while any leg has no figure (B-36): the backend blanks
+ * an unpriced leg on purpose, and a sum of the rest would read as the total. Margin and Carry-Return come from the server's netted portfolio
  * figure (`Success.portfolio`, netted per underlying then summed) — SPAN is a
  * portfolio risk model and cannot be summed per leg without over-stating it
  * (the bug this replaced).
@@ -54,8 +59,10 @@ export function computePortfolioTotals(
 ): PortfolioTotals {
   let mtm = 0;
   let mtmAny = false;
+  let mtmUnpriced = 0;
   let carry = 0;
   let carryAny = false;
+  let carryUnpriced = 0;
   let legCount = 0;
 
   for (const g of groups) {
@@ -71,6 +78,8 @@ export function computePortfolioTotals(
         if (rowMtm != null) {
           mtm += rowMtm;
           mtmAny = true;
+        } else {
+          mtmUnpriced += 1;
         }
       }
     }
@@ -84,6 +93,8 @@ export function computePortfolioTotals(
         if (rowCarry != null) {
           carry += rowCarry;
           carryAny = true;
+        } else {
+          carryUnpriced += 1;
         }
       }
     }
@@ -94,8 +105,10 @@ export function computePortfolioTotals(
   const totalMargin = span != null ? span + elm : null;
 
   return {
-    totalMtm: mtmAny ? mtm : null,
-    totalCarry: carryAny ? carry : null,
+    totalMtm: mtmAny && mtmUnpriced === 0 ? mtm : null,
+    totalCarry: carryAny && carryUnpriced === 0 ? carry : null,
+    mtmUnpricedLegs: mtmUnpriced,
+    carryUnpricedLegs: carryUnpriced,
     totalMargin,
     spanMargin: span,
     elmMargin: span != null ? elm : null,

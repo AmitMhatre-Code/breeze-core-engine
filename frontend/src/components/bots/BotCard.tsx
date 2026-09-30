@@ -93,11 +93,14 @@ function botMode(bot: Bot): BotMode {
 function ModePill({
   mode,
   disabled,
+  offOnly,
   telegramConnected,
   onChange,
 }: {
   mode: BotMode;
   disabled: boolean;
+  /** Read-only licence: the bot can still be switched off, and nothing else. */
+  offOnly: boolean;
   telegramConnected: boolean;
   onChange: (next: BotMode) => void;
 }) {
@@ -118,7 +121,7 @@ function ModePill({
             key={value}
             type="button"
             aria-pressed={active}
-            disabled={disabled || blocked}
+            disabled={disabled || blocked || (offOnly && value !== "manual")}
             title={
               blocked
                 ? "Link a Telegram chat in Settings › Telegram Alerts — semi-auto has no way to ask you without one."
@@ -297,7 +300,9 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
       await update.mutateAsync({
         botType: bot.bot_type,
         enabled: next !== "manual",
-        config: { approval_mode: next === "auto" ? "auto" : "telegram" },
+        // In read-only mode the server accepts a switch-off and nothing else, so the
+        // approval mode is left as stored.
+        ...(readOnly ? {} : { config: { approval_mode: next === "auto" ? "auto" : "telegram" } }),
       });
     } catch (e) {
       setError((e as Error)?.message ?? "Could not save.");
@@ -373,7 +378,8 @@ function WriterCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
         <div className="mt-auto pt-4">
           <ModePill
             mode={mode}
-            disabled={readOnly || update.isPending}
+            disabled={update.isPending}
+            offOnly={readOnly}
             telegramConnected={telegramConnected}
             onChange={(next) => void setMode(next)}
           />

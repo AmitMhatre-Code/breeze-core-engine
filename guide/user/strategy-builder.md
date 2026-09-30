@@ -93,7 +93,7 @@ The selected trade's legs, which you can adjust before executing. The table work
 
 | Item | What it shows or does |
 |---|---|
-| **Net premium** | Premium received (+) or paid (−) across the legs. |
+| **Net premium** | Premium received (+) or paid (−) across the legs. A leg with no market price shows **No quote** and is left out, with a note saying so. |
 | **Net SPAN margin** | Margin for all the legs as one position. |
 | **Margin benefit** | The saving from hedging, compared with the legs on their own. |
 | **Basket ELM** | The extreme loss margin buffer on top. |

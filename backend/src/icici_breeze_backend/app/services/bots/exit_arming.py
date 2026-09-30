@@ -68,8 +68,22 @@ _QUICK_RETRY_SECONDS = (10.0, 30.0)
 # How often the worker re-checks without being woken -- the resolution of the timers above,
 # not a polling interval (a pass that has nothing due makes no broker call).
 _TICK_SECONDS = 5.0
-# Nothing can fill after the close, so a stop still waiting then will never arm.
-_MARKET_CLOSE = datetime.time(15, 30)
+# Nothing can fill after the close, so a stop still waiting then will never arm. Used only
+# when the exchange calendar cannot be read.
+_FALLBACK_CLOSE = datetime.time(15, 30)
+
+
+def _market_close() -> datetime.time:
+    """The session close from the operator-editable exchange calendar (#21, B-45), not a
+    hard-coded 15:30: changed hours would otherwise abandon or keep a waiting stop wrongly."""
+    try:
+        from icici_breeze_backend.app.services.market_calendar import get_calendar_config
+
+        cal = get_calendar_config()
+        return datetime.time(int(cal.close_hour), int(cal.close_minute))
+    except Exception:  # noqa: BLE001
+        _logger.debug("exit arming: calendar unreadable; using 15:30", exc_info=True)
+        return _FALLBACK_CLOSE
 _ORDER_MEMORY = 5000
 
 _LIVE_STATUSES = {"requested", "queued", "ordered", "partially executed", "freezed"}
@@ -502,7 +516,7 @@ def _evaluate_one(p: _Pending, proc: Any, now: float) -> None:
         return
 
     today = now_ist()
-    if today.date() > p.created_date or today.time() >= _MARKET_CLOSE:
+    if today.date() > p.created_date or today.time() >= _market_close():
         _close(p, "abandoned", error="market closed before every order finished")
         _revise_run(
             p,
@@ -522,18 +536,7 @@ def _evaluate_one(p: _Pending, proc: Any, now: float) -> None:
     state = fill_state(p.order_ids)
     if state["terminal"]:
         if state["executed"] <= 0:
-            _close(p, "nothing_filled")
-            _revise_run(
-                p,
-                note=f" — no {_label(p.stock_code)} order filled, so no stop was needed",
-                settle_code=ReasonCode.ORDER_REJECTED,
-                settle_status="failed",
-            )
-            _notify(
-                p.user_id,
-                f"ℹ️ *No stop needed* — none of the bot's {_label(p.stock_code)} orders "
-                "filled, so there is no position to protect.",
-            )
+            _settle_nothing_filled(p)
             return
         if now >= p.next_attempt_at:
             _attempt(p, proc, now, via="feed")
@@ -547,7 +550,75 @@ def _evaluate_one(p: _Pending, proc: Any, now: float) -> None:
     p.last_rest_at = now
     p.resumed = False
     _logger.warning("exit arming: checking %s over REST because %s", p.stock_code, reason)
-    _attempt(p, proc, now, via="rest")
+    # The REST path must ask the same question the feed path does before arming: did
+    # anything fill? It used to arm as soon as the guard passed, so with a deaf feed and
+    # every order rejected it armed a stop over no position, which then pooled any later
+    # legs on that index and expiry (B-25).
+    try:
+        from icici_breeze_backend.app.services.strategy_group_arm_guard import today_order_window
+
+        start, end = today_order_window()
+        book = proc.get_orders(p.user_id, start=start, end=end, exchange_codes=[p.exchange_code])
+    except Exception:  # noqa: BLE001
+        _logger.warning("exit arming: order book read failed for %s", p.stock_code, exc_info=True)
+        return
+    rest = _rest_fill_state(book, p)
+    if rest is None:
+        return  # the book could not say; ask again at the next backstop
+    if rest["terminal"] and rest["executed"] <= 0:
+        _settle_nothing_filled(p)
+        return
+    # The arm guard reads the same book; it is handed this one rather than reading again.
+    _attempt(p, _BookAlreadyRead(proc, book), now, via="rest")
+
+
+class _BookAlreadyRead:
+    """The processor, with `get_orders` answering from a book this pass already read."""
+
+    def __init__(self, proc: Any, book: Any) -> None:
+        self._proc = proc
+        self._book = book
+
+    def get_orders(self, *args: Any, **kwargs: Any) -> Any:
+        return self._book
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._proc, name)
+
+
+def _rest_fill_state(book: Any, p: _Pending) -> Optional[dict[str, Any]]:
+    """What the REST order book says about this position's orders, or None when it cannot
+    say (unreadable, or an order missing from it)."""
+    rows = (book or {}).get("Success") if isinstance(book, dict) and book.get("Status") == 200 else None
+    if not isinstance(rows, list):
+        return None
+    by_id = {str(r.get("order_id") or ""): r for r in rows if isinstance(r, dict)}
+    terminal, executed = True, 0
+    for oid in p.order_ids:
+        row = by_id.get(str(oid))
+        if row is None:
+            return None
+        terminal = terminal and _is_terminal(str(row.get("status") or "").strip().lower())
+        try:
+            executed += max(0, int(float(row.get("quantity") or 0)) - int(float(row.get("pending_quantity") or 0)))
+        except (TypeError, ValueError):
+            return None
+    return {"terminal": terminal, "executed": executed}
+
+
+def _settle_nothing_filled(p: _Pending) -> None:
+    _close(p, "nothing_filled")
+    _revise_run(
+        p,
+        note=f" — no {_label(p.stock_code)} order filled, so no stop was needed",
+        settle_code=ReasonCode.ORDER_REJECTED,
+        settle_status="failed",
+    )
+    _notify(
+        p.user_id,
+        f"ℹ️ *No stop needed* — none of the bot's {_label(p.stock_code)} orders "
+        "filled, so there is no position to protect.",
+    )
 
 
 def evaluate(proc: Any = None, *, now: Optional[float] = None) -> None:

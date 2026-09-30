@@ -202,7 +202,8 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
       await update.mutateAsync({
         botType: bot.bot_type,
         enabled: next !== "off",
-        config: { mode: next === "live" ? "live" : "simulation" },
+        // Switching off sends nothing else: it is the one change read-only mode accepts.
+        ...(next === "off" ? {} : { config: { mode: next === "live" ? "live" : "simulation" } }),
       });
       setConfirmOpen(false);
     } catch (e) {
@@ -292,7 +293,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
                   key={value}
                   type="button"
                   aria-pressed={active}
-                  disabled={readOnly || update.isPending}
+                  disabled={update.isPending || (readOnly && value !== "off")}
                   onClick={() => setMode(value)}
                   className={[
                     "rounded-full px-1.5 py-1.5 text-micro font-bold uppercase tracking-[0.03em] transition",

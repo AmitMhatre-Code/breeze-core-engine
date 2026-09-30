@@ -96,3 +96,60 @@ class TestEnsureOrderFeed:
         monkeypatch.setattr(bwm, "_ensure_ws", lambda proc, user_id: None)
 
         assert bwm.ensure_order_feed(MagicMock(), "u1") is False
+
+
+class TestDroppedOrderSocket:
+    """B-37: a dropped order socket does not clear the SDK's `orderconnect`, so re-arming was
+    a no-op and nothing reconnected it."""
+
+    def _sdk(self, connected: bool):
+        from types import SimpleNamespace
+
+        client = MagicMock()
+        client.connected = connected
+        sdk = MagicMock()
+        sdk.orderconnect = 1
+        sdk.sio_order_refresh_handler = SimpleNamespace(sio=client)
+        return sdk, client
+
+    def test_a_socket_down_on_two_passes_is_reset_then_reconnected(self, monkeypatch):
+        _reset(monkeypatch)
+        monkeypatch.setattr(bwm, "_order_socket_down_passes", 0)
+        sdk, client = self._sdk(connected=False)
+        monkeypatch.setattr(bwm, "_sdk", sdk)
+        monkeypatch.setattr(bwm, "_connected", True)
+
+        bwm.order_feed_watchdog_tick()
+        assert sdk.orderconnect == 1, "one pass may just be socket.io reconnecting"
+
+        bwm.order_feed_watchdog_tick()
+        client.disconnect.assert_called_once()
+        assert sdk.orderconnect == 0 and sdk.sio_order_refresh_handler is None
+        assert sdk.subscribe_feeds.call_count == 2
+
+    def test_a_connected_socket_is_left_alone(self, monkeypatch):
+        _reset(monkeypatch)
+        monkeypatch.setattr(bwm, "_order_socket_down_passes", 0)
+        sdk, client = self._sdk(connected=True)
+        monkeypatch.setattr(bwm, "_sdk", sdk)
+        monkeypatch.setattr(bwm, "_connected", True)
+        for _ in range(3):
+            bwm.order_feed_watchdog_tick()
+        client.disconnect.assert_not_called()
+        assert sdk.orderconnect == 1
+
+
+def test_idle_lookup_subscriptions_are_released(monkeypatch):
+    """B-41: holder-less lookups subscribed tokens that were never released."""
+    _reset(monkeypatch)
+    monkeypatch.setattr(bwm, "_holders", {bwm._UNTRACKED_HOLDER: {"4.1!1", "4.1!2"}, "sg:r1": {"4.1!2"}})
+    monkeypatch.setattr(bwm, "_sub_holders", {"4.1!1": {bwm._UNTRACKED_HOLDER}, "4.1!2": {bwm._UNTRACKED_HOLDER, "sg:r1"}})
+    monkeypatch.setattr(bwm, "_sub_meta", {"4.1!1": {"stock_token": ["4.1!1"]}, "4.1!2": {"stock_token": ["4.1!2"]}})
+    monkeypatch.setattr(bwm, "_untracked_seen", {"4.1!1": 0.0, "4.1!2": 0.0})
+    unsubscribed = []
+    monkeypatch.setattr(bwm, "_icici_unsubscribe_stock_token", lambda token, meta: unsubscribed.append(token))
+
+    assert bwm.release_idle_lookups(now=100.0) == 0, "not idle yet"
+    assert bwm.release_idle_lookups(now=bwm._UNTRACKED_IDLE_SECONDS + 1) == 2
+    assert unsubscribed == ["4.1!1"], "a contract an SG still holds stays subscribed"
+    assert bwm._sub_holders["4.1!2"] == {"sg:r1"}

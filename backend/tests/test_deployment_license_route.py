@@ -60,3 +60,47 @@ def test_license_status_empty_when_portal_not_configured(monkeypatch):
     resp = asyncio.run(get_deployment_license_status(ctx))
     assert resp.deployment_license_status is None
     assert resp.deployment_license_read_only is False
+
+
+def _gated(router, path: str, method: str) -> bool:
+    from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+
+    for route in router.routes:
+        if route.path == path and method in route.methods:
+            return any(d.call is require_trading_not_revoked for d in route.dependant.dependencies)
+    raise AssertionError(f"no route {method} {path}")
+
+
+def test_risk_reducing_routes_stay_open_in_read_only_mode():
+    """B-09: read-only mode blocks opening and changing trades, never leaving one."""
+    from icici_breeze_backend.app.api.v1 import (
+        route_book,
+        route_gtt_exit_orders,
+        route_order,
+        route_squareoff_rules,
+    )
+
+    book = route_book.router.prefix
+    sq = route_squareoff_rules.router.prefix
+    gtt = route_gtt_exit_orders.router.prefix
+    open_routes = [
+        (route_book.router, f"{book}/cancel-one", "POST"),
+        (route_book.router, f"{book}/cancel-commit", "POST"),
+        (route_book.router, f"{book}/parked-orders/{{order_id}}", "DELETE"),
+        (route_book.router, f"{book}/parked-orders/delete-many", "POST"),
+        (route_squareoff_rules.router, f"{sq}", "POST"),
+        (route_squareoff_rules.router, f"{sq}/{{rule_id}}", "DELETE"),
+        (route_squareoff_rules.router, f"{sq}/{{rule_id}}/cancel-orphan-orders", "POST"),
+        (route_gtt_exit_orders.router, f"{gtt}/{{gtt_order_id}}", "DELETE"),
+    ]
+    for router, path, method in open_routes:
+        assert not _gated(router, path, method), f"{method} {path} must not be licence-gated"
+
+    still_gated = [
+        (route_order.router, f"{route_order.router.prefix}", "POST"),
+        (route_book.router, f"{book}/modify-leg-step", "POST"),
+        (route_book.router, f"{book}/parked-orders", "POST"),
+        (route_gtt_exit_orders.router, f"{gtt}", "POST"),
+    ]
+    for router, path, method in still_gated:
+        assert _gated(router, path, method), f"{method} {path} must stay licence-gated"

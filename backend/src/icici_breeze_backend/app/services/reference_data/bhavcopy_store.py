@@ -351,14 +351,16 @@ def _publish_bhavcopy_to_redis(
     rows: list[dict[str, str]],
     *,
     segment: str,
-    source_date: dt.date,
+    source_date: dt.date | None,
     source_url: str,
     version: int,
 ) -> int:
     seg = segment.lower()
     index = _rebuild_indexes(rows, seg)
     meta = {
-        "source_date": source_date.isoformat(),
+        # None when the stored rows carry no date: an unknown date reads as stale, so the
+        # late-publish retry fetches a dated file (B-49).
+        "source_date": source_date.isoformat() if source_date else None,
         "source_url": source_url,
         "row_count": len(rows),
         "segment": seg,
@@ -408,8 +410,9 @@ def publish_bhavcopy_from_db(segment: str, version: int | None = None) -> int:
     if not rows:
         return current_version()
     source_date, source_url = _load_bhavcopy_meta_from_db(seg)
-    if source_date is None:
-        source_date = dt.date.today()
+    # No stored date is not today's (B-49). `date.today()` is the server's UTC date, and an
+    # old file labelled with it passed `bhavcopy_is_fresh`, so stale closes were served as
+    # current after the close. Published undated, it reads as stale and is retried.
     ver = version if version is not None else _next_version_for_bhav()
     return _publish_bhavcopy_to_redis(
         rows,

@@ -190,7 +190,7 @@ export const helpTopics: HelpTopic[] = [
       "Best-effort automated group exit — not a guaranteed stop loss.",
     body: [
       "From the Portfolio page you can arm a Profit Booking / Stop Loss rule on an option group: set a rupee profit target and loss limit, and the app places exit orders for every leg when the group's live P&L crosses either threshold.",
-      "This is best-effort protection, not a guaranteed stop. It can only fire while this deployment is running, connected to the live quote feed, and licensed at the moment the threshold is crossed. If the instance is offline, quotes are stale, or the license is read-only, no exit orders are placed and your positions are not protected.",
+      "This is best-effort protection, not a guaranteed stop. It can only fire while this deployment is running, and connected to the live quote feed at the moment the threshold is crossed. If the instance is offline or quotes are stale, no exit orders are placed and your positions are not protected. An armed rule still fires when the license is read-only.",
       "Exits are placed as limit orders priced off LTP by the offsets you set — not raw market orders — so they may fill partially or not at all. The rupee target and loss limit are trigger thresholds, not guaranteed exit prices; actual fills depend on market conditions.",
       "If a rule Resets (for example the group changed, or an exit order was rejected), monitoring stops but any orders already placed are not retracted — they stay live and may still execute, and one may even open a new position. Review the Reset warning and cancel leftover orders if you do not want them.",
     ],

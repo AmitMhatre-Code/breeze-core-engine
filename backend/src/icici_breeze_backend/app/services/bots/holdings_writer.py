@@ -99,15 +99,37 @@ def _monthly_expiries(raw_expiries: list[str]) -> list[str]:
     return [seen[d] for d in sorted(seen)]
 
 
+def _read_positions(proc: Any, user_id: str) -> Any:
+    """The user's open positions, or `BotScanError` when they cannot be read.
+
+    An unreadable call (a throttle, a lost session, an SDK error) used to be read as "no
+    calls written yet", so the bot could write calls on top of calls already written
+    (B-11). The coverage cap fails closed: no positions, no proposal.
+    """
+    positions = proc.get_positions(user_id)
+    if not isinstance(positions, dict) or positions.get("Status") != 200:
+        raise BotScanError(
+            "Could not read your open positions from the broker, so the calls already "
+            "written against your holdings are unknown. Nothing was proposed."
+        )
+    return positions
+
+
 def _existing_short_lots(positions: Any, lot_sizes: dict[str, int]) -> dict[tuple[str, str], int]:
     """Open short option lots keyed by (stock_code, right).
 
     Netted **across every expiry**, not per expiry: a short PE in September and another in
     October both consume the same coverage today, so summing per expiry would let the bot
     re-sell coverage it has already committed.
+
+    Counted in the target expiry's lot size and rounded **up**: after a lot-size revision an
+    older short is not a whole number of new lots, and rounding down would hand back
+    coverage that is still committed.
     """
     out: dict[tuple[str, str], int] = {}
     rows = (positions or {}).get("Success") or []
+    if isinstance(rows, dict):
+        rows = rows.get("positions") or []
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
@@ -126,7 +148,7 @@ def _existing_short_lots(positions: Any, lot_sizes: dict[str, int]) -> dict[tupl
             continue
         if lot <= 0 or qty <= 0:
             continue
-        out[(code, right)] = out.get((code, right), 0) + qty // lot
+        out[(code, right)] = out.get((code, right), 0) + -(-qty // lot)
     return out
 
 
@@ -250,7 +272,7 @@ def scan(
             continue
         candidates.append({**holding, "expiry_display": expiry_display, "lot_size": lot_size})
 
-    existing = _existing_short_lots(proc.get_positions(user_id), lot_sizes)
+    existing = _existing_short_lots(_read_positions(proc, user_id), lot_sizes)
 
     for cand in candidates:
         code = cand["stock_code"]
@@ -428,6 +450,7 @@ def _build_leg(
         elm_margin=round(elm_margin, 2),
         delivery_exposure=round(strike * quantity, 2) if right == cfg.PUT else None,
         held_quantity=cand["quantity"],
+        deliverable_quantity=deliverable_quantity(cand),
         pledged_quantity=cand.get("pledged_quantity"),
         existing_short_lots=existing_lots,
         selected=right == cfg.CALL,
@@ -804,7 +827,7 @@ def list_holdings(proc: Any, user_id: str, config: HoldingsWriterConfig) -> list
 
     # Existing shorts net across every expiry, matching the cap the scan applies -- so the
     # drawer shows the same coverage the bot will actually have.
-    existing = _existing_short_lots(proc.get_positions(user_id), lot_sizes)
+    existing = _existing_short_lots(_read_positions(proc, user_id), lot_sizes)
     for row in prepared:
         code = row["stock_code"]
         row["existing_short_ce_lots"] = existing.get((code, cfg.CALL), 0)
@@ -826,6 +849,7 @@ def price_contract(
     margin_source: str,
     distance_pct: Optional[float] = None,
     held_quantity: Optional[int] = None,
+    deliverable_quantity_value: Optional[int] = None,
     pledged_quantity: Optional[int] = None,
     existing_short_lots: int = 0,
     scrip_priority: int = 1,
@@ -897,6 +921,10 @@ def price_contract(
             "holdings-writer could not price margin for %s %s", stock_code, strike_price,
             exc_info=True,
         )
+    if span_margin is None:
+        # This leg is about to be placed on the user's approval. With no margin figure it
+        # cannot be checked against the budget, so it is dropped (B-11).
+        return None
 
     elm_rate = _otm_elm_rate(rights, float(strike_price), spot, is_index=False)
     return ProposalLeg(
@@ -918,6 +946,7 @@ def price_contract(
             round(float(strike_price) * quantity, 2) if rights == cfg.PUT else None
         ),
         held_quantity=held_quantity,
+        deliverable_quantity=deliverable_quantity_value,
         pledged_quantity=pledged_quantity,
         existing_short_lots=existing_short_lots,
         scrip_priority=scrip_priority,

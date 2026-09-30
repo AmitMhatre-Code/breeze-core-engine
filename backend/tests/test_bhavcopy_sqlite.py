@@ -199,3 +199,19 @@ def test_build_chain_from_bhavcopy_uses_passed_strikes(mock_get_strikes, monkeyp
     assert by_strike[23900]["call"]["ltp"] == 117.90
     assert by_strike[24000]["put"]["ltp"] == 96.45
     mock_get_strikes.assert_not_called()
+
+
+def test_an_undated_bhavcopy_is_not_published_as_todays(monkeypatch, tmp_path):
+    """B-49: with no stored date it was labelled with the server's date, so an old file
+    passed the freshness check and stale closes were served as current."""
+    from icici_breeze_backend.app.services.reference_data import bhavcopy_store
+
+    monkeypatch.setattr(cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(cfg, "SCRIP_DB", "scrips.sqlite3")
+    publish_bhavcopy_rows([_sample_row()], segment="nfo", source_date=dt.date(2026, 6, 26), source_url="http://x")
+    monkeypatch.setattr(bhavcopy_store, "_load_bhavcopy_meta_from_db", lambda seg: (None, "http://x"))
+
+    publish_bhavcopy_from_db("nfo")
+
+    assert is_bhavcopy_cached("nfo")
+    assert bhavcopy_store.get_bhavcopy_source_date(cfg.NFO) is None

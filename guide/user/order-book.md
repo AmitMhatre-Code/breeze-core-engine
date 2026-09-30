@@ -49,6 +49,8 @@ Each row is one contract and side (for example all your sell orders for one stri
 
 Expanded, each order shows its ICICI order number, **Qty**, **Open** quantity, the contract's current **LTP**, its **Price ₹**, its **Status**, a **Clone to Place Order** icon, and **Cancel** if it can still be cancelled.
 
+An order marked **May be the GTT exit** matches a live single-leg GTT exit on contract and side. ICICI does not say which order a GTT fired, so the app cannot tell that order from one you placed on ICICI's own app, and it leaves it here rather than hide it. Orders placed from this app are never marked.
+
 Select orders with the checkboxes and a bar appears at the bottom: **Cancel selected** cancels them all after a confirmation.
 
 ### Modifying an open order
@@ -77,7 +79,7 @@ If ICICI returns a message about an order (for example a rejection reason), it i
 
 ## Profit Booking / Stop Loss
 
-This section lists your automated-exit rules, and the orders they placed. The orders listed here are **left out of the Order book above**, so the two never show the same order twice.
+This section lists your automated-exit rules, and the orders they placed. The orders a group rule placed are listed here and **left out of the Order book above**, so the two never show the same order twice. A **Leg · GTT** row lists no orders: the order its GTT fires stays in the Order book above, marked **May be the GTT exit**.
 
 ![Profit Booking / Stop Loss rules in the Order Book](images/dark/order-book-pbsl.png)
 

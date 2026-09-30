@@ -21,18 +21,19 @@ Where the banner mentions breeze-ui.com, the name is a link. A **Contact Sales**
 In read-only mode you can still:
 
 - see the Dashboard, Portfolio, Performance, Order Book, Signals and Bots pages;
-- change most settings and download logs and backtest results.
+- change most settings and download logs and backtest results;
+- **leave a trade or reduce risk**: cancel an open order, cancel a GTT exit, delete a parked order, arm or dismiss a Profit Booking / Stop Loss rule, and switch a bot off.
 
 What is blocked:
 
 - **Place Order, Basket Order and Strategy Builder**: the pages open, but clicking any button on them shows a read-only message instead of acting, so you cannot build or execute a trade there;
-- placing, modifying and cancelling orders anywhere else (Order Book, Portfolio square-offs, parked orders);
-- bots opening new trades.
+- placing and modifying orders anywhere else (Order Book modify, Portfolio square-offs, executing parked orders);
+- bots opening new trades, and switching a bot on or changing its settings.
 
 Nothing is ever sent to ICICI for a blocked action; the app shows why instead.
 
-> [!WARNING]
-> In read-only mode, **Profit Booking / Stop Loss rules cannot place exit orders** either. If your license may lapse, manage open positions yourself, or use a single-leg GTT exit, which ICICI watches directly (see [Exits for a single leg](portfolio.md#exits-for-a-single-leg-gtt)).
+> [!NOTE]
+> **Your exits keep working.** A Profit Booking / Stop Loss rule that is armed still places its exit orders in read-only mode, and a bot still closes a position it already holds. Read-only mode stops new trades; it never stops you leaving one.
 
 ## Why your server might say "no valid license" when you have one
 

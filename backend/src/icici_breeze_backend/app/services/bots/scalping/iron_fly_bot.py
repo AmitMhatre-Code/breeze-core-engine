@@ -47,10 +47,12 @@ from icici_breeze_backend.app.services.bots.scalping.paper import simulate_buy, 
 
 _logger = logging.getLogger(__name__)
 
-# Sizing walks down from an estimate rather than probing every lot count: margin for N lots
-# of one structure is very nearly N x the one-lot figure (the netting ratio is unchanged), so
-# one call sizes it and one more verifies. This caps the walk when that assumption frays.
-_MAX_SIZING_CALLS = 3
+# Sizing starts from an estimate rather than probing every lot count: margin for N lots of
+# one structure is very nearly N x the one-lot figure (the netting ratio is unchanged), so
+# one call sizes it and one more usually verifies. When that assumption frays the search
+# narrows between the largest size known to fit and the smallest known not to, within this
+# many margin calls, and keeps the largest verified size (B-42).
+_MAX_SIZING_CALLS = 6
 
 # Room outside a fly's [0, widest wing] value range for four legs' bid/ask spread.
 _VALUE_SLACK_PCT_OF_WIDTH = 10.0
@@ -278,18 +280,28 @@ def size_fly(
             f"{config.margin_ceiling_inr:,.0f} ceiling.",
         )
 
+    # The largest size ICICI has confirmed fits, and the smallest known not to (B-42). The
+    # old loop stepped down one lot at a time from the estimate and, when its calls ran out,
+    # fell back to `min_lots` -- 1 lot when 9 would fit. Now the search narrows between the
+    # two, each failed answer jumping to the size it implies, and ends on the best verified.
+    ceiling = config.margin_ceiling_inr
+    best, best_margin = config.min_lots, base
     per_lot = base / max(1, config.min_lots)
-    candidate = max(config.min_lots, int(config.margin_ceiling_inr // per_lot))
-    margin = base
+    high = max(config.min_lots, int(ceiling // per_lot))
+    probe = high
     calls_made = 1
-    while candidate > config.min_lots and calls_made < _MAX_SIZING_CALLS:
-        verified = margin_at(candidate)
+    while high > best and calls_made < _MAX_SIZING_CALLS:
+        verified = margin_at(probe)
         calls_made += 1
-        if verified is not None and verified <= config.margin_ceiling_inr:
-            return candidate, verified, None
-        # Margin is not exactly linear in lots; step down rather than trusting the estimate.
-        candidate -= 1
-    return config.min_lots, margin, None
+        if verified is not None and verified <= ceiling:
+            best, best_margin = probe, verified
+            probe = (best + high + 1) // 2  # it fits: try halfway to the known limit
+        else:
+            high = probe - 1
+            # It does not fit: try the size this answer implies, kept inside what is known.
+            implied = int(probe * ceiling / verified) if verified else (best + high + 1) // 2
+            probe = min(high, max(best + 1, implied))
+    return best, best_margin, None
 
 
 def plan_entry(
@@ -1020,14 +1032,18 @@ def _unwind_legs(
             proc, user_id, plan.expiry_display, fill.leg.strike, fill.leg.right
         )
         band = config.execution.exit_limit_band_pct
+        # A leg that just filled has its own fill price to fall back to, seconds old.
+        touch = live.exit_touch(
+            proc, user_id, stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE,
+            expiry_display=plan.expiry_display, strike_price=fill.leg.strike,
+            right=fill.leg.right, is_buy=fill.leg.is_short, quote=quote,
+        ) or (float(fill.price) if fill.price else None)
+        if touch is None:
+            return live.no_price_result(quantity)
         if fill.leg.is_short:
-            action, ladder = cfg.BUY, live.buyback_price_ladder(
-                float(quote.ask or fill.price or 0.05), band
-            )
+            action, ladder = cfg.BUY, live.buyback_price_ladder(touch, band)
         else:
-            action, ladder = cfg.SELL, live.exit_price_ladder(
-                float(quote.bid or fill.price or 0.05), band
-            )
+            action, ladder = cfg.SELL, live.exit_price_ladder(touch, band)
         return _place_leg(
             proc, user_id, plan, fill.leg, config,
             action=action, quantity=quantity, ladder=ladder, journal=journal,
@@ -1169,12 +1185,19 @@ def _close_live(
         quote = context.quotes.get(_leg_key(leg)) or live_quote(
             proc, user_id, expiry, strike, right
         )
-        if held_legs.is_short(leg):
+        is_buy = held_legs.is_short(leg)
+        touch = live.exit_touch(
+            proc, user_id, stock_code=INDEX_STOCK_CODE, exchange_code=INDEX_EXCHANGE,
+            expiry_display=expiry, strike_price=strike, right=right, is_buy=is_buy, quote=quote,
+        )
+        if touch is None:
+            return live.no_price_result(quantity)
+        if is_buy:
             action = cfg.BUY
-            ladder = live.buyback_price_ladder(float(quote.ask or 0.05), band)
+            ladder = live.buyback_price_ladder(touch, band)
         else:
             action = cfg.SELL
-            ladder = live.exit_price_ladder(float(quote.bid or 0.05), band)
+            ladder = live.exit_price_ladder(touch, band)
         return live.place_and_confirm(
             proc, user_id,
             live.LegOrder(

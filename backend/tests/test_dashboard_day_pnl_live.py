@@ -229,3 +229,26 @@ def test_partially_priced_book_still_reports_its_priced_contracts():
     assert payload["total_day_pnl"] is not None
     assert payload["contracts_priced"] >= 1
     assert payload["degraded"] is True
+
+
+def test_reconcile_runs_off_the_tick_thread(monkeypatch):
+    """B-16: the reconcile's get_trades waits on the broker; the tick must not wait on it."""
+    import threading
+
+    monkeypatch.setattr(live, "_reconcile_inline", False)
+    started, release = threading.Event(), threading.Event()
+    calls = []
+
+    def slow_reconcile(user_id):
+        calls.append(user_id)
+        started.set()
+        release.wait(5)
+
+    monkeypatch.setattr(live, "_run_reconcile", slow_reconcile)
+    try:
+        live._start_reconcile("u-bg")
+        assert started.wait(2)
+        live._start_reconcile("u-bg")  # already in flight: not started twice
+        assert calls == ["u-bg"]
+    finally:
+        release.set()

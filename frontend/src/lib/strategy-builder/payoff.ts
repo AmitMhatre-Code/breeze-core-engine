@@ -404,13 +404,18 @@ function probPayoffAtLeast(
 export function estimateProbabilityOfProfit(
   spot: number,
   T: number,
-  sigma: number,
+  sigma: number | ((price: number) => number),
   legs: StrategyLeg[],
   lotSize: number,
   r: number = DEFAULT_R,
   q: number = DEFAULT_Q,
 ): number {
-  if (T <= 0 || sigma <= 0 || spot <= 0 || !legs.length) return 0;
+  // `sigma` may be one number, or a volatility per price level (`sigmaAtPrice`). The
+  // distribution is only ever evaluated at the edges of the profit zone, and each edge can
+  // take its own side's volatility, as the backend's `pop_between_breakevens` does (B-56).
+  const sigmaAt = typeof sigma === "function" ? sigma : () => sigma;
+  if (T <= 0 || spot <= 0 || !legs.length) return 0;
+  if (typeof sigma === "number" && sigma <= 0) return 0;
   const strikes = uniqueSorted(
     legs.flatMap((l) => {
       const k = finiteStrikeFromLeg(l);
@@ -419,7 +424,10 @@ export function estimateProbabilityOfProfit(
   );
   if (!strikes.length) return 0;
 
-  const cdf = (x: number) => terminalSpotCdf(x, spot, T, sigma, r, q);
+  const cdf = (x: number) => {
+    const v = sigmaAt(x);
+    return v > 0 ? terminalSpotCdf(x, spot, T, v, r, q) : x >= spot ? 1 : 0;
+  };
   const hi = Math.max(strikes[strikes.length - 1], spot) * 100;
   const nodes = uniqueSorted([spot * 1e-6, ...strikes, hi]);
   const clamp = (v: number) => Math.max(0, Math.min(100, v));

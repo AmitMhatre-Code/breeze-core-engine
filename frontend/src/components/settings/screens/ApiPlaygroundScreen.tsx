@@ -390,7 +390,7 @@ export function ApiPlaygroundScreen() {
       setWsLastResponse(data);
       appendWsLog(statusToLogEntry(data, "ws_disconnect"));
       void refreshEventLog();
-      setWsStatusHint("Socket disconnected and subscriptions cleared.");
+      setWsStatusHint("Every Playground subscription released. The app's own feeds stay connected.");
     },
     onError: (e) => {
       setWsStatusHint(e instanceof Error ? e.message : "Disconnect failed");
@@ -726,7 +726,7 @@ export function ApiPlaygroundScreen() {
               disabled={wsDisconnectM.isPending}
               onClick={() => wsDisconnectM.mutate()}
             >
-              Disconnect socket
+              Release all Playground feeds
             </button>
             <button type="button" className="app-btn-outline" onClick={() => startWsStream()}>
               Start tick stream
@@ -741,10 +741,10 @@ export function ApiPlaygroundScreen() {
             </button>
           </div>
           <p className="text-xs text-amber-accent">
-            Frequent connect/disconnect cycles may be treated as connection thrashing by ICICI.
-            Prefer <span className="font-medium">Release subscriptions</span> when you only want to
-            stop ticks; use <span className="font-medium">Disconnect socket</span> only when you need
-            to tear down the WebSocket entirely.
+            The socket is shared with the rest of the app (PB/SL, bots, the order feed), so the
+            Playground never closes it. <span className="font-medium">Release subscriptions</span>{" "}
+            stops this subscription&apos;s ticks; <span className="font-medium">Release all Playground feeds</span>{" "}
+            stops every subscription made here.
           </p>
           <p className="text-xs app-text-muted">WebSocket ticks only arrive during NSE/BSE market hours.</p>
           <WsSubscribeModePicker value={wsSubscribeMode} onChange={setWsSubscribeMode} />
@@ -807,7 +807,7 @@ export function ApiPlaygroundScreen() {
               </div>
               <pre className="app-pre mt-2 max-h-56 min-h-[140px] min-w-0 flex-1 text-xs">
                 {wsCommandLogText ||
-                  "Commands and ICICI responses appear here after Connect, Subscribe, Disconnect, or Start tick stream."}
+                  "Commands and ICICI responses appear here after Connect, Subscribe, Release, or Start tick stream."}
               </pre>
             </div>
             <div className="flex min-h-[160px] min-w-0 flex-col">
@@ -838,7 +838,7 @@ export function ApiPlaygroundScreen() {
                   wsResponseIsError ? "border-down/40 bg-down-tint text-down-on-tint" : "",
                 ].join(" ")}
               >
-                {wsResponseText || "ICICI response will appear here after Connect, Subscribe, or Disconnect."}
+                {wsResponseText || "ICICI response will appear here after Connect, Subscribe, or Release."}
               </pre>
             </div>
           </div>

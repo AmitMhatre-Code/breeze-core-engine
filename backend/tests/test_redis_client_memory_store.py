@@ -104,3 +104,86 @@ def test_pipeline_hget_batches_in_execute_order():
     pipe.hget("b", "ltp")
     pipe.hget("missing", "ltp")
     assert pipe.execute() == ["1", "2", None]
+
+
+class _FakeRedis:
+    def __init__(self, existing=None):
+        self.strings = dict(existing or {})
+        self.hashes = {}
+        self.sets = {}
+        self.ttls = {}
+
+    def ping(self):
+        return True
+
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.strings:
+            return None
+        self.strings[key] = value
+        self.ttls[key] = ex
+        return True
+
+    def exists(self, key):
+        return int(key in self.strings or key in self.hashes)
+
+    def hset(self, key, mapping=None):
+        self.hashes.setdefault(key, {}).update(mapping or {})
+
+    def expire(self, key, seconds):
+        self.ttls[key] = seconds
+
+    def sadd(self, key, *members):
+        self.sets.setdefault(key, set()).update(members)
+
+
+def test_a_process_on_the_fallback_moves_to_redis_when_it_returns(monkeypatch):
+    """B-32: the fallback was for the life of the process, so the API and the chain builder
+    could split between memory and Redis until a restart."""
+    import icici_breeze_backend.app.db.redis_client as rc
+
+    store = _MemoryStore()
+    monkeypatch.setattr(rc, "_memory", {})
+    monkeypatch.setattr(rc, "_memory_hashes", {})
+    monkeypatch.setattr(rc, "_memory_hash_expires", {})
+    monkeypatch.setattr(rc, "_memory_sets", {})
+    monkeypatch.setattr(rc, "_redis", store)
+    monkeypatch.setattr(rc, "_use_memory", True)
+    store.set("tick:a", "mine", ex=60)
+    store.set("refdata:current_version", "7")
+    store.hset("quotes:pnl:A", mapping={"ltp": "1.5"})
+    store.sadd("chains:active", "NFO|NIFTY|X")
+
+    real = _FakeRedis(existing={"refdata:current_version": "8"})
+    monkeypatch.setattr(rc, "_connect_real", lambda: real)
+    rc._probe_and_switch()
+
+    assert rc._redis is real and rc._use_memory is False
+    assert real.strings["tick:a"] == "mine" and real.ttls["tick:a"] <= 60
+    assert real.strings["refdata:current_version"] == "8", "never over a key Redis holds"
+    assert real.hashes["quotes:pnl:A"] == {"ltp": "1.5"}
+    assert real.sets["chains:active"] == {"NFO|NIFTY|X"}
+    rc._redis, rc._use_memory = store, True  # other fixtures' teardown still reads the store
+
+
+def test_the_probe_is_spaced_and_a_failed_probe_stays_on_memory(monkeypatch):
+    import icici_breeze_backend.app.db.redis_client as rc
+
+    store = _MemoryStore()
+    monkeypatch.setattr(rc, "_redis", store)
+    monkeypatch.setattr(rc, "_use_memory", True)
+
+    def down():
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(rc, "_connect_real", down)
+    rc._probe_and_switch()
+    assert rc._redis is store and rc._use_memory is True
+
+    started = []
+    monkeypatch.setattr(rc.threading, "Thread", lambda **kw: type("T", (), {"start": lambda self: started.append(1)})())
+    monkeypatch.setattr(rc, "_probe_state", {"last": rc.time.monotonic(), "running": False})
+    rc._maybe_probe_for_redis()
+    assert started == [], "inside 30 s of the last probe nothing is started"
+    monkeypatch.setattr(rc, "_probe_state", {"last": 0.0, "running": False})
+    rc._maybe_probe_for_redis()
+    assert started == [1]

@@ -70,6 +70,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
+    # The position's own contracts are ticking (B-24 judges staleness on them).
+    monkeypatch.setattr(runtime, "_leg_tick_age", lambda leg, now=None: 0.0)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )

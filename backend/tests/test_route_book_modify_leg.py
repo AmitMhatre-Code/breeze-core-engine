@@ -57,11 +57,11 @@ def _finalize_body(orders: list[LegModifyOrderRef], new_quantity: int, **overrid
 
 
 def _run_step(body: LegModifyStepRequest):
-    return asyncio.run(route_book.post_modify_leg_step(body=body, context=_ctx(), _trading_ok=None))
+    return route_book.post_modify_leg_step(body=body, context=_ctx(), _trading_ok=None)
 
 
 def _run_finalize(body: LegModifyFinalizeRequest):
-    return asyncio.run(route_book.post_modify_leg_finalize(body=body, context=_ctx(), _trading_ok=None))
+    return route_book.post_modify_leg_finalize(body=body, context=_ctx(), _trading_ok=None)
 
 
 def _patched_step(**overrides):
@@ -230,11 +230,12 @@ def test_finalize_updates_squareoff_leg_order_ids():
         _run_finalize(body)
 
     mock_update.assert_called_once()
-    args, _kwargs = mock_update.call_args
+    args, kwargs = mock_update.call_args
     assert args[0] == "rule1"
     assert args[1] == "scrip1"
     # order "1" untouched, order "2" cancelled (dropped), order "3" newly placed
     assert set(args[2]) == {"1", "3"}
+    assert kwargs["user_id"], "B-48: the caller's user id travels with the update"
 
 
 class TestLegModifyStepRequestValidation:

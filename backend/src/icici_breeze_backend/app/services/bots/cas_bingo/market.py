@@ -83,6 +83,47 @@ def index_spot(index_code: str, *, now: Optional[float] = None) -> Optional[floa
     return ltp
 
 
+def settlement_level(index_code: str, expiry: "datetime.date") -> Optional[float]:
+    """The index close on `expiry`, or None when the cache no longer holds it (B-43).
+
+    `last_index_level` has no date: if the process was down at the expiry-day close, the
+    next day's live level was used to settle, which is a different number. The cached
+    payload is used only when it is from the expiry day itself (its last tick, or the
+    after-close quote), or from the session straight after it, whose `previous_close` is
+    the expiry-day close. Anything later is refused: the cycle waits, and is not booked
+    at a wrong level.
+    """
+    import datetime as _dt
+
+    from icici_breeze_backend.app.core.timezone import IST
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+    from icici_breeze_backend.app.services.market_calendar import _previous_trading_day
+    from icici_breeze_backend.app.services.reference_data.keys import index_spot_key
+
+    payload = cache_get_json(index_spot_key(SIGNAL_LABEL[index_code])) or {}
+    try:
+        stamped = _dt.datetime.fromtimestamp(float(payload.get("updated_at")), IST).date()
+    except (TypeError, ValueError, OSError):
+        return None
+
+    def _positive(value: Any) -> Optional[float]:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        return out if out > 0 else None
+
+    if payload.get("source") == "rest_close":
+        # An after-hours quote: its `ltp` is the close of the session it names, and before
+        # the next open its `previous_close` is the session before that.
+        return _positive(payload.get("ltp")) if payload.get("session_date") == expiry.isoformat() else None
+    if stamped == expiry:
+        return _positive(payload.get("ltp"))
+    if stamped > expiry and _previous_trading_day(stamped) == expiry:
+        return _positive(payload.get("previous_close"))
+    return None
+
+
 def last_index_level(index_code: str) -> Optional[float]:
     """The last index level cached, however old. For marking an expired position after the
     close, when no fresh tick is coming and the last one is the auction's own close."""

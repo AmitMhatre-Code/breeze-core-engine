@@ -200,6 +200,24 @@ def _extract_price_fields(raw: dict[str, Any]) -> tuple[float | None, float | No
     return _coerce_float(ltp_raw), _coerce_float(bid_raw), _coerce_float(ask_raw)
 
 
+def _pnl_mark(ltp: float | None, bid: float | None, ask: float | None) -> float | str | None:
+    """The price the P&L engine values a leg at.
+
+    A `last` of 0 is a contract that has not traded, not a price (B-15). Valued at 0 it
+    made a short read as full profit and a long as a total loss, which could trip a group
+    target or stop, and the exit was then priced at 0 and rejected. With a two-sided book
+    the mid stands in. With none the leg is unpriced: `""` overwrites any earlier figure in
+    the hash, so the engine reads "no quote" and not an old price with a new timestamp.
+    """
+    if ltp is None:
+        return None
+    if ltp > 0:
+        return ltp
+    if bid is not None and ask is not None and bid > 0 and ask > 0:
+        return round((bid + ask) / 2.0, 2)
+    return ""
+
+
 def _stage_pnl_quote(raw: dict[str, Any]) -> None:
     """Worker 1: resolve contract identity + conflate into the in-memory buffer.
 
@@ -217,7 +235,7 @@ def _stage_pnl_quote(raw: dict[str, Any]) -> None:
     scrip_key = contract_index_key(
         parsed.exchange_code, parsed.stock_code, parsed.expiry_display, parsed.strike, parsed.right
     )
-    _pnl_quote_buffer.update(scrip_key, ltp=ltp, bid=bid, ask=ask, ts=time.time())
+    _pnl_quote_buffer.update(scrip_key, ltp=_pnl_mark(ltp, bid, ask), bid=bid, ask=ask, ts=time.time())
     _last_tick_monotonic = time.monotonic()
 
 

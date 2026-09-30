@@ -77,7 +77,6 @@ def _isolate(monkeypatch):
     sg.reset_state_for_tests()
     on.reset_state_for_tests()
     monkeypatch.setattr(d.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(d, "trading_mutations_allowed", lambda: True)
     monkeypatch.setattr(d, "notify_squareoff_fired", lambda *a, **k: None)
     monkeypatch.setattr(d, "notify_squareoff_retrying", lambda *a, **k: None)
     monkeypatch.setattr(sg, "release_subscription", lambda *a, **k: None)

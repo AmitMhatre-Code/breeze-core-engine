@@ -1333,6 +1333,9 @@ class ProposalLeg(BaseModel):
     delivery_exposure: Optional[float] = None
     # Holdings context, shown so the user can see why the cap landed where it did.
     held_quantity: Optional[int] = None
+    # The part of the holding a call can be written against: held less blocked-for-trade.
+    # The cap on an edited call uses this, not `held_quantity`.
+    deliverable_quantity: Optional[int] = None
     pledged_quantity: Optional[int] = None
     existing_short_lots: int = 0
     # Funding order. Copied onto the leg at scan time so the proposal can be read and

@@ -41,6 +41,12 @@ _PLAYGROUND_EVENT_LIMIT = 50
 _playground_events: list[dict[str, Any]] = []
 _playground_event_seq = 0
 _UNTRACKED_HOLDER = "__untracked__"
+# Holders the API Playground subscribed under, so its "disconnect" releases only its own.
+_playground_holders: set[str] = set()
+# Last time each lookup-only (holder-less) contract was asked for, and how long it may go
+# unasked before its subscription is released (B-41).
+_untracked_seen: dict[str, float] = {}
+_UNTRACKED_IDLE_SECONDS = 900.0
 
 
 def _subscribe_batch_size() -> int:
@@ -308,9 +314,9 @@ def _subscribe_order_notifications(sdk: Any, *, quiet: bool = False) -> None:
     had changed. Failures still surface via `_note_error` at WARNING either way.
 
     Must run on every (re)connect, not once per process: the SDK guards its order socket
-    behind `if self.orderconnect == 0`, and `unsubscribe_feeds`/a dropped connection
-    resets that — so a reconnect without re-subscribing would leave the SG lifecycle
-    permanently deaf to fills with no error anywhere.
+    behind `if self.orderconnect == 0`, which `ws_disconnect()` and `unsubscribe_feeds`
+    reset (a dropped connection does not -- see `order_feed_watchdog_tick`), so a reconnect
+    without re-subscribing would leave the SG lifecycle deaf to fills with no error anywhere.
 
     Account-wide, not per-order: every order on the account arrives here, including ones
     placed from the ICICI website/app. That is a feature — it is how manual intervention
@@ -331,8 +337,38 @@ def _subscribe_order_notifications(sdk: Any, *, quiet: bool = False) -> None:
         _note_error("subscribe_feeds(get_order_notification=True) failed: %s", exc)
 
 
+def _socket_session_is_stale(proc: "Processor", sdk: Any, user_id: str) -> bool:
+    """True when the socket's SDK was built on an earlier broker token than the user's
+    current one (B-31). Unknown is not stale: with no token to compare, nothing is rebuilt."""
+    from icici_breeze_backend.app.services.processor import _SESSION_OWNER_ATTR
+
+    owner = getattr(sdk, _SESSION_OWNER_ATTR, None)
+    if not isinstance(owner, tuple) or len(owner) != 2 or not owner[1]:
+        return False
+    try:
+        current = proc._resolve_broker_token(user_id)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(current) and current != owner[1]
+
+
 def _ensure_ws(proc: "Processor", user_id: str) -> Any | None:
     global _sdk, _sdk_user_id, _connected
+    stale = False
+    with _lock:
+        if _sdk is not None and _sdk_user_id == user_id and _connected:
+            if not _socket_session_is_stale(proc, _sdk, user_id):
+                return _sdk
+            stale = True
+    if stale:
+        # After the overnight rollover and a morning login, the socket was still yesterday's
+        # SDK, reconnecting with yesterday's session key, and the login prefetch, the order
+        # feed and the index spot all subscribed on it. Rebuild on the current session and
+        # replay every subscription.
+        _logger.warning("WebSocket built on an earlier broker session; rebuilding for user_id=%s", user_id)
+        reconnect_ws()
+        with _lock:
+            return _sdk if _connected and _sdk_user_id == user_id else None
     with _lock:
         if _sdk is not None and _sdk_user_id == user_id and _connected:
             return _sdk
@@ -373,20 +409,68 @@ def ensure_order_feed(proc: "Processor", user_id: str) -> bool:
     return True
 
 
-def order_feed_watchdog_tick() -> None:
-    """Re-arm the order-notification subscription if a silent reconnect may have dropped it.
+# Watchdog passes in a row that found the order socket down before it is rebuilt. One is
+# not enough: python-socketio is usually mid-way through its own reconnect.
+_ORDER_SOCKET_DOWN_PASSES = 2
+_order_socket_down_passes = 0
 
-    The SDK opens the order socket behind `if self.orderconnect == 0`, and a dropped
-    connection resets that flag — but nothing re-subscribes on the SDK's own socket.io
-    reconnect. So after any silent blip the SG lifecycle goes permanently deaf to fills
-    while price ticks (which the SDK re-subscribes itself) keep flowing, hiding the
-    failure. Re-calling `subscribe_feeds(get_order_notification=True)` is a no-op when the
-    order socket is already up and re-arms it when it isn't, so this is safe on a timer."""
+
+def _order_socket_down(sdk: Any) -> bool:
+    """True when the SDK believes its order socket is up but the socket.io client is not
+    connected. Unknown shapes read as up, so nothing is torn down on a guess."""
+    handler = getattr(sdk, "sio_order_refresh_handler", None)
+    if handler is None or not getattr(sdk, "orderconnect", 0):
+        return False
+    client = getattr(handler, "sio", None)
+    connected = getattr(client, "connected", None)
+    return connected is False
+
+
+def _reset_order_socket(sdk: Any) -> None:
+    """Make the SDK open a fresh order socket on the next subscribe (B-37).
+
+    breeze_connect opens it behind `if self.orderconnect == 0`, and only `ws_disconnect()` or
+    unsubscribing order notifications set that back to 0 -- a dropped connection does not.
+    So a re-subscribe on a dead order socket was a no-op, and recovery rested entirely on
+    python-socketio's own reconnect."""
+    handler = getattr(sdk, "sio_order_refresh_handler", None)
+    try:
+        if handler is not None:
+            handler.sio.disconnect()  # stop its own reconnect loop before replacing it
+    except Exception:  # noqa: BLE001 -- already down
+        pass
+    sdk.sio_order_refresh_handler = None
+    sdk.orderconnect = 0
+
+
+def order_feed_watchdog_tick() -> None:
+    """Keep the order-notification feed alive.
+
+    Re-calling `subscribe_feeds(get_order_notification=True)` re-registers the handler and
+    is otherwise a no-op while the SDK's `orderconnect` flag is set -- including when the
+    socket behind it has dropped, which does not clear the flag. So the socket's own state
+    is checked too, and a socket down on two passes in a row is reset first, so the
+    subscribe below actually reconnects it (B-37)."""
+    global _order_socket_down_passes
     with _lock:
         sdk = _sdk
         connected = _connected
     if sdk is None or not connected:
         return  # nothing connected -> nothing to keep alive
+    try:
+        release_idle_lookups()
+    except Exception:  # noqa: BLE001 -- housekeeping must not stop the re-arm
+        _logger.debug("idle lookup release failed", exc_info=True)
+    if _order_socket_down(sdk):
+        _order_socket_down_passes += 1
+        if _order_socket_down_passes >= _ORDER_SOCKET_DOWN_PASSES:
+            _logger.warning("Order-notification socket is down; reconnecting it")
+            _reset_order_socket(sdk)
+            _order_socket_down_passes = 0
+            _subscribe_order_notifications(sdk)
+            return
+    else:
+        _order_socket_down_passes = 0
     _subscribe_order_notifications(sdk, quiet=True)
     # Observability only: if the *whole* feed (price ticks included) has gone silent during
     # market hours, the order re-arm above won't help — surface it so it isn't invisible.
@@ -713,9 +797,36 @@ def subscribe_option(
     if token is None:
         return False
     ws_symbol = format_ws_stock_token(exchange_code, token)
-    return _subscribe_stock_token_batch(
-        proc, user_id, [ws_symbol], holder_id=_effective_holder(holder_id)
-    )
+    hid = _effective_holder(holder_id)
+    if hid == _UNTRACKED_HOLDER:
+        with _lock:
+            _untracked_seen[ws_symbol] = time.monotonic()
+    return _subscribe_stock_token_batch(proc, user_id, [ws_symbol], holder_id=hid)
+
+
+def release_idle_lookups(now: float | None = None) -> int:
+    """Release single-contract lookup subscriptions nobody has asked for in a while (B-41).
+
+    A one-off quote lookup (a Portfolio leg, a bot's quote) subscribes its contract with no
+    holder, and nothing ever released it, so subscriptions only grew for the life of the
+    process. A lookup refreshes its contract's clock; a contract that other holders still
+    hold (a chain, an SG pin) stays subscribed when this lets go of it.
+    """
+    now = time.monotonic() if now is None else now
+    with _lock:
+        tokens = list(_holders.get(_UNTRACKED_HOLDER, set()))
+        idle = []
+        for token in tokens:
+            seen = _untracked_seen.setdefault(token, now)
+            if now - seen >= _UNTRACKED_IDLE_SECONDS:
+                idle.append(token)
+        for token in idle:
+            _untracked_seen.pop(token, None)
+    for token in idle:
+        _detach_holder_from_token(_UNTRACKED_HOLDER, token)
+    if idle:
+        _logger.info("Released %d idle quote-lookup subscription(s)", len(idle))
+    return len(idle)
 
 
 def sync_holder_chain_subscriptions(
@@ -905,6 +1016,31 @@ def _unsubscribe_all_feeds() -> None:
 
 
 def ws_disconnect_playground() -> dict[str, Any]:
+    """The Playground's "disconnect": release every subscription the Playground made and
+    keep the socket (B-30).
+
+    The socket is shared with everything else: PB/SL quotes, the bots, the order feed, the
+    index spot. Tearing it down here unsubscribed every feed in the process and cleared the
+    session the watchdog needs to rebuild it, so protection was blind until an unrelated
+    request happened to reconnect.
+    """
+    cmd = _icici_command("release_playground", {})
+    with _lock:
+        holders = sorted(_playground_holders)
+        _playground_holders.clear()
+    released = 0
+    for hid in holders:
+        released += int(release_holder(hid).get("released") or 0)
+    result = {"released": released, "holders": holders}
+    entry = _record_playground_event(
+        "ws_disconnect", "release_holder", {"holders": holders}, result, True,
+        note="the Playground's subscriptions released; the app's feed socket stays open",
+    )
+    return _playground_response(result, ok=True, icici_command=cmd, event_id=entry["id"])
+
+
+def _disconnect_everything() -> dict[str, Any]:
+    """Unsubscribe every feed and close the socket. App shutdown only."""
     global _sdk, _sdk_user_id, _connected
     from icici_breeze_backend.app.services.ws_tick_pipeline import stop_tick_pipeline
 
@@ -968,6 +1104,8 @@ def _track_playground_sub(holder_id: str | None, sdk_args: dict[str, Any]) -> No
     hid = _effective_holder(holder_id)
     if hid == _UNTRACKED_HOLDER:
         return
+    with _lock:
+        _playground_holders.add(hid)
     stock_token = sdk_args.get("stock_token")
     tokens: list[str] = []
     if isinstance(stock_token, list):
@@ -1036,4 +1174,4 @@ def playground_subscribe(proc: "Processor", user_id: str, params: dict[str, Any]
 
 
 def shutdown_websocket() -> None:
-    ws_disconnect_playground()
+    _disconnect_everything()

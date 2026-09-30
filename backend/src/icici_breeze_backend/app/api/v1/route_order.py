@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Header
 from fastapi import Request, Depends, HTTPException
 from fastapi.responses import JSONResponse
+import functools
 import logging
+import threading
 from icici_breeze_backend.app.services.processor import processor
 import icici_breeze_backend.app.core.config as cfg
 import json
@@ -85,9 +87,29 @@ def _order_buy_sell_gate_errors(user_id: str) -> list[dict]:
 
 
 @router.get("")
-async def serve_landing(request: Request):
+def serve_landing(request: Request):
     q = request.url.query
     return redirect_to_frontend("/orders" + ("?" + q if q else ""))
+
+
+# One order placement per user at a time (B-08). These handlers now run on the threadpool
+# instead of the event loop, which is what used to serialize them, and the idempotency check
+# ("stored? no -> place -> store") is only safe when a retry with the same key cannot run
+# alongside the first. Broker calls themselves are serialized separately (#24).
+_placement_locks: dict[str, threading.Lock] = {}
+_placement_locks_guard = threading.Lock()
+
+
+def _one_placement_at_a_time(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        user_id = str(getattr(kwargs.get("context"), "user_id", "") or "")
+        with _placement_locks_guard:
+            lock = _placement_locks.setdefault(user_id, threading.Lock())
+        with lock:
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _return_idempotent_response(stored: IdempotencyResult):
@@ -103,7 +125,8 @@ def _return_idempotent_response(stored: IdempotencyResult):
 
 
 @router.post("")
-async def process_post(
+@_one_placement_at_a_time
+def process_post(
     body: OrderFormRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
@@ -179,7 +202,7 @@ async def process_post(
 
 
 @router.post("/aggressive-price", response_model=AggressivePriceResponse)
-async def post_aggressive_price(
+def post_aggressive_price(
     body: AggressivePriceRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -226,7 +249,7 @@ async def post_aggressive_price(
 
 
 @router.post("/break-chunk-defaults")
-async def post_break_chunk_defaults(
+def post_break_chunk_defaults(
     body: BreakChunkDefaultsRequest,
     _context: RequestContext = Depends(get_request_context),
 ):
@@ -240,7 +263,8 @@ async def post_break_chunk_defaults(
 
 
 @router.post("/break-chunk")
-async def post_break_chunk(
+@_one_placement_at_a_time
+def post_break_chunk(
     body: BreakOrderChunkRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -278,7 +302,7 @@ async def post_break_chunk(
 
 
 @router.post("/break-finalize")
-async def post_break_finalize(
+def post_break_finalize(
     body: BreakOrderFinalizeRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -314,7 +338,7 @@ async def post_break_finalize(
 
 
 @router.get("/data", response_model=IciciApiResponse)
-async def get_orders_api(
+def get_orders_api(
     ctx: RequestContext = Depends(get_request_context),
     offset: int = 0,
     limit: int = 100,
@@ -339,7 +363,7 @@ async def get_orders_api(
 
 
 @router.get("/data/{order_id}", response_model=OrderDetailResponse)
-async def get_order_detail_api(order_id: str, ctx: RequestContext = Depends(get_request_context)):
+def get_order_detail_api(order_id: str, ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
     order = breeze.get_order_detail(user_id, order_id)
     AuditLogger(None).log_order_access(user_id, order_id)

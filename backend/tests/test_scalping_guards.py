@@ -45,6 +45,11 @@ def db(tmp_path, monkeypatch):
     path = str(tmp_path / "users_test.sqlite3")
     monkeypatch.setattr(repo, "_db_path", lambda: path)
     ensure_bots_tables(path)
+    from icici_breeze_backend.app.db.squareoff_rules_migrate import ensure_squareoff_rules_table
+    from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
+
+    monkeypatch.setattr(sq_repo, "_db_path", lambda: path)
+    ensure_squareoff_rules_table(path)
     runtime.reset_state_for_tests()
     # The fake scrip master lists a 10-Sep-2026 expiry. Pin the expiry picker's clock to the
     # date these tests are written for, or they rot the day that expiry passes.
@@ -274,6 +279,8 @@ def _drive(monkeypatch, now=datetime.datetime(2026, 9, 8, 10, 0)):
     monkeypatch.setattr(
         runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
+    # The position's own contracts are ticking (B-24 judges staleness on them).
+    monkeypatch.setattr(runtime, "_leg_tick_age", lambda leg, now=None: 0.0)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )
@@ -379,3 +386,27 @@ def test_the_session_is_finalised_once_not_on_every_later_pass(db, monkeypatch):
     for _ in range(4):
         runtime.tick_bot(USER, BOT_MOMENTUM_LONG_SCALPER, cfg)
     assert len(repo.list_runs(USER, bot_type=BOT_MOMENTUM_LONG_SCALPER)) == 1
+
+
+
+def test_the_disarm_is_written_to_the_rule_so_it_does_not_come_back(db, sent, monkeypatch):
+    """B-29: a memory-only clear left the SG showing Armed, and every restart re-armed it,
+    disarmed it again and re-sent the alert."""
+    from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
+    from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
+
+    released = []
+    monkeypatch.setattr(sg, "release_subscription", lambda rule_id: released.append(rule_id))
+    record = sq_repo.arm_rule(
+        USER, stock_code="NIFTY", expiry_display=EXPIRY, exchange_code="NFO",
+        profit_target_pnl=1000.0, loss_limit_pnl=500.0, target_premium_pct=5, stop_loss_premium_pct=5,
+    )
+    engine.set_group_rule(USER, record.id, stock_code="NIFTY", expiry_display=EXPIRY, stop_loss_pnl=-500.0)
+
+    guards.disarm_conflicting_rule(USER, guards.find_sg_conflict(FakeProc(), USER))
+
+    stored = sq_repo.get_rule(record.id)
+    assert stored.status == "reset"
+    assert "scalping bot" in (stored.reset_reason or "")
+    assert released == [record.id]
+    assert sq_repo.list_all_live_rules() == []  # nothing to re-hydrate at the next start

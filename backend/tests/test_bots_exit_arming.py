@@ -45,7 +45,15 @@ class FakeProc:
     def get_orders(self, user_id, start, end, *, exchange_codes=None):
         self.reads += 1
         self.exchanges.append(exchange_codes)
-        return {"Status": 200, "Error": None, "Success": list(self.orders)}
+        # The bot's own orders are in the book, filled, unless a test lists them itself.
+        # Exit arming's REST path checks that something filled before it arms (B-25).
+        listed = {str(o.get("order_id")) for o in self.orders}
+        own = [
+            {"order_id": oid, "status": "Executed", "quantity": "75", "pending_quantity": "0"}
+            for oid in ("O1", "O2")
+            if oid not in listed
+        ]
+        return {"Status": 200, "Error": None, "Success": list(self.orders) + own}
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +87,7 @@ def env(tmp_path, monkeypatch):
         "icici_breeze_backend.app.services.portfolio_pnl_engine.set_group_rule",
         lambda *a, **k: None,
     )
+    _stub_position_baseline(monkeypatch)
     # A healthy feed unless a test says otherwise.
     health = SimpleNamespace(ws_user="u1", tick_age=1.0)
     monkeypatch.setattr(
@@ -91,6 +100,18 @@ def env(tmp_path, monkeypatch):
     )
     yield SimpleNamespace(sent=sent, armed=armed, clock=clock, health=health)
     exit_arming.reset_state_for_tests()
+
+
+def _stub_position_baseline(monkeypatch):
+    """Arming records the group's legs as its drift baseline (B-12); give it some."""
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.bots.expiry_index_writer._arm_baseline_legs",
+        lambda *a, **k: [SimpleNamespace(scrip_key="NFO|NIFTY|15-Sep-2026|24000|PE", action="Sell", quantity=75)],
+    )
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.strategy_group_lifecycle.pin_subscription",
+        lambda *a, **k: None,
+    )
 
 
 def _wait(order_ids=("O1", "O2"), run_id=None):
@@ -365,3 +386,52 @@ def test_yesterdays_stops_are_not_resumed(env):
     exit_arming._resume_from_database()
 
     assert repo.get_pending_exit(pending)["status"] == "abandoned"
+
+
+def test_rest_path_arms_nothing_when_no_order_filled(env):
+    """B-25: with a deaf feed and every order rejected, the REST path armed a stop over no
+    position, which then pooled any later legs on that index and expiry."""
+    dead = [
+        {"order_id": oid, "stock_code": "NIFTY", "expiry_date": EXPIRY, "status": "Rejected",
+         "quantity": "14885", "pending_quantity": "14885"}
+        for oid in ("O1", "O2")
+    ]
+    proc = FakeProc(orders=dead)
+    _wait()
+    t0 = time.monotonic()
+
+    exit_arming.evaluate(proc, now=t0 + GRACE + 1)
+
+    assert proc.reads == 1
+    assert env.armed == []
+    assert any("No stop needed" in text for text in env.sent)
+
+
+def test_rest_path_waits_when_the_book_does_not_show_our_orders(env):
+    proc = FakeProc(orders=[{"order_id": "O1", "status": "Executed", "quantity": "75", "pending_quantity": "0"}])
+    proc.orders.append({"order_id": "O2-other", "status": "Executed", "quantity": "75", "pending_quantity": "0"})
+    _wait(order_ids=("O1", "O9"))
+    t0 = time.monotonic()
+    exit_arming.evaluate(proc, now=t0 + GRACE + 1)
+    assert env.armed == [], "an order missing from the book is not a fill"
+
+
+def test_the_close_comes_from_the_exchange_calendar(env, monkeypatch):
+    """B-45: a stop still waiting is abandoned at the calendar's close, not at 15:30."""
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setattr(
+        "icici_breeze_backend.app.services.market_calendar.get_calendar_config",
+        lambda: NS(close_hour=17, close_minute=0),
+    )
+    proc = FakeProc(orders=[{
+        "order_id": "O2", "stock_code": "NIFTY", "expiry_date": EXPIRY,
+        "strike_price": 22750.0, "right": "Put", "status": "Ordered",
+    }])
+    _wait()
+    env.clock.now = datetime.datetime(2026, 9, 15, 16, 0)  # after 15:30, before this close
+    exit_arming.evaluate(proc, now=time.monotonic())
+    assert not any("never armed" in text.lower() for text in env.sent)
+    env.clock.now = datetime.datetime(2026, 9, 15, 17, 1)
+    exit_arming.evaluate(proc, now=time.monotonic())
+    assert any("never armed" in text.lower() for text in env.sent)

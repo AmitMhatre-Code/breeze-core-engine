@@ -188,13 +188,17 @@ function PortfolioSummaryPanel({
         label="Total MTM"
         value={mtm.text}
         valueClassName={mtm.className}
-        caption={`${totals.groupCount} group${totals.groupCount === 1 ? "" : "s"} · ${legLabel}`}
+        caption={
+          totals.mtmUnpricedLegs > 0
+            ? unpricedCaption(totals.mtmUnpricedLegs)
+            : `${totals.groupCount} group${totals.groupCount === 1 ? "" : "s"} · ${legLabel}`
+        }
       />
       <SummaryTile
         label="Total carry"
         value={carry.text}
         valueClassName={carry.className}
-        caption="If held to expiry"
+        caption={totals.carryUnpricedLegs > 0 ? unpricedCaption(totals.carryUnpricedLegs) : "If held to expiry"}
       />
       <SummaryTile
         label="Span + ELM margin"
@@ -223,6 +227,10 @@ function PortfolioSummaryPanel({
       />
     </div>
   );
+}
+
+function unpricedCaption(n: number): string {
+  return `Waiting on ${n} unpriced leg${n === 1 ? "" : "s"}`;
 }
 
 function SummaryTile({

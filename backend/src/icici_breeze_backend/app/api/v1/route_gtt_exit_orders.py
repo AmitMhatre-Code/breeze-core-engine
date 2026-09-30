@@ -11,7 +11,10 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException
 
 import icici_breeze_backend.app.core.config as cfg
-from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+from icici_breeze_backend.app.api.deps_license import (
+    allowed_in_read_only,
+    require_trading_not_revoked,
+)
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.core.strike import parse_strike
 from icici_breeze_backend.app.core.timezone import today_ist_date
@@ -208,7 +211,7 @@ async def cancel_gtt_exit_order(
     gtt_order_id: str,
     exchange_code: str = "NFO",
     ctx: RequestContext = Depends(get_request_context),
-    _: None = Depends(require_trading_not_revoked),
+    _: None = Depends(allowed_in_read_only),
 ):
     response = breeze.cancel_gtt_order(ctx.user_id, exchange_code, gtt_order_id)
     success = (response or {}).get("Success") or {}

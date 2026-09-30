@@ -233,28 +233,116 @@ class _MemoryStore:
             _memory_hash_expires.clear()
 
 
+# How often a process on the in-memory fallback asks whether Redis is back (B-32).
+_RECONNECT_PROBE_SECONDS = 30.0
+_probe_lock = threading.Lock()
+_probe_state = {"last": 0.0, "running": False}
+
+
+def _connect_real() -> Any:
+    import redis
+
+    client = redis.Redis.from_url(
+        cfg.redis_connection_url(),
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+    client.ping()
+    return client
+
+
+def _maybe_probe_for_redis() -> None:
+    """While on the fallback, check for Redis at most every 30 s, off the caller's thread."""
+    now = time.monotonic()
+    with _probe_lock:
+        if _probe_state["running"] or now - _probe_state["last"] < _RECONNECT_PROBE_SECONDS:
+            return
+        _probe_state["running"] = True
+        _probe_state["last"] = now
+    threading.Thread(target=_probe_and_switch, name="redis-reconnect-probe", daemon=True).start()
+
+
+def _probe_and_switch() -> None:
+    """Move a process on the in-memory fallback onto Redis once Redis answers (B-32).
+
+    The fallback used to be for the life of the process. The API and the chain builder
+    decide on their own, so one of them could sit on memory while the other used Redis,
+    and ticks and active-chain registrations stopped being shared until a restart. What
+    this process wrote while Redis was away is copied across first, never over a key
+    Redis already holds: the other process's value is at least as fresh.
+    """
+    global _redis, _use_memory
+    try:
+        try:
+            client = _connect_real()
+        except Exception:  # noqa: BLE001 -- still down; the next probe asks again
+            return
+        copied = _copy_memory_into(client)
+        with _memory_lock:
+            _redis = client
+            _use_memory = False
+        _logger.warning(
+            "Redis reachable again at %s; left the in-memory fallback (%d key(s) copied across)",
+            cfg.redis_connection_url(),
+            copied,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.exception("Redis reconnect probe failed")
+    finally:
+        with _probe_lock:
+            _probe_state["running"] = False
+
+
+def _copy_memory_into(client: Any) -> int:
+    now = time.time()
+    with _memory_lock:
+        strings = [(k, v, exp) for k, (v, exp) in _memory.items() if exp is None or exp > now]
+        hashes = [
+            (k, dict(v), _memory_hash_expires.get(k))
+            for k, v in _memory_hashes.items()
+            if _memory_hash_expires.get(k) is None or _memory_hash_expires[k] > now
+        ]
+        sets = [(k, set(v)) for k, v in _memory_sets.items() if v]
+    copied = 0
+    for key, value, exp in strings:
+        ttl = None if exp is None else max(1, int(exp - now))
+        if client.set(key, value, ex=ttl, nx=True):
+            copied += 1
+    for key, mapping, exp in hashes:
+        if not mapping or client.exists(key):
+            continue
+        client.hset(key, mapping=mapping)
+        if exp is not None:
+            client.expire(key, max(1, int(exp - now)))
+        copied += 1
+    for key, members in sets:
+        client.sadd(key, *members)  # a union: registrations from both processes stand
+        copied += 1
+    return copied
+
+
 def _init_redis_client() -> Any:
     global _redis, _use_memory
     if _redis is not None:
+        if _use_memory:
+            _maybe_probe_for_redis()
         return _redis
     try:
-        import redis
-
-        client = redis.Redis.from_url(
-            cfg.redis_connection_url(),
-            decode_responses=True,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-        )
-        client.ping()
+        client = _connect_real()
         _redis = client
         _use_memory = False
         _logger.info("Redis connected at %s", cfg.redis_connection_url())
         return _redis
     except Exception as exc:
-        _logger.warning("Redis unavailable (%s); using in-memory cache fallback.", exc)
+        _logger.warning(
+            "Redis unavailable (%s); using the in-memory fallback and checking for Redis "
+            "every %.0fs.", exc, _RECONNECT_PROBE_SECONDS,
+        )
         _redis = _MemoryStore()
         _use_memory = True
+        with _probe_lock:
+            _probe_state["last"] = time.monotonic()
         return _redis
 
 

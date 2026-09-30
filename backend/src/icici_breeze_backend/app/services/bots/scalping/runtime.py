@@ -125,6 +125,51 @@ def _feed_health(bot_type: str, config: Any) -> FeedHealth:
     )
 
 
+def _leg_tick_age(leg: dict[str, Any], now: Optional[float] = None) -> float:
+    """Seconds since this contract's last tick, from its websocket cell; inf when it has
+    none (it has not ticked within the cell's life)."""
+    from icici_breeze_backend.app.core.strike import parse_strike
+    from icici_breeze_backend.app.db.redis_client import cache_get_json
+    from icici_breeze_backend.app.services.quote_source_router import _cell_updated_at
+    from icici_breeze_backend.app.services.reference_data.keys import ws_quote_key
+
+    strike = parse_strike(leg.get("strike_price"))
+    if strike is None:
+        return float("inf")
+    try:
+        cell = cache_get_json(ws_quote_key(
+            str(leg.get("exchange_code") or cfg.NFO), str(leg.get("stock_code") or "NIFTY"),
+            str(leg.get("expiry_display") or ""), strike, str(leg.get("right") or ""),
+        ))
+    except Exception:  # noqa: BLE001 -- unreadable is not fresh
+        return float("inf")
+    ts = _cell_updated_at(cell) if isinstance(cell, dict) else None
+    if ts is None:
+        return float("inf")
+    return max(0.0, (time.time() if now is None else now) - float(ts))
+
+
+def _position_feed(feed: FeedHealth, cycle: Any, now: Optional[float] = None) -> FeedHealth:
+    """With a position open, staleness is the position's own contracts', not the socket's.
+
+    `feed.stale` measured the last tick of anything on the socket, so a traded chain that
+    went quiet while another chain ticked was never seen as stale, and the position was
+    managed on old prices (B-24). The contracts judged are the ones the stop depends on:
+    the fly's short legs (its wings barely move its value), or the Long Scalper's one leg.
+    The oldest of them decides, and a socket gone quiet still counts as well.
+    """
+    if cycle is None or not getattr(cycle, "legs", None):
+        return feed
+    legs = [leg for leg in cycle.legs if isinstance(leg, dict)]
+    judged = [leg for leg in legs if held_legs.is_short(leg)] or legs
+    if not judged:
+        return feed
+    age = max(_leg_tick_age(leg, now) for leg in judged)
+    socket_age = float(feed.stale_seconds) if feed.stale else 0.0
+    worst = max(age, socket_age)
+    return replace(feed, stale=worst > 0, stale_seconds=worst)
+
+
 def _futures_block(feed: Any, now: Optional[float] = None) -> Optional[str]:
     """Bot 4 judges "has spot settled?" on today's futures candles. Once warm it stays warm, so
     a futures feed that died after warm-up would have it re-centre flies on candles that
@@ -198,7 +243,7 @@ def build_snapshot(
         # `is_trading_day` takes a datetime and calls .astimezone() on it -- a date raises.
         is_trading_day=bool(is_trading_day(now)),
         is_expiry_day=_is_expiry_day(config),
-        feed=_feed_health(bot_type, config),
+        feed=_position_feed(_feed_health(bot_type, config), open_cycles[0] if open_cycles else None),
         totals=totals,
         has_open_position=bool(open_cycles),
         api_calls_remaining=_api_calls_remaining(user_id),

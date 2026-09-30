@@ -273,6 +273,63 @@ def place_and_confirm(
     journal: Any = None,
     wall: Callable[[], float] = time.time,
 ) -> FillResult:
+    """Place one leg, sliced under the contract's freeze quantity (B-33).
+
+    The exchange rejects an order above the freeze quantity outright, and the scalpers'
+    sizing is not capped by it (cheap expiry-day options can size to thousands of units).
+    Each slice is placed and confirmed in turn, the same as a whole order below. The first
+    slice that does not fill completely ends the leg: what filled is reported as a partial,
+    and a failed cancel or an unknown answer stops everything, as it does for one order.
+    """
+    from dataclasses import replace as _replace
+
+    from icici_breeze_backend.app.services.bots.placement import qty_per_order
+
+    total = int(leg.quantity)
+    per_order = qty_per_order(proc, leg.stock_code, leg.expiry_display, leg.exchange_code, total)
+    if per_order <= 0 or per_order >= total:
+        return _place_and_confirm_one(
+            proc, user_id, leg, price_for_attempt=price_for_attempt,
+            timeout_seconds=timeout_seconds, attempts=attempts, now=now, sleep=sleep,
+            journal=journal, wall=wall,
+        )
+    chunks = [per_order] * (total // per_order) + ([total % per_order] if total % per_order else [])
+    combined = FillResult(requested_quantity=total)
+    value = 0.0
+    for chunk in chunks:
+        part = _place_and_confirm_one(
+            proc, user_id, _replace(leg, quantity=chunk), price_for_attempt=price_for_attempt,
+            timeout_seconds=timeout_seconds, attempts=attempts, now=now, sleep=sleep,
+            journal=journal, wall=wall,
+        )
+        combined.attempts += part.attempts
+        combined.order_id = part.order_id or combined.order_id
+        if part.filled_quantity:
+            combined.filled_quantity += int(part.filled_quantity)
+            value += float(part.average_price or 0.0) * int(part.filled_quantity)
+            combined.average_price = round(value / combined.filled_quantity, 4)
+        combined.cancelled = combined.cancelled or part.cancelled
+        combined.cancel_failed = combined.cancel_failed or part.cancel_failed
+        combined.outcome_unknown = combined.outcome_unknown or part.outcome_unknown
+        if not part.ok:
+            combined.error = part.error or f"A {chunk}-unit slice did not fill."
+            return combined
+    return combined
+
+
+def _place_and_confirm_one(
+    proc: Any,
+    user_id: str,
+    leg: LegOrder,
+    *,
+    price_for_attempt: Callable[[int], float],
+    timeout_seconds: float,
+    attempts: int = 2,
+    now: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    journal: Any = None,
+    wall: Callable[[], float] = time.time,
+) -> FillResult:
     """Place, wait, and on a timeout cancel and re-price -- bounded by `attempts`.
 
     `price_for_attempt(i)` supplies the limit for attempt i, so an entry can re-price against
@@ -375,7 +432,7 @@ def place_and_confirm(
 
         if executed >= leg.quantity:
             result.filled_quantity = executed
-            result.average_price = _fill_price(state, price)
+            result.average_price = _traded_price(proc, user_id, order_id, leg, state, price)
             _tracker.forget(order_id)
             return result
 
@@ -388,7 +445,7 @@ def place_and_confirm(
                 # cancelled ourselves does. Re-sending the full size on top of them bought
                 # more than planned on an entry and sold more than was held on an exit
                 # (B-53). The caller decides what the partial means.
-                result.average_price = _fill_price(state, price)
+                result.average_price = _traded_price(proc, user_id, order_id, leg, state, price)
                 result.error = (
                     f"Order {status} after {executed} of {leg.quantity} filled."
                 )
@@ -405,7 +462,7 @@ def place_and_confirm(
             result.cancel_failed = True
             result.filled_quantity = executed
             if executed > 0:
-                result.average_price = _fill_price(state, price)
+                result.average_price = _traded_price(proc, user_id, order_id, leg, state, price)
             result.error = (
                 f"Could not cancel order {order_id}. It may still fill, so this bot is "
                 f"standing down rather than trading around an order it cannot account for."
@@ -418,7 +475,7 @@ def place_and_confirm(
         if executed > 0:
             # A partial that we then cancelled is a real, small position. The caller has to
             # decide, and for an entry the answer is to unwind it.
-            result.average_price = _fill_price(state, price)
+            result.average_price = _traded_price(proc, user_id, order_id, leg, state, price)
             return result
         if attempt + 1 >= attempts:
             result.error = "Limit did not fill; order cancelled and the cycle abandoned."
@@ -427,19 +484,144 @@ def place_and_confirm(
     return result
 
 
-def _fill_price(state: dict[str, Any], limit: float) -> float:
-    """What a fill is recorded at: the order's average price when the state carries one, else
-    the limit that was sent.
+def _traded_price(
+    proc: Any, user_id: str, order_id: str, leg: "LegOrder", state: dict[str, Any], limit: float
+) -> float:
+    """The price the units actually traded at (B-22).
 
-    Every branch that reports filled units must set this. A partial used to return with no
-    price, and callers defaulted it to 0, so a partly filled close was booked at ₹0 (B-54).
-    The limit is still only an approximation until fill prices come from the broker (B-22).
+    The order feed carries no usable average: `averageExecutedRate` held garbage in the live
+    capture, so the tracker stores none, and every feed-confirmed fill used to be booked at
+    its limit -- ask plus tolerance on an entry, a widening discount on an exit. Realized
+    P&L, the daily stop, cooldown streaks and the ladder's first stop all read that. So a
+    fill with no price costs one `get_order_detail` call for ICICI's own average.
+
+    An average on the wrong side of the limit (above it for a buy, below it for a sell)
+    cannot be a fill of this order and is not trusted; the limit is used, as before.
     """
     try:
         average = float(state.get("price") or 0)
     except (TypeError, ValueError):
         average = 0.0
-    return average if average > 0 else float(limit)
+    if average <= 0:
+        rest = _rest_order_state(proc, user_id, order_id, leg.exchange_code)
+        try:
+            average = float(rest.get("price") or 0)
+        except (TypeError, ValueError):
+            average = 0.0
+    if average <= 0:
+        return float(limit)
+    is_buy = leg.action == cfg.BUY
+    if (is_buy and average > float(limit) + 1e-6) or (not is_buy and average < float(limit) - 1e-6):
+        _logger.warning(
+            "live: order %s average %.2f is past its %s limit %.2f; booking the limit",
+            order_id, average, leg.action, limit,
+        )
+        return float(limit)
+    return average
+
+
+# At most one REST quote per contract in this many seconds for pricing an exit, so an exit
+# retried every pass on a dead feed does not spend the broker's per-minute budget.
+EXIT_QUOTE_SPACING_SECONDS = 20.0
+_exit_quote_at: dict[tuple[str, str, str, float, str], float] = {}
+_exit_quote_lock = threading.Lock()
+
+
+def exit_touch(
+    proc: Any,
+    user_id: str,
+    *,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strike_price: float,
+    right: str,
+    is_buy: bool,
+    quote: Any = None,
+    now: Callable[[], float] = time.monotonic,
+) -> Optional[float]:
+    """The touch an exit is priced from: the ask to buy back, the bid to sell.
+
+    Taken from the live feed when `quote` is live. Otherwise one REST quote is asked for
+    (B-23, B-44). An exit with no live bid used to wait for a feed that had just gone dark,
+    which is exactly when the stale-feed exit and a hard square-off fire, and the fly and
+    CAS Bingo priced a missing quote at 0.05, a buy-back that could never fill.
+
+    None means no price could be found; the caller sends nothing and retries later.
+    """
+    if quote is not None and getattr(quote, "live", False):
+        touch = getattr(quote, "ask" if is_buy else "bid", None)
+        if touch and float(touch) > 0:
+            return float(touch)
+    key = (str(user_id), str(exchange_code), str(expiry_display), float(strike_price), str(right))
+    with _exit_quote_lock:
+        last = _exit_quote_at.get(key)
+        if last is not None and now() - last < EXIT_QUOTE_SPACING_SECONDS:
+            return None
+        _exit_quote_at[key] = now()
+    bid, ask = rest_option_touch(
+        proc, user_id, stock_code=stock_code, exchange_code=exchange_code,
+        expiry_display=expiry_display, strike_price=strike_price, right=right,
+    )
+    touch = ask if is_buy else bid
+    return touch if touch and touch > 0 else None
+
+
+def rest_option_touch(
+    proc: Any,
+    user_id: str,
+    *,
+    stock_code: str,
+    exchange_code: str,
+    expiry_display: str,
+    strike_price: float,
+    right: str,
+) -> tuple[Optional[float], Optional[float]]:
+    """(bid, ask) from one ICICI `get_quotes` call, or (None, None)."""
+    from icici_breeze_backend.app.services.processor import _expiry_to_breeze_place_order
+
+    try:
+        sdk = proc.get_session_breeze(user_id)
+        if sdk is None:
+            return None, None
+        response = sdk.get_quotes(
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_date=_expiry_to_breeze_place_order(expiry_display),
+            product_type="options",
+            right="call" if str(right).lower().startswith("c") else "put",
+            strike_price=f"{float(strike_price):g}",
+        )
+    except Exception:  # noqa: BLE001
+        _logger.warning("live: REST quote for an exit failed", exc_info=True)
+        return None, None
+    rows = (response or {}).get("Success") if isinstance(response, dict) else None
+    if not isinstance(rows, list):
+        return None, None
+    row = next(
+        (r for r in rows if isinstance(r, dict) and r.get("exchange_code") == exchange_code),
+        rows[0] if rows and isinstance(rows[0], dict) else None,
+    )
+    if row is None:
+        return None, None
+
+    def _num(value: Any) -> Optional[float]:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        return out if out > 0 else None
+
+    return _num(row.get("best_bid_price")), _num(row.get("best_offer_price"))
+
+
+def no_price_result(quantity: int) -> FillResult:
+    """What a close pass records for a leg it could not price: nothing sent, nothing filled,
+    so `held_legs` keeps the leg and retries it on its back-off."""
+    return FillResult(
+        requested_quantity=int(quantity),
+        error="No live quote and no ICICI quote to price the exit; nothing was sent.",
+    )
 
 
 _TICK = 0.05
@@ -502,3 +684,5 @@ def buyback_price_ladder(
 def reset_state_for_tests() -> None:
     global _tracker
     _tracker = _FillTracker()
+    with _exit_quote_lock:
+        _exit_quote_at.clear()

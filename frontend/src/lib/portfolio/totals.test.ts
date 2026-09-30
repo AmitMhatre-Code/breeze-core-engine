@@ -113,3 +113,27 @@ describe("computePortfolioTotals — live overlay path", () => {
     expect(totals.totalCarry).toBe(-7);
   });
 });
+
+describe("computePortfolioTotals — partly priced (B-36)", () => {
+  it("withholds MTM and Carry while any leg has no figure, and counts those legs", () => {
+    const totals = computePortfolioTotals(
+      [group("a", [row(100, -50), row(null, 20)]), group("b", [row(10, null)])],
+      PORTFOLIO,
+    );
+    expect(totals.totalMtm).toBeNull();
+    expect(totals.mtmUnpricedLegs).toBe(1);
+    expect(totals.totalCarry).toBeNull();
+    expect(totals.carryUnpricedLegs).toBe(1);
+  });
+
+  it("a live group figure covers its own legs", () => {
+    const live = new Map<string, GroupLiveTotal>([["a", { mtm: 90, carry: -30 }]]);
+    const totals = computePortfolioTotals(
+      [group("a", [row(100, -50), row(null, null)]), group("b", [row(10, 5)])],
+      PORTFOLIO,
+      live,
+    );
+    expect(totals.totalMtm).toBe(100);
+    expect(totals.mtmUnpricedLegs).toBe(0);
+  });
+});

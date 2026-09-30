@@ -501,3 +501,15 @@ def test_heartbeat_tick_applies_env_overrides_independently_of_upgrade(monkeypat
                 apply.assert_called_once_with({"TELEGRAM_BOT_USERNAME": "MyBot"}, "v2")
 
     asyncio.run(_run())
+
+
+def test_a_failed_heartbeat_is_retried_after_a_minute_not_a_full_interval(monkeypatch):
+    """B-09: waiting a whole interval after one failure put the next attempt just past the
+    2x staleness line, so a single dropped heartbeat made the deployment read-only."""
+    from icici_breeze_backend.app.services import portal_deployment_heartbeat as hb
+
+    monkeypatch.setattr(hb, "_last_interval_sec", 900)
+    monkeypatch.setattr(hb, "_last_tick_verified", True)
+    assert hb._next_sleep_sec() == 900
+    monkeypatch.setattr(hb, "_last_tick_verified", False)
+    assert hb._next_sleep_sec() == 60

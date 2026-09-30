@@ -272,12 +272,11 @@ class TestDispatcher:
 
     def test_ignores_non_group_reasons(self, monkeypatch):
         calls: list[str] = []
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: calls.append("checked") or True)
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_triggered", lambda rid: calls.append("checked") or True)
         squareoff_dispatcher._handle_group_rule_hit(self._payload(reason="target_hit"))
         assert calls == []  # per-leg/whole-portfolio tiers are unreachable dead code; must be a no-op
 
     def test_all_legs_succeed_marks_fired(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         fired_calls = []
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: fired_calls.append((rid, results)))
         monkeypatch.setattr(
@@ -300,7 +299,6 @@ class TestDispatcher:
         assert results[0]["status"] == "success"
 
     def test_leg_quantity_exceeding_freeze_limit_is_split_into_chunk_orders(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         fired_calls = []
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: fired_calls.append((rid, results)))
         monkeypatch.setattr(
@@ -336,7 +334,6 @@ class TestDispatcher:
         assert results[0]["order_ids"] == ["o1", "o2", "o3"]
 
     def test_one_leg_fails_marks_fire_failed_with_per_leg_detail(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         failed_calls = []
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: (_ for _ in ()).throw(AssertionError))
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
@@ -360,7 +357,6 @@ class TestDispatcher:
         assert "Margin Exceeds" in results[1]["error"]
 
     def test_one_leg_raising_does_not_abort_the_remaining_legs(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         failed_calls = []
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
 
@@ -382,23 +378,29 @@ class TestDispatcher:
         assert results[0]["status"] == "failed"
         assert results[1]["status"] == "success"
 
-    def test_read_only_license_skips_order_placement_entirely(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: False)
-        failed_calls = []
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason: failed_calls.append((rid, results, reason)))
+    def test_read_only_license_does_not_block_the_exit(self, monkeypatch):
+        """B-09: read-only mode stops new trades, never a stop the user armed. It is also
+        what a missed heartbeat looks like, so blocking here stranded open positions."""
+        from icici_breeze_backend.app.services import deployment_license_status as lic
 
-        def _unexpected_processor():
-            raise AssertionError("place_order must not be reached when trading is read-only")
+        monkeypatch.setattr(lic, "trading_mutations_allowed", lambda: False)
+        fired_calls = []
+        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results: fired_calls.append((rid, results)))
+        placed = []
 
-        monkeypatch.setattr(squareoff_dispatcher, "processor", _unexpected_processor)
+        class _FakeBreeze:
+            def place_order(self, **kwargs):
+                placed.append(kwargs)
+                return {"Status": 200, "Success": {"order_id": "X1"}}
+
+        monkeypatch.setattr(squareoff_dispatcher, "processor", lambda: _FakeBreeze())
 
         squareoff_dispatcher._handle_group_rule_hit(self._payload())
 
-        assert len(failed_calls) == 1
-        assert "read-only" in failed_calls[0][1][0]["error"].lower()
+        assert len(placed) == 1
+        assert len(fired_calls) == 1
 
     def test_target_hit_prices_buy_leg_at_a_premium_to_ltp(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
 
         captured = {}
@@ -419,7 +421,6 @@ class TestDispatcher:
         assert captured["aggressive_limit"] is False
 
     def test_stop_loss_hit_prices_sell_leg_at_a_discount_to_ltp(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
 
         captured = {}
@@ -490,7 +491,6 @@ class TestDispatcher:
         assert price == pytest.approx(35.65)
 
     def test_all_legs_succeed_sends_telegram_alert_not_marked_failed(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fired", lambda rid, results, reason=None: None)
         calls = []
         monkeypatch.setattr(
@@ -511,21 +511,7 @@ class TestDispatcher:
         assert kw["failed"] is False
         assert kw["reason"] == "group_target_hit"
 
-    def test_read_only_license_still_sends_telegram_alert_marked_failed(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: False)
-        monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason=None: None)
-        calls = []
-        monkeypatch.setattr(
-            squareoff_dispatcher, "notify_squareoff_fired", lambda user_id, **kw: calls.append((user_id, kw))
-        )
-
-        squareoff_dispatcher._handle_group_rule_hit(self._payload())
-
-        assert len(calls) == 1
-        assert calls[0][1]["failed"] is True
-
     def test_one_leg_failing_still_sends_telegram_alert_marked_failed(self, monkeypatch):
-        monkeypatch.setattr(squareoff_dispatcher, "trading_mutations_allowed", lambda: True)
         monkeypatch.setattr(squareoff_dispatcher.repo, "mark_fire_failed", lambda rid, results, reason=None: None)
         calls = []
         monkeypatch.setattr(
@@ -545,3 +531,20 @@ class TestDispatcher:
 
         assert len(calls) == 1
         assert calls[0][1]["failed"] is True
+
+
+def test_leg_order_ids_can_only_be_rewritten_by_the_rules_owner(db_path):
+    """B-48: `/book/modify-leg-finalize` looked the rule up by id alone."""
+    record = repo.arm_rule(
+        "owner", stock_code="NIFTY", expiry_display="30-Jun-2026", exchange_code="NFO",
+        profit_target_pnl=1000.0, loss_limit_pnl=500.0, target_premium_pct=5, stop_loss_premium_pct=5,
+    )
+    repo.mark_triggered(record.id)
+    repo.mark_fired(record.id, [{
+        "scrip_key": "K", "stock_code": "NIFTY", "strike_price": "25000", "right": "call",
+        "quantity": "75", "status": "success", "order_id": "O1", "order_ids": ["O1"],
+    }])
+    assert repo.update_leg_order_ids(record.id, "K", ["X9"], user_id="someone-else") is False
+    assert repo.get_rule(record.id).leg_results[0].order_ids == ["O1"]
+    assert repo.update_leg_order_ids(record.id, "K", ["O2"], user_id="owner") is True
+    assert repo.get_rule(record.id).leg_results[0].order_ids == ["O2"]

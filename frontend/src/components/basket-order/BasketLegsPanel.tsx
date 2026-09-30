@@ -1,5 +1,6 @@
 "use client";
 
+import { isUnpricedLeg, unpricedNote } from "@/lib/strategy-builder/leg-quote";
 import { useMemo, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { InfoPopover } from "@/components/ui/InfoPopover";
@@ -214,7 +215,7 @@ export function BasketLegsPanel({
                     const aggressive = l.aggressiveLimit ?? false;
                     const premTotal = aggressive
                       ? null
-                      : (l.premiumPerUnit ?? 0) * qtyU;
+                      : isUnpricedLeg(l) ? null : (l.premiumPerUnit ?? 0) * qtyU;
                     const legEntry = legMargins[l.id];
                     return (
                       <tr
@@ -278,7 +279,7 @@ export function BasketLegsPanel({
                         <td
                           className={`px-2.5 py-2 text-right font-mono tabular-nums ${formatSignedLegPremium(premTotal, l.side).toneClass}`}
                         >
-                          {formatSignedLegPremium(premTotal, l.side).text}
+                          {!aggressive && isUnpricedLeg(l) ? "No quote" : formatSignedLegPremium(premTotal, l.side).text}
                         </td>
                         <td className="px-2.5 py-2 text-right font-mono tabular-nums text-muted">
                           {formatLegMargin(l, legEntry, false)}
@@ -318,6 +319,11 @@ export function BasketLegsPanel({
             value={formatIndianMoneyCompact(totalsNetPremium)}
             tone={totalsNetPremium < 0 ? "down" : totalsNetPremium > 0 ? "up" : "foreground"}
           />
+          {unpricedNote(legs) ? (
+            <span className="max-w-[14rem] text-hint text-amber-accent" role="note">
+              {unpricedNote(legs)}
+            </span>
+          ) : null}
           <TotalStat
             label="Net SPAN margin"
             value={

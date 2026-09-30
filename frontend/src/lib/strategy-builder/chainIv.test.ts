@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  blendedSigmaForLegs,
   buildSigmaSmile,
   MAX_TRUSTED_REL_SPREAD,
-  sigmaForLeg,
+  sigmaAtPrice,
   sigmaForStrike,
   type SigmaSmile,
   type SigmaSmiles,
 } from "@/lib/strategy-builder/chainIv";
-import type { ChainSuccess, StrategyLeg } from "@/lib/strategy-builder/types";
+import type { ChainSuccess } from "@/lib/strategy-builder/types";
 
 const SPOT = 23623.0;
 
@@ -102,46 +101,28 @@ describe("sigmaForStrike", () => {
   });
 });
 
-describe("blendedSigmaForLegs", () => {
+describe("sigmaAtPrice", () => {
   const smiles: SigmaSmiles = {
-    call: [],
-    put: [],
+    call: [
+      { x: Math.log(23900 / SPOT), iv: 0.1 },
+      { x: Math.log(24100 / SPOT), iv: 0.1 },
+    ],
+    put: [
+      { x: Math.log(22400 / SPOT), iv: 0.4 },
+      { x: Math.log(22600 / SPOT), iv: 0.4 },
+    ],
   };
 
-  it("degenerates to sigmaForLeg for a single-leg list", () => {
-    const leg: StrategyLeg = { id: "a", right: "Put", side: "Sell", strike: 22750, lots: 20, premiumPerUnit: 16.75 };
-    const withCurve: SigmaSmiles = {
-      call: [],
-      put: [
-        { x: Math.log(22500 / SPOT), iv: 0.25 },
-        { x: Math.log(23000 / SPOT), iv: 0.2 },
-      ],
-    };
-    const blended = blendedSigmaForLegs(withCurve, [leg], SPOT, 65, 0.15);
-    const direct = sigmaForLeg(withCurve, leg, SPOT, 0.15);
-    expect(blended).toBeCloseTo(direct, 10);
+  it("reads the put curve below spot and the call curve at and above it", () => {
+    const at = sigmaAtPrice(smiles, SPOT, 0.15);
+    expect(at(22500)).toBeCloseTo(0.4, 10);
+    expect(at(24000)).toBeCloseTo(0.1, 10);
+    expect(at(SPOT)).toBeCloseTo(0.1, 10);
   });
 
-  it("weights toward the leg with larger notional (quantity x premium)", () => {
-    const smallLeg: StrategyLeg = { id: "small", right: "Put", side: "Sell", strike: 22500, lots: 1, premiumPerUnit: 1 };
-    const bigLeg: StrategyLeg = { id: "big", right: "Call", side: "Sell", strike: 24000, lots: 10, premiumPerUnit: 50 };
-    const withCurves: SigmaSmiles = {
-      call: [
-        { x: Math.log(23900 / SPOT), iv: 0.1 },
-        { x: Math.log(24100 / SPOT), iv: 0.1 },
-      ],
-      put: [
-        { x: Math.log(22400 / SPOT), iv: 0.4 },
-        { x: Math.log(22600 / SPOT), iv: 0.4 },
-      ],
-    };
-    const blended = blendedSigmaForLegs(withCurves, [smallLeg, bigLeg], SPOT, 65, 0.15);
-    // bigLeg's notional (10*50=500) dwarfs smallLeg's (1*1=1), so blended sigma should sit
-    // very close to bigLeg's own (call-side, 0.1) sigma, not smallLeg's (put-side, 0.4).
-    expect(blended).toBeCloseTo(0.1, 2);
-  });
-
-  it("returns fallback for an empty leg list", () => {
-    expect(blendedSigmaForLegs(smiles, [], SPOT, 65, 0.18)).toBe(0.18);
+  it("scales every side by the multiplier and falls back without curves", () => {
+    expect(sigmaAtPrice(smiles, SPOT, 0.15, 1.5)(22500)).toBeCloseTo(0.6, 10);
+    expect(sigmaAtPrice(null, SPOT, 0.18)(22500)).toBe(0.18);
+    expect(sigmaAtPrice({ call: [], put: [] }, SPOT, 0.18)(24000)).toBe(0.18);
   });
 });

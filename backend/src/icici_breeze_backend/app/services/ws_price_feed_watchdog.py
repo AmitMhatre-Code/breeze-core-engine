@@ -129,11 +129,26 @@ def _newest_tick_age_seconds(exchange_code: str, ws_symbols: list[str]) -> float
     return max(0.0, time.time() - latest)
 
 
-def _index_spot_ticking() -> bool:
-    """True if either index has a live spot cached. The key carries a 15s TTL, so
-    its mere presence during market hours means ticks are arriving."""
+def _index_spot_ticking(now: float | None = None) -> bool:
+    """True if either index has a spot cached from a recent tick.
+
+    Judged on the payload, not the key's presence (B-18): the after-hours REST close is
+    cached until the next open, so a key can be present with no tick behind it."""
+    from icici_breeze_backend.app.services.index_spot_feed import (
+        _INDEX_SPOT_TTL_SECONDS,
+        REST_CLOSE_SOURCE,
+    )
+
+    now = time.time() if now is None else now
     for label in ("nifty", "sensex"):
-        if isinstance(cache_get_json(index_spot_key(label)), dict):
+        payload = cache_get_json(index_spot_key(label))
+        if not isinstance(payload, dict) or payload.get("source") == REST_CLOSE_SOURCE:
+            continue
+        try:
+            age = now - float(payload.get("updated_at"))
+        except (TypeError, ValueError):
+            continue
+        if age <= 2 * _INDEX_SPOT_TTL_SECONDS:
             return True
     return False
 
@@ -203,6 +218,31 @@ def _force_index_spot() -> bool | None:
     ok = sync_index_spot_subscriptions(processor(), user_id, force=True)
     _logger.info("price-feed watchdog: forced re-subscribe index spot ok=%s", ok)
     return ok
+
+
+_STOCK_SPOT_TARGET = "__stock_spots__"
+
+
+def _check_stock_spots(now: float) -> None:
+    """Re-arm stock cash-spot feeds that have gone silent mid-session (B-50).
+
+    They used to be re-armed only in the open pass and on a socket rebuild, so one that
+    stopped mid-session stayed silent until the close: Holdings Writer skipped the stock
+    for "no live spot" and Portfolio's spot column fell back to the previous close."""
+    try:
+        from icici_breeze_backend.app.services.index_spot_feed import silent_underlying_spots
+
+        silent = silent_underlying_spots(_SILENCE_SECONDS)
+    except Exception:  # noqa: BLE001
+        _logger.debug("price-feed watchdog: stock spot check failed", exc_info=True)
+        return
+    if not silent or _throttled(_STOCK_SPOT_TARGET, now):
+        return
+    _logger.warning(
+        "price-feed watchdog: %d stock spot feed(s) silent; re-subscribing stock spots", len(silent)
+    )
+    _force_underlying_spots()
+    _mark_forced(_STOCK_SPOT_TARGET, now)
 
 
 def _force_underlying_spots() -> None:
@@ -392,6 +432,8 @@ def _check_silent_feeds(now: float) -> None:
         if outcome is not None:
             results.append(outcome)
         _mark_forced(chain_key, now)
+
+    _check_stock_spots(now)
 
     if _index_spot_ticking():
         _last_ok[_INDEX_SPOT_TARGET] = now

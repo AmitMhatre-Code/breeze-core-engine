@@ -194,3 +194,22 @@ def test_break_order_chunk_request_accepts_aggressive_limit():
         aggressive_limit=True,
     )
     assert body.aggressive_limit is True
+
+
+def test_a_freeze_limit_below_one_lot_is_an_error_not_a_500(proc, monkeypatch):
+    """B-47: `(limit // lot) * lot` was 0, and dividing by it failed the request."""
+    p, mock_breeze = proc
+    monkeypatch.setattr(p, "fetch_qty_limits", lambda *a, **k: 50)
+    monkeypatch.setattr(p, "fetch_lot_size", lambda *a, **k: 75)
+    monkeypatch.setattr(processor_module, "is_market_open", lambda *a, **k: True)
+
+    msgs = p.break_order("user1", "NIFTY", "27-Feb-2025", "options", "call", "24000", "150", "150.50", "buy", exchange_code="NFO")
+    assert any("less than one lot" in m["message"] for m in msgs)
+
+    chunk = p.break_order_place_chunk(
+        "user1", "NIFTY", "27-Feb-2025", "options", "call", "24000", "150", "150.50", "buy",
+        exchange_code="NFO", chunk_index=0,
+    )
+    assert chunk["success"] is False
+    assert "less than one lot" in chunk["terminal_messages"][0]["message"]
+    mock_breeze.place_order.assert_not_called()

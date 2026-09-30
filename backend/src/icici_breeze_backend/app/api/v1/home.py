@@ -187,7 +187,7 @@ async def auth_icici_session(request: Request, body: IciciSessionRequest):
 
 
 @router.get("/updatemaster")
-async def updatemaster(ctx: RequestContext = Depends(get_request_context_or_redirect)):
+def updatemaster(ctx: RequestContext = Depends(get_request_context_or_redirect)):
     breeze.update_ICICImaster()
     return redirect_to_frontend("/dashboard")
 
@@ -575,7 +575,7 @@ async def initiate_session_icici_return(request: Request):
 
 
 @router.get("/home/data", response_model=HomeDataResponse)
-async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
+def get_home_api(ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -620,5 +620,5 @@ async def get_home_api(ctx: RequestContext = Depends(get_request_context)):
 
 
 @router.get("/data", response_model=HomeDataResponse, include_in_schema=False)
-async def get_home_api_legacy_alias(ctx: RequestContext = Depends(get_request_context)):
-    return await get_home_api(ctx)
+def get_home_api_legacy_alias(ctx: RequestContext = Depends(get_request_context)):
+    return get_home_api(ctx)

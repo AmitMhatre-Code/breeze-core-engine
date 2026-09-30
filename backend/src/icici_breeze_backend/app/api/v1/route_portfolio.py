@@ -112,13 +112,13 @@ breeze = processor()
 
 
 @router.get("")
-async def serve_landing(request: Request):
+def serve_landing(request: Request):
     q = request.url.query
     return redirect_to_frontend("/portfolio" + ("?" + q if q else ""))
 
 
 @router.post("")
-async def process_post(
+def process_post(
     body: PortfolioActionRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
 ):
@@ -145,7 +145,7 @@ async def process_post(
 
 
 @router.get("/data", response_model=IciciApiResponse)
-async def get_portfolio_api(ctx: RequestContext = Depends(get_request_context)):
+def get_portfolio_api(ctx: RequestContext = Depends(get_request_context)):
     user_id = ctx.user_id
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")

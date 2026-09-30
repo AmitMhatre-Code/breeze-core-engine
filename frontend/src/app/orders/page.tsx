@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
-import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
+import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import type { ExecutionPreviewLeg } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
@@ -100,6 +100,9 @@ type BookOrderRow = {
   strike_price?: number | string;
   right?: string;
   product_type?: string;
+  /** Set when this untagged order is the only match for a live GTT exit: it may be the
+   * order that GTT fired, or one placed on ICICI's own app (B-51). */
+  possible_gtt_exit_id?: string;
 };
 
 type BookGroup = {
@@ -974,6 +977,9 @@ function ModifyLegDialog({
 }
 
 function OrdersBody() {
+  // Read-only mode blocks modifying and executing, never cancelling: a cancel can only
+  // reduce risk, so this page is not wrapped in the page-wide licence guard.
+  const { guardTradingAction } = useLicenseRestrictions();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { wait } = useRateLimitCountdown();
@@ -2210,7 +2216,7 @@ function OrdersBody() {
                                       className={modifyOutlineBtnSmallClass}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        openModifyForBookGroup(g);
+                                        guardTradingAction(() => openModifyForBookGroup(g));
                                       }}
                                     >
                                       Modify
@@ -2312,6 +2318,14 @@ function OrdersBody() {
                                               >
                                                 {o.status}
                                               </span>
+                                              {o.possible_gtt_exit_id ? (
+                                                <span
+                                                  className="ml-1.5 text-hint text-amber-accent"
+                                                  title={`Matches GTT ${o.possible_gtt_exit_id} on contract and side. ICICI does not say which order a GTT fired, so this may be that GTT's exit or an order placed on ICICI's own app.`}
+                                                >
+                                                  May be the GTT exit
+                                                </span>
+                                              ) : null}
                                             </td>
                                             <td className="px-1 py-2.5 align-middle text-center">
                                               <button
@@ -2415,7 +2429,7 @@ function OrdersBody() {
                             <button
                               type="button"
                               className={modifyOutlineBtnSmallClass}
-                              onClick={() => openModifyForBookGroup(g)}
+                              onClick={() => guardTradingAction(() => openModifyForBookGroup(g))}
                             >
                               Modify
                             </button>
@@ -2790,7 +2804,7 @@ function OrdersBody() {
                                                     modifyOutlineBtnSmallClass
                                                   }
                                                   onClick={() =>
-                                                    openModifyForRuleLeg(row, leg)
+                                                    guardTradingAction(() => openModifyForRuleLeg(row, leg))
                                                   }
                                                 >
                                                   Modify
@@ -2992,7 +3006,7 @@ function OrdersBody() {
                                   <button
                                     type="button"
                                     className={modifyOutlineBtnSmallClass}
-                                    onClick={() => openModifyForRuleLeg(row, leg)}
+                                    onClick={() => guardTradingAction(() => openModifyForRuleLeg(row, leg))}
                                   >
                                     Modify
                                   </button>
@@ -3078,9 +3092,7 @@ function OrdersBody() {
 export default function OrdersPage() {
   return (
     <AppShell>
-      <RevokedTradingPageGuard>
-        <OrdersBody />
-      </RevokedTradingPageGuard>
+      <OrdersBody />
     </AppShell>
   );
 }

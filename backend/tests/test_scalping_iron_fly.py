@@ -469,6 +469,8 @@ def _drive(monkeypatch, proc, now=datetime.datetime(2026, 9, 8, 12, 0)):
     monkeypatch.setattr(
         runtime, "_feed_health", lambda bot_type, cfg: FeedHealth(warm=True, stale=False, stale_seconds=0.0)
     )
+    # The position's own contracts are ticking (B-24 judges staleness on them).
+    monkeypatch.setattr(runtime, "_leg_tick_age", lambda leg, now=None: 0.0)
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.market_calendar.is_trading_day", lambda now=None: True
     )
@@ -557,3 +559,45 @@ def test_a_live_mode_fly_dispatches_real_orders_not_simulated_fills(env, monkeyp
 
     assert dispatched == [1], "live mode must take the live path"
     assert simulated == [], "live mode must never fall through to paper fills"
+
+
+# --- B-42: sizing keeps the largest verified size ----------------------------------------
+
+
+def _sized(monkeypatch, margin_for_lots, ceiling=100000.0):
+    from icici_breeze_backend.app.domain.bots import IronFlyScalperConfig
+
+    calls = []
+
+    def fake_margin(proc, user_id, *, legs, **kw):
+        lots = legs[0][2] // 75
+        calls.append(lots)
+        return margin_for_lots(lots)
+
+    monkeypatch.setattr(fly, "margin_for_mixed_legs", fake_margin)
+    q = Quote(10.0, 11.0, 10.5, "websocket")
+    legs = (fly.FlyLeg("put", 23800, cfg.BUY, q), fly.FlyLeg("put", 24000, cfg.SELL, q))
+    config = IronFlyScalperConfig(margin_ceiling_inr=ceiling, min_lots=1)
+    lots, margin, problem = fly.size_fly(object(), USER, config, "10-Sep-2026", legs, 75)
+    return lots, margin, problem, calls
+
+
+def test_sizing_finds_a_large_size_that_fits_when_the_estimate_is_too_high(monkeypatch):
+    """The old walk stepped down one lot per call and fell back to 1 lot when it ran out."""
+    # 1 lot 5,000; margin grows faster than linearly, so the 20-lot estimate is far over.
+    lots, margin, problem, calls = _sized(monkeypatch, lambda n: 5000.0 * n + 300.0 * n * n)
+    assert problem is None
+    assert lots == 11  # 91,300 fits; 12 lots is 103,200
+    assert margin == 91300.0
+    assert len(calls) <= fly._MAX_SIZING_CALLS
+
+
+def test_sizing_takes_the_estimate_when_margin_is_linear(monkeypatch):
+    lots, margin, _problem, calls = _sized(monkeypatch, lambda n: 5000.0 * n)
+    assert lots == 20 and margin == 100000.0
+    assert calls == [1, 20]
+
+
+def test_an_unpriceable_probe_never_becomes_the_size(monkeypatch):
+    lots, margin, _problem, _calls = _sized(monkeypatch, lambda n: 5000.0 if n == 1 else None)
+    assert lots == 1 and margin == 5000.0

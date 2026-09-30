@@ -261,8 +261,10 @@ def fire_autonomous(
             detail=detail,
         )
         # Only what actually placed has taken margin. Reporting the full allocation would
-        # make the next bot size against capital that was never committed.
-        placed_codes = {(r.stock_code, r.right) for r in ok}
+        # make the next bot size against capital that was never committed. A leg that got
+        # some chunks out before it errored is not `ok`, but those chunks hold margin too,
+        # so any leg with an order counts in full (B-46).
+        placed_codes = {(r.stock_code, r.right) for r in results if r.order_ids}
         return round(
             sum(
                 float(leg.span_margin or 0) + float(leg.elm_margin or 0)

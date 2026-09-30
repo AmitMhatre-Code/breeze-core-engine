@@ -98,10 +98,22 @@ class TestRegisterAndSync:
         count = engine.sync_positions_from_response("u1", response)
         assert count == 1
 
-    def test_non_200_response_clears_tracking(self):
+    def test_non_200_response_leaves_tracking_alone(self):
+        """B-06: a failed fetch says nothing about what is held, so it must not disarm."""
         engine.sync_positions_from_response("u1", {"Status": 200, "Success": [_row()]})
         assert engine.tracked_leg_count() == 1
-        engine.sync_positions_from_response("u1", {"Status": 400, "Error": "boom"})
+        for failed in (
+            {"Status": 400, "Error": "boom", "Success": None},
+            {"Status": 429, "Error": "Limit exceed", "Success": None},
+            {"Status": 200, "Success": None},
+            None,
+        ):
+            assert engine.sync_positions_from_response("u1", failed) == 0
+            assert engine.tracked_leg_count() == 1
+
+    def test_broker_answer_of_no_positions_clears_tracking(self):
+        engine.sync_positions_from_response("u1", {"Status": 200, "Success": [_row()]})
+        engine.sync_positions_from_response("u1", {"Status": 200, "Success": [], "Error": None})
         assert engine.tracked_leg_count() == 0
 
     def test_re_registering_carries_forward_previously_set_rule(self):
@@ -746,3 +758,49 @@ class TestArmedRuleFeedCoverage:
         engine.run_pnl_tick()
 
         assert engine.armed_rule_feed_health() == {"armed_legs": 1, "unevaluable_legs": 1}
+
+
+class TestSlowDispatchDoesNotFreezeOtherRules:
+    """B-16: one group's exit used to run inside the tick, so nothing else was evaluated
+    until its orders (and any throttle back-off) were done."""
+
+    def test_a_second_breach_is_dispatched_while_the_first_is_still_placing(self, monkeypatch):
+        import threading
+
+        monkeypatch.setattr(engine, "_dispatch_inline", False)
+        legs = [
+            engine.leg_from_position_row(
+                user, _row(action="Buy", quantity="50", average_price="100", strike_price="25000")
+            )
+            for user in ("u1", "u2")
+        ]
+        for user, leg, rule in (("u1", legs[0], "slow"), ("u2", legs[1], "fast")):
+            engine.register_positions(user, [leg])
+            engine.set_group_rule(
+                user, rule, stock_code="NIFTY", expiry_display="30-Jun-2026", stop_loss_pnl=200.0
+            )
+        monkeypatch.setattr(engine, "_fetch_quotes", lambda keys: {k: _q("80") for k in keys})
+        monkeypatch.setattr(engine, "is_tick_stream_stale", lambda: False)
+
+        release = threading.Event()
+        fast_done = threading.Event()
+        seen: list[str] = []
+
+        def listener(payload):
+            seen.append(payload["rule_id"])
+            if payload["rule_id"] == "slow":
+                release.wait(5)  # a dispatch stuck on a throttle back-off
+            else:
+                fast_done.set()
+
+        engine.register_rule_hit_listener(listener)
+        try:
+            engine.run_pnl_tick()  # returns at once; both hits are on their own threads
+            assert fast_done.wait(2), "the second group was not dispatched while the first was busy"
+            assert engine.dispatches_in_flight() == 1
+        finally:
+            release.set()
+            engine.unregister_rule_hit_listener(listener)
+            for user in ("u1", "u2"):
+                engine.clear_positions(user)
+        assert sorted(seen) == ["fast", "slow"]

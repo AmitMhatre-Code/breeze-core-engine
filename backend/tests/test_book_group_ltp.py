@@ -176,7 +176,7 @@ def test_get_book_data_skips_customer_and_margin_prechecks(mock_broker_env):
     ctx.broker_token = "tok"
 
     with patch.object(route_book, "breeze", mock_proc):
-        out = asyncio.run(route_book.get_book_data(context=ctx))
+        out = route_book.get_book_data(context=ctx)
 
     mock_proc.get_orders.assert_called_once()
     assert out.orders_failed is False
@@ -232,7 +232,7 @@ def test_break_chunk_evicts_snapshot_on_success(mock_broker_env):
         "icici_breeze_backend.app.api.v1.route_order.get_icici_rate_limit_pause_seconds",
         return_value=1.0,
     ):
-        asyncio.run(route_order.post_break_chunk(body=body, context=ctx, _trading_ok=None))
+        route_order.post_break_chunk(body=body, context=ctx, _trading_ok=None)
 
     assert get_snapshot("U1", "tok") is None
 
@@ -259,6 +259,6 @@ def test_cancel_commit_evicts_snapshot_on_success(mock_broker_env):
     )
 
     with patch.object(route_book.breeze, "build_cancel_order_messages", return_value=[]):
-        asyncio.run(route_book.post_cancel_commit(body=body, context=ctx, _trading_ok=None))
+        route_book.post_cancel_commit(body=body, context=ctx, _trading_ok=None)
 
     assert get_snapshot("U1", "tok") is None

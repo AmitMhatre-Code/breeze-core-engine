@@ -190,6 +190,8 @@ This document records **why** the modern stack is shaped the way it is. It is no
 - The portal and this instance communicate over an unreliable link (customer network, portal downtime); the app must have a defined behavior for "I haven't heard from the portal in a while" rather than assuming the last good answer still holds.
 - Fail-closed (degrade to read-only) is the safer default for a licensing control — a network blip should not silently leave trading permanently enabled for a revoked or expired license.
 
+**Read-only blocks entering, never leaving** (2026-09-30, B-09): see [#57](#57-a-stop-is-never-disarmed-or-blocked-by-something-that-says-nothing-about-the-position). Fail-closed is about not enabling trading. Exits, cancels and switching things off stay open.
+
 **Trade-off**: A sufficiently long portal outage puts a legitimately-licensed instance into read-only mode. Acceptable given the self-hosted, single-tenant deployment model and the 300–3600s heartbeat cadence (worst case: read-only after roughly 10–120 minutes of silence). See [breeze-saas-portal/docs/license-management.md](../../../breeze-saas-portal/docs/license-management.md) for the signing side of this contract.
 
 ---
@@ -803,6 +805,8 @@ Every writer follows the same rule: the autonomous sweep (`bots/scheduler`), bot
 
 **What is not proven.** The link between the ingest and the WebSocket drop is a timing correlation on production logs, and the theory is GIL starvation of the socket threads on two slow vCPUs. On a fast multi-core Mac, a 10 ms ticker thread saw no starvation (max gap 25 ms) with the refresh in-process. If disconnects continue at SPAN slots after this ships, the cause is elsewhere (CPU credit exhaustion, the network), not the GIL.
 
+**Revised 2026-09-30 (B-57).** A start-up load now runs in market hours too, when the loaded reference data is older than the latest concluded session. It runs in the background on the data already loaded and flips to the new version once it is whole (`scheduler._start_startup_refresh`). The reason is that the scrip master decides which contracts are tradeable and so which get a quote at all. An instance started mid-session on an old master left newly tradeable strikes unquoted for the whole session, which costs more than the ingest's competition with the tick feed. The scheduled catch-up retries (`_scrip_retry_due`, `_bhavcopy_retry_due`) still never run in market hours. The in-process batch publish's memory cost now applies to a mid-session start as well; watch for OOM kills after a mid-session restart. See [#60](#60-reference-data-is-judged-on-its-age-not-its-presence-and-a-missing-quote-is-never-a-price-of-zero).
+
 ## 47. BSE SPAN files are found by probing their names, not through BSE's API
 
 **Decision** (2026-09-26). `span_sources.resolve_latest_bse_span_archive` probes `www.bseindia.com/bsedata/Risk_Automate/BSERISK{yyyymmdd}-{mode}.ZIP` directly, newest first (`FINAL`, `04`, `03`, `02`, `01`, `00`), walking back a day at a time as the NSE resolver does, and never calls `api.bseindia.com`.
@@ -969,3 +973,87 @@ The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short 
 **Why.** One Redis timeout ended the `ws-tick-cache` thread for the life of the process. Chains fell back to stand-ins and bots paused, while the watchdog saw silent keys, re-subscribed a healthy socket successfully every minute and never escalated. The same success-only counting meant a socket that was connected but delivering nothing was never rebuilt. Stamping at write time made ticks that had waited in a backlog look fresh, which undercut the age rule B-04 introduced.
 
 **What it does not cover.** A process that started while Redis was down stays on its in-memory store until restart (B-32). The accepted-but-silent rebuild needs every feed on the socket silent for about two minutes, so it does nothing for one dead subscription among live ones; the per-chain re-subscribe still covers that.
+
+---
+
+## 57. A stop is never disarmed or blocked by something that says nothing about the position
+
+**Decision** (2026-09-30, bug audit B-06, B-07, B-09, B-15, B-16, B-38, B-40). Five things used to stop an armed PB/SL rule from evaluating, or its exit from going out, without the position having changed. None of them does now:
+
+- **A failed positions fetch leaves the P&L registry alone** (B-06). `sync_positions_from_response` clears a user's legs only on a broker answer of "no positions". A throttle, a lost session or an SDK error returns without touching them. Portfolio and Dashboard polls used to wipe the registry on every failed poll, which disarmed every SG for that user while ICICI was in trouble.
+- **Every Breeze REST call has a timeout** (B-07). `requests_patch.BREEZE_HTTP_TIMEOUT` is 5 s to connect and 30 s to read, a code constant. `breeze_connect` passes none, and the call runs with the per-user broker lock held (#24), so one stalled read froze every later call for that user. A timed-out call is counted and spaced like one that answered. A timed-out placement is `outcome_unknown` and is looked up (#54, #55).
+- **Read-only licence mode blocks entering, never leaving** (B-09). The SG dispatcher no longer checks the licence. Routes marked `allowed_in_read_only` stay open: cancel-one, cancel-commit, the legacy `/book` cancel, cancel-orphan-orders, SG arm and disarm, GTT cancel and parked-order deletes. `PATCH /bots/config` is open for `{"enabled": false}` alone. A heartbeat that fails is retried after 60 s (`_FAILED_RETRY_SEC`), not after a full interval; the 2x staleness rule of #16 is unchanged.
+- **An LTP of 0 is not a price** (B-15). `ws_tick_pipeline._pnl_mark` values a zero-`last` tick at the bid/ask mid when both sides are quoted, and otherwise writes an empty LTP so the leg reads as unpriced. `_parse_quote_fields` reads any stored LTP of 0 or less as no quote.
+- **Nothing slow runs inside the rule loop or on the order-socket thread** (B-16, B-38). A breached SG is dispatched on its own thread (`_dispatch_rule_hit`), the Day's P&L reconcile runs on its own thread (`_start_reconcile`), and the SG completion check leaves the SDK's callback thread (`_complete_off_the_feed_thread`). Each copies the caller's context, and orders stay serialized by the per-user lock.
+- **Call spacing is measured with the broker lock held** (B-40), so calls that queued on the lock no longer fire back to back when it frees.
+
+**Why.** Each of these was a gate written for a different purpose (a cache refresh, a licensing control, a serialized transport) that ended up deciding whether a stop could work. `scalping/decide.py` already stated the rule for the bots: a gate that blocks entering must never block leaving.
+
+**What it does not cover.** Handlers that do broker work still run on the event loop (B-08). The mid used for an untraded contract can be far from a fair price when the book is wide. Tests run the three background hand-offs inline (`conftest._inline_background_dispatch`); the threaded paths have one test each.
+
+---
+
+## 58. A bot decides from what the broker says it holds and paid, and an exit is priced even when the feed is not
+
+**Decision** (2026-09-30, bug audit B-11, B-12, B-22, B-23, B-24, B-25, B-26, B-29, B-33, B-42, B-43, B-44, B-45, B-46). Each of these bots read a figure that stood in for the broker's answer: a failed call read as "nothing", an estimate read as verified, a limit read as a fill. The rules now:
+
+- **Unreadable is not zero.** Holdings Writer raises `BotScanError` when positions cannot be read (`_read_positions`), so the covered-call cap fails closed. Older shorts count in the target lot size rounded up. An edited call is capped at `deliverable_quantity` (held less blocked), and a leg whose margin cannot be priced is dropped at approval. A leg that placed some chunks counts its margin as committed.
+- **A size is ICICI's answer, never a scaled estimate.** Bot 2 re-asks ICICI for each smaller size (`_MARGIN_RECHECKS`). Iron Fly sizing narrows between the largest size ICICI confirmed and the smallest it refused, within `_MAX_SIZING_CALLS` (6), and keeps the largest confirmed.
+- **A fill is booked at ICICI's average.** `live._traded_price` makes one `get_order_detail` call when the fill came from the feed, whose average is garbage. An average on the wrong side of the limit is not trusted.
+- **Orders are sliced under the freeze quantity.** `live.place_and_confirm` splits a leg with `placement.qty_per_order` and stops at the first slice that does not fill completely.
+- **An exit is priced even on a dead feed.** `live.exit_touch` takes the ask or bid from a live quote. Otherwise it makes one REST `get_quotes`, spaced `EXIT_QUOTE_SPACING_SECONDS` (20 s) per contract. With no price the leg is not sent (`no_price_result`) and `held_legs` retries it on its back-off. This is the one place a stand-in price is used, and only to leave (#52 still governs entering, marking and stopping).
+- **Staleness is the position's own.** With a position open, the scalper's feed staleness is the oldest tick among the contracts the stop depends on (the fly's shorts, the Long Scalper's leg), or the socket's own, whichever is worse (`runtime._position_feed`).
+- **A bot's stop is armed like a manual one.** Bot 2's `arm_exit_rule` reads positions fresh and records the legs snapshot (`_arm_baseline_legs`), and pins the chain. Legs added later Reset the stop instead of being pooled. An armed SG whose expiry date has passed is marked Completed (`expire_lapsed_rules`) at startup and on every guard pass. Exit arming's REST path checks the order book for a fill before it arms.
+- **Bookkeeping uses the right day.** CAS Bingo settles an expired cycle only at the expiry day's close (`market.settlement_level`), or waits. Exit arming reads the close from the exchange calendar.
+- **A scalper's SG-conflict disarm is written to the row** as Reset, so it neither shows Armed nor comes back at restart.
+
+**Why.** Each figure was right on the day it was written and wrong on the first day the broker answered differently. The bots run unattended, so a silent stand-in is not caught by anyone watching.
+
+**What it does not cover.** The Long Scalper still counts a missing bid as zero unrealized P&L in the daily-loss test. Bot 2's `placement.py` still reads an unknown placement answer as a refusal. Whether `get_order_detail` fills `average_price` for a partly filled order is unverified. The per-leg tick age comes from the websocket cell, so a contract the chain builder is not building reads as stale.
+
+---
+
+## 59. The shared feed socket recovers itself, and nothing but shutdown tears it down
+
+**Decision** (2026-09-30, bug audit B-18, B-30, B-31, B-32, B-37, B-41, B-50). One WebSocket carries every quote, the index spots, the stock spots, the futures and the order feed. The rules for keeping it right:
+
+- **Only app shutdown closes it.** The Playground's "disconnect" (`ws_disconnect_playground`) now releases the subscriptions the Playground made (`_playground_holders`) and keeps the socket and its session. The route asks for the risk acceptance like the other Playground socket routes. `_disconnect_everything` is shutdown's.
+- **A socket built on an earlier session is rebuilt.** `_ensure_ws` compares the SDK's session owner stamp with the user's current broker token and calls `reconnect_ws` when they differ. An unknown token rebuilds nothing.
+- **A dead order socket is reset before re-arming.** breeze_connect clears `orderconnect` only on `ws_disconnect()` or an unsubscribe, not on a dropped connection. The order-feed watchdog checks the socket.io client, and after two passes with it down resets the handler and flag so the subscribe reconnects.
+- **Presence is not ticking.** The after-hours index close is cached until the next open with `source: rest_close` and a `session_date`, and the watchdog judges the index feed on a recent `updated_at`. Stock spots have their own tick clock (`_underlying_last_seen`) and are re-armed mid-session when silent for the watchdog's silence window.
+- **Lookups do not accumulate.** Holder-less single-contract subscriptions carry a last-asked time and are released after 15 idle minutes (`release_idle_lookups`), unless another holder still holds them.
+- **Redis comes back.** A process on the in-memory fallback probes Redis every 30 s off the caller's thread, copies across what it wrote while Redis was away (never over a key Redis already holds; sets are merged), and switches.
+
+**Why.** Each case left a healthy-looking process on a dead or split feed until a restart, and the watchdogs could not see it: the key was present, the subscribe was accepted, or the watchdog's own session had been cleared.
+
+**What it does not cover.** Whether ICICI drops sockets at session expiry (B-31) and caps subscriptions per session (B-41) is still unobserved; both fixes are safe either way. Writes made to memory while the copy runs are lost at the switch.
+
+---
+
+## 60. Reference data is judged on its age, not its presence, and a missing quote is never a price of zero
+
+**Decision** (2026-09-30, bug audit B-57, B-27, B-49, B-35).
+
+- **The scrip master has an age.** `orchestrator.scrip_master_is_stale` compares the last successful scrip ingest in the ingest history with the close of the latest concluded session. `stale_reference_sources` adds the options exchanges whose bhavcopy is behind.
+- **Start-up loads whatever is stale.** With complete but stale data, a background load starts at once and retries after 2 and 10 minutes until nothing is stale. With incomplete data the load stays on the start-up path as before, and a failure is retried the same way. This runs in market hours too (#46, revised).
+- **A missed or failed scheduled load is caught up.** From the scheduled time of the latest concluded session, and outside market hours, a stale scrip master triggers a full versioned load every 30 minutes until it is current (trigger mode `catch_up`). This is a full load, not a patch into the live generation, because the tradeable set, tokens and lot sizes change together.
+- **The age is shown.** The Settings reference-data panel warns when a source is stale (`stale_sources`, `scrip_last_loaded_at`). The navbar health line says so before the open.
+- **No date is not today.** A bhavcopy restored with no stored date is published undated and reads as stale.
+- **A leg with no quote is not ₹0.** Basket and Strategy Builder leave an unpriced leg out of the net premium and the payoff figures, label it **No quote**, and say how many legs were left out (`lib/strategy-builder/leg-quote.ts`). Execute was already blocked for a non-aggressive leg with no price.
+- **The self-heal marker is on the data volume** (`DATA_PATH`), so its 2-attempt cap holds across the recreate it counts.
+
+**What it does not cover.** When ICICI publishes each day's master is still not known. A start-up before that time loads the previous file and records it as current, so the next catch-up waits for the following session's close. The readiness gate still checks only contracts the master calls tradeable.
+
+---
+
+## 61. Broker work runs off the event loop, and every app order carries the app's tag
+
+**Decision** (2026-09-30, bug audit B-08, B-36, B-47, B-48, B-51, B-56).
+
+- **Handlers that do broker work are plain functions** (B-08). Every handler in `route_portfolio`, `route_dashboard`, `route_book`, `route_order` and `route_bots`, and `/home/data` and `/updatemaster`, is a `def`, so FastAPI runs it on the threadpool. The event loop keeps the P&L rule loop, the quote flush, the watchdogs and the heartbeat. Context variables set by dependencies and middleware reach the handler. Two things the event loop used to give for free are now explicit: `route_order._one_placement_at_a_time` serializes `POST /order` and `/order/break-chunk` per user, so the idempotency check cannot race a retry, and the processor's error list is per thread.
+- **Every app order is tagged** (B-51). `processor.place_order` sends `order_intents.new_tag()` when the caller passes no remark. Tags are eight lowercase letters starting `bm` (`is_app_tag`). The GTT APIs take no remark, so a GTT's own order cannot be recognised. An untagged order that is the only match for a live GTT's contract and side stays in the Order Book with `possible_gtt_exit_id` and is never moved out of it.
+- **Partial totals are withheld** (B-36), as #27 requires. Portfolio's Total MTM and Total carry show "—" and "Waiting on N unpriced legs" while any leg has no figure.
+- **PoP reads each side's volatility** (B-56). `estimateProbabilityOfProfit` accepts a volatility per price level, and `chainIv.sigmaAtPrice` gives the put curve below spot and the call curve at and above it. All six callers use it, and the Basket IV shock scales both sides. `blendedSigmaForLegs` is removed. The frontend now reproduces the backend's per-side figures on the three SENSEX strangles in the audit.
+- **Smaller fixes.** A freeze limit below one lot is an error message, not a 500 (B-47). `update_leg_order_ids` checks the rule's owner (B-48).
+
+**What it does not cover.** Other routers (`route_settings`, `route_strategy_builder` and the rest) still run on the event loop. What remark, if any, ICICI puts on a GTT's fired order is unobserved; if it is recognisable, the GTT match can become positive.

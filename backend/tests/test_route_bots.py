@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+from icici_breeze_backend.app.api.v1 import route_bots
 from icici_breeze_backend.app.api.v1.route_bots import router
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.db.bots_migrate import (
@@ -129,8 +130,14 @@ def test_enabling_is_blocked_in_read_only_mode(tmp_path, monkeypatch):
     app.include_router(router, prefix="/bots")
     app.dependency_overrides[get_request_context] = _ctx
     app.dependency_overrides[require_trading_not_revoked] = _revoked
+    monkeypatch.setattr(route_bots, "require_trading_not_revoked", _revoked)
+    url = f"/bots/config?bot_type={BOT_HOLDINGS_WRITER}"
     with TestClient(app) as c:
-        assert c.patch(f"/bots/config?bot_type={BOT_HOLDINGS_WRITER}", json={"enabled": True}).status_code == 403
+        assert c.patch(url, json={"enabled": True}).status_code == 403
+        assert c.patch(url, json={"config": {}}).status_code == 403
+        assert c.patch(url, json={"enabled": False, "priority": 3}).status_code == 403
+        # Switching off, and nothing else, is never refused (B-09).
+        assert c.patch(url, json={"enabled": False}).status_code == 200
         # Reading stays available -- read-only is a real state, not an outage.
         assert c.get("/bots/list").status_code == 200
 

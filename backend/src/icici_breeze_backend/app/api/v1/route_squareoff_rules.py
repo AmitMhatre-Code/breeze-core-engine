@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+from icici_breeze_backend.app.api.deps_license import allowed_in_read_only
 from icici_breeze_backend.app.auth.context import RequestContext, get_request_context
 from icici_breeze_backend.app.domain.squareoff_rule import (
     ArmSquareOffRuleRequest,
@@ -112,7 +112,7 @@ def _attach_live_legs(user_id: str, rules: list[SquareOffRuleRecord]) -> None:
 async def arm_rule(
     body: ArmSquareOffRuleRequest,
     ctx: RequestContext = Depends(get_request_context),
-    _: None = Depends(require_trading_not_revoked),
+    _: None = Depends(allowed_in_read_only),
 ):
     stock_code = body.stock_code.strip().upper()
     expiry_display = normalize_expiry_display(body.expiry_date.strip())
@@ -185,7 +185,7 @@ async def arm_rule(
 async def cancel_orphan_orders(
     rule_id: str,
     ctx: RequestContext = Depends(get_request_context),
-    _: None = Depends(require_trading_not_revoked),
+    _: None = Depends(allowed_in_read_only),
 ):
     """Cancel this Reset SG's still-live exit orders.
 
@@ -242,7 +242,7 @@ async def cancel_orphan_orders(
 async def disarm_rule(
     rule_id: str,
     ctx: RequestContext = Depends(get_request_context),
-    _: None = Depends(require_trading_not_revoked),
+    _: None = Depends(allowed_in_read_only),
 ):
     existing = repo.get_rule(rule_id)
     if existing is None:

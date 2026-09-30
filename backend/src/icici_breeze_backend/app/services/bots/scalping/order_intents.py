@@ -121,10 +121,28 @@ def in_flight(cycle_id: str) -> bool:
 _TAG_LENGTH = 8
 
 
+# Every order the app places starts its remark with this, so an order carrying it is known
+# to be the app's own and never taken for one a GTT fired (B-51). Still eight lowercase
+# letters, the only remark shape checked against ICICI live.
+APP_TAG_PREFIX = "bm"
+
+
 def new_tag() -> str:
     """A fresh `user_remark` for one order: what `locate_order` finds it by if its answer is
     lost. Random, so two sends of the same contract, side and quantity never look alike."""
-    return "".join(secrets.choice(string.ascii_lowercase) for _ in range(_TAG_LENGTH))
+    tail = _TAG_LENGTH - len(APP_TAG_PREFIX)
+    return APP_TAG_PREFIX + "".join(secrets.choice(string.ascii_lowercase) for _ in range(tail))
+
+
+def is_app_tag(remark: Any) -> bool:
+    """True for a remark `new_tag` could have produced."""
+    text = str(remark or "").strip()
+    return (
+        len(text) == _TAG_LENGTH
+        and text.startswith(APP_TAG_PREFIX)
+        and text.isalpha()
+        and text.islower()
+    )
 
 
 def intent_fields(

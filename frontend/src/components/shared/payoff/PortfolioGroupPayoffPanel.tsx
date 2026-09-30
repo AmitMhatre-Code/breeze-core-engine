@@ -10,7 +10,7 @@ import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { chainLotSize, rowsToStrategyLegs } from "@/lib/portfolio/legsFromRows";
 import {
   atmSigmaFromChain,
-  blendedSigmaForLegs,
+  sigmaAtPrice,
   buildSigmaSmiles,
   sigmaForLeg,
 } from "@/lib/strategy-builder/chainIv";
@@ -199,7 +199,7 @@ export function PortfolioGroupPayoffPanel({
         ? estimateProbabilityOfProfit(
             spot,
             T,
-            blendedSigmaForLegs(sigmaSmiles, legs, spot, lotSize, sigma),
+            sigmaAtPrice(sigmaSmiles, spot, sigma),
             legs,
             lotSize,
           )

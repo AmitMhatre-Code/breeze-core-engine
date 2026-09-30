@@ -19,6 +19,7 @@ startup by `app.services.squareoff_dispatcher`.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import threading
 import time
@@ -175,13 +176,17 @@ def clear_positions(user_id: str) -> None:
 def sync_positions_from_response(user_id: str, response: dict[str, Any] | None) -> int:
     """Register/refresh tracked legs from a `processor.get_positions()`-shaped
     response. Best-effort: a malformed row is skipped, never raised, so a
-    single bad leg can't break the portfolio API response it rides in on."""
+    single bad leg can't break the portfolio API response it rides in on.
+
+    A response that is not a readable position list -- a throttle, a lost session, an SDK
+    error -- says nothing about what is held, so the registry is left as it was (B-06).
+    Clearing it there disarmed every SG for the user exactly when ICICI was in trouble.
+    Only a broker answer of "no positions" empties it."""
     rows: Any = None
     if isinstance(response, dict) and response.get("Status") == 200:
         success = response.get("Success")
         rows = success.get("positions") if isinstance(success, dict) else success
     if not isinstance(rows, list):
-        clear_positions(user_id)
         return 0
     legs: list[PositionLeg] = []
     for row in rows:
@@ -500,6 +505,8 @@ def _parse_quote_fields(fields: dict[str, str] | None) -> tuple[float | None, fl
         ltp = float(ltp_raw) if ltp_raw not in (None, "") else None
     except (TypeError, ValueError):
         ltp = None
+    if ltp is not None and ltp <= 0:
+        ltp = None  # an untraded contract, not a price of zero (B-15)
     ts: float | None
     try:
         ts = float(ts_raw) if ts_raw not in (None, "") else None
@@ -648,12 +655,48 @@ def _build_group_leg_order(leg: PositionLeg, *, pnl: float, ltp: float) -> dict[
     }
 
 
-def _dispatch_rule_hit(payload: dict[str, Any]) -> None:
+# Tests set this to run a rule hit on the calling thread, so they can assert on its result.
+_dispatch_inline = False
+_dispatch_threads: list[threading.Thread] = []
+
+
+def _run_rule_hit_listeners(payload: dict[str, Any]) -> None:
     for listener in list(_rule_hit_listeners):
         try:
             listener(payload)
         except Exception:
             _logger.exception("PNL rule-hit listener failed for payload=%s", payload)
+
+
+def _dispatch_rule_hit(payload: dict[str, Any]) -> None:
+    """Hand a breached rule to its listeners on a thread of its own (B-16).
+
+    Placing a group's exits takes seconds, and up to about a minute per chunk when ICICI
+    throttles. Run inside the tick, that froze evaluation of every other rule for as long,
+    so a second group breaching in the same move was not even detected until the first had
+    finished. The rule was already removed from the registry by the caller, so it cannot
+    fire twice, and orders stay serialized by the per-user broker lock (#24).
+    """
+    if _dispatch_inline:
+        _run_rule_hit_listeners(payload)
+        return
+    # The caller's context carries the request-less user scope the broker layer reads.
+    ctx = contextvars.copy_context()
+    thread = threading.Thread(
+        target=ctx.run,
+        args=(_run_rule_hit_listeners, payload),
+        name=f"sg-dispatch-{payload.get('rule_id')}",
+        daemon=True,
+    )
+    with _registry_lock:
+        _dispatch_threads[:] = [t for t in _dispatch_threads if t.is_alive()]
+        _dispatch_threads.append(thread)
+    thread.start()
+
+
+def dispatches_in_flight() -> int:
+    with _registry_lock:
+        return sum(1 for t in _dispatch_threads if t.is_alive())
 
 
 def _check_group_drift(user_id: str, group_rule: "GroupRule") -> bool:

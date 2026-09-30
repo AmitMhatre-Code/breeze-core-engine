@@ -30,6 +30,9 @@ _INTERVAL_MIN_SEC = 300
 _INTERVAL_MAX_SEC = 3600
 
 _last_interval_sec: int = _INTERVAL_MIN_SEC
+# How soon a heartbeat that did not verify is tried again.
+_FAILED_RETRY_SEC = 60
+_last_tick_verified: bool = True
 
 
 def is_ist_market_hours(now: datetime | None = None) -> bool:
@@ -334,7 +337,9 @@ async def heartbeat_tick() -> int:
     """Phone home; run upgrade when portal approves. Returns next sleep interval (seconds)."""
     global _last_interval_sec
 
+    global _last_tick_verified
     policy = await post_heartbeat()
+    _last_tick_verified = bool(policy)
     if policy:
         _apply_policy_from_body(policy)
 
@@ -355,6 +360,16 @@ def heartbeat_loop_enabled() -> bool:
     return True
 
 
+def _next_sleep_sec() -> int:
+    """The full interval after a verified heartbeat, a short retry after a failed one.
+
+    The licence reads as stale past 2x the interval. Waiting a whole interval after one
+    failure put the next attempt just beyond that line, so a single dropped heartbeat
+    produced a read-only window (B-09). The staleness rule itself is unchanged.
+    """
+    return _last_interval_sec if _last_tick_verified else min(_FAILED_RETRY_SEC, _last_interval_sec)
+
+
 async def run_heartbeat_loop() -> None:
     """Periodic heartbeat loop (startup heartbeat runs separately in app lifespan)."""
     global _last_interval_sec
@@ -362,11 +377,13 @@ async def run_heartbeat_loop() -> None:
     logger.info("portal heartbeat loop started (interval=%ss)", _last_interval_sec)
     while True:
         try:
-            await asyncio.sleep(_last_interval_sec)
+            await asyncio.sleep(_next_sleep_sec())
             interval = await heartbeat_tick()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
+            global _last_tick_verified
+            _last_tick_verified = False
             logger.warning("portal heartbeat tick error: %s", exc)
             interval = _last_interval_sec
         _last_interval_sec = _clamp_interval(interval)

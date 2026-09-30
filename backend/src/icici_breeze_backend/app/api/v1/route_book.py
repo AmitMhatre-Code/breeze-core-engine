@@ -5,7 +5,10 @@ from fastapi.responses import JSONResponse
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import today_ist_date
-from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+from icici_breeze_backend.app.api.deps_license import (
+    allowed_in_read_only,
+    require_trading_not_revoked,
+)
 from icici_breeze_backend.app.api.frontend_redirect import json_redirect, redirect_to_frontend
 from icici_breeze_backend.app.auth.context import (
     RequestContext,
@@ -54,13 +57,13 @@ breeze = processor()
 
 
 @router.get("")
-async def serve_landing(request: Request):
+def serve_landing(request: Request):
     q = request.url.query
     return redirect_to_frontend("/orders" + ("?" + q if q else ""))
 
 
 @router.get("/data", response_model=BookDataResponse)
-async def get_book_data(
+def get_book_data(
     start: str | None = None,
     end: str | None = None,
     context: RequestContext = Depends(get_request_context),
@@ -148,7 +151,7 @@ async def get_book_data(
 
 
 @router.post("/group-ltp", response_model=BookGroupLtpResponse)
-async def post_book_group_ltp(
+def post_book_group_ltp(
     body: BookGroupLtpRequest,
     context: RequestContext = Depends(get_request_context),
 ):
@@ -164,10 +167,10 @@ async def post_book_group_ltp(
 
 
 @router.post("")
-async def process_post(
+def process_post(
     body: BookActionRequest,
     context: RequestContext = Depends(get_request_context_or_redirect),
-    _trading_ok: None = Depends(require_trading_not_revoked),
+    _trading_ok: None = Depends(allowed_in_read_only),
 ):
     user_id = context.user_id
 
@@ -191,10 +194,10 @@ async def process_post(
 
 
 @router.post("/cancel-one")
-async def post_cancel_one(
+def post_cancel_one(
     body: BookCancelOneRequest,
     context: RequestContext = Depends(get_request_context),
-    _trading_ok: None = Depends(require_trading_not_revoked),
+    _trading_ok: None = Depends(allowed_in_read_only),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -209,10 +212,10 @@ async def post_cancel_one(
 
 
 @router.post("/cancel-commit")
-async def post_cancel_commit(
+def post_cancel_commit(
     body: BookCancelCommitRequest,
     context: RequestContext = Depends(get_request_context),
-    _trading_ok: None = Depends(require_trading_not_revoked),
+    _trading_ok: None = Depends(allowed_in_read_only),
 ):
     if not context.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -286,7 +289,7 @@ def _leg_orders_and_plan(
 
 
 @router.post("/modify-leg-step", response_model=LegModifyStepResponse)
-async def post_modify_leg_step(
+def post_modify_leg_step(
     body: LegModifyStepRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -347,7 +350,7 @@ async def post_modify_leg_step(
 
 
 @router.post("/modify-leg-finalize", response_model=LegModifyResponse)
-async def post_modify_leg_finalize(
+def post_modify_leg_finalize(
     body: LegModifyFinalizeRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -377,7 +380,9 @@ async def post_modify_leg_finalize(
             m.order_id for m in body.modified
         }
         final_ids = list(untouched) + [m.order_id for m in body.modified] + [p.order_id for p in body.placed]
-        squareoff_repo.update_leg_order_ids(body.rule_id, body.scrip_key, final_ids)
+        squareoff_repo.update_leg_order_ids(
+            body.rule_id, body.scrip_key, final_ids, user_id=context.user_id
+        )
 
     contract_label = f"{body.stock_code}-{body.expiry_date}-{body.strike_price}-{body.right}"
     result = {
@@ -409,7 +414,7 @@ async def post_modify_leg_finalize(
 
 
 @router.get("/parked-orders", response_model=ParkedOrderListResponse)
-async def list_parked_orders(
+def list_parked_orders(
     context: RequestContext = Depends(get_request_context),
 ):
     """User-scoped parked (draft) orders for Order Book."""
@@ -418,7 +423,7 @@ async def list_parked_orders(
 
 
 @router.post("/parked-orders", response_model=ParkedOrderListResponse)
-async def create_parked_orders(
+def create_parked_orders(
     body: ParkedOrderCreateRequest,
     context: RequestContext = Depends(get_request_context),
     _trading_ok: None = Depends(require_trading_not_revoked),
@@ -434,7 +439,7 @@ async def create_parked_orders(
 
 
 @router.patch("/parked-orders/{order_id}")
-async def patch_parked_order(
+def patch_parked_order(
     order_id: str,
     body: ParkedOrderPatchRequest,
     context: RequestContext = Depends(get_request_context),
@@ -460,10 +465,10 @@ async def patch_parked_order(
 
 
 @router.delete("/parked-orders/{order_id}")
-async def delete_parked_order_route(
+def delete_parked_order_route(
     order_id: str,
     context: RequestContext = Depends(get_request_context),
-    _trading_ok: None = Depends(require_trading_not_revoked),
+    _trading_ok: None = Depends(allowed_in_read_only),
 ):
     ok = breeze.delete_parked_order(context.user_id, order_id.strip())
     if not ok:
@@ -472,10 +477,10 @@ async def delete_parked_order_route(
 
 
 @router.post("/parked-orders/delete-many")
-async def delete_parked_orders_many(
+def delete_parked_orders_many(
     body: ParkedOrderIdsRequest,
     context: RequestContext = Depends(get_request_context),
-    _trading_ok: None = Depends(require_trading_not_revoked),
+    _trading_ok: None = Depends(allowed_in_read_only),
 ):
     n = breeze.delete_parked_orders(context.user_id, body.ids)
     return JSONResponse({"deleted": n})

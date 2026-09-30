@@ -30,8 +30,8 @@ Tests ICICI's live quote stream for an F&O contract. Ticks only arrive during ma
 | **Connect** | Opens the connection to ICICI's stream. |
 | Subscription fields and **Subscribe** | Choose the contract and subscription type, then subscribe. Only filled-in fields are sent. |
 | **Start tick stream** | Shows the ticks arriving. **Pause capture** / **Resume capture** freezes the display. |
-| **Release subscriptions** | Stops the ticks but keeps the connection open. Prefer this to disconnecting. |
-| **Disconnect socket** | Closes the connection. ICICI may treat frequent connect and disconnect cycles as abuse, so use it sparingly. |
+| **Release subscriptions** | Stops the ticks for this subscription and keeps the connection open. |
+| **Release all Playground feeds** | Stops every subscription made from the Playground. The connection stays open, because the rest of the app (Profit Booking / Stop Loss, bots, the order feed) shares it. |
 | **ICICI command log** and **Latest operation** | Every command and ICICI's reply, with copy buttons. |
 
 ## Delete Account

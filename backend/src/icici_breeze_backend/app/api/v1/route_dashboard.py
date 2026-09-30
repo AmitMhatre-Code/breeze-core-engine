@@ -20,7 +20,7 @@ breeze = processor()
 
 @router.get("/ws-health")
 @router.get("/ws-health/")
-async def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_context)):
     """Combined NIFTY+SENSEX system-chain WS health for the navbar status dot.
 
     No `ctx.broker_token` check (unlike the /vix* routes below) -- this reads
@@ -33,7 +33,7 @@ async def get_dashboard_ws_health(ctx: RequestContext = Depends(get_request_cont
 
 @router.get("/index-quotes")
 @router.get("/index-quotes/")
-async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_context)):
     """Live NIFTY/SENSEX spot + day's change for the navbar ticker.
 
     Same process-wide-state rationale as /ws-health above -- no broker_token check
@@ -52,7 +52,7 @@ async def get_dashboard_index_quotes(ctx: RequestContext = Depends(get_request_c
 
 @router.get("/live")
 @router.get("/live/")
-async def get_dashboard_live(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_live(ctx: RequestContext = Depends(get_request_context)):
     """WS-fed live values for the Dashboard tiles: Open P&L (from the portfolio
     P&L engine's ~2s repricing) and Day's P&L (from `dashboard_day_pnl_live`).
 
@@ -91,7 +91,7 @@ async def get_dashboard_live(ctx: RequestContext = Depends(get_request_context))
 
 @router.get("/bootstrap")
 @router.get("/bootstrap/")
-async def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_context)):
     """Orchestrated home + portfolio + vix headline + options (no VIX history)."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -100,7 +100,7 @@ async def get_dashboard_bootstrap(ctx: RequestContext = Depends(get_request_cont
 
 @router.get("/day-pnl")
 @router.get("/day-pnl/")
-async def get_dashboard_day_pnl(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_day_pnl(ctx: RequestContext = Depends(get_request_context)):
     """Lazy: mark-to-market Day's P&L (realized + unrealized) from positions + today's trades.
 
     Loaded after first paint so /bootstrap stays fast; the tile renders a loading state
@@ -113,7 +113,7 @@ async def get_dashboard_day_pnl(ctx: RequestContext = Depends(get_request_contex
 
 @router.get("/vix")
 @router.get("/vix/")
-async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
     """Fast: current VIX, NIFTY spot, ~3m INDVIX history. Use /vix/options for ATM IV, expected range."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -122,7 +122,7 @@ async def get_dashboard_vix(ctx: RequestContext = Depends(get_request_context)):
 
 @router.get("/vix/history")
 @router.get("/vix/history/")
-async def get_dashboard_vix_history(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_vix_history(ctx: RequestContext = Depends(get_request_context)):
     """~3 calendar months of INDVIX daily closes (lazy-loaded chart data)."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -131,7 +131,7 @@ async def get_dashboard_vix_history(ctx: RequestContext = Depends(get_request_co
 
 @router.get("/vix/options")
 @router.get("/vix/options/")
-async def get_dashboard_vix_options(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_vix_options(ctx: RequestContext = Depends(get_request_context)):
     """NIFTY spot, next expiry, ATM IV, expected range (1σ), put:call OI ratio."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
@@ -140,7 +140,7 @@ async def get_dashboard_vix_options(ctx: RequestContext = Depends(get_request_co
 
 @router.get("/vix/options/atm")
 @router.get("/vix/options/atm/")
-async def get_dashboard_vix_options_atm(ctx: RequestContext = Depends(get_request_context)):
+def get_dashboard_vix_options_atm(ctx: RequestContext = Depends(get_request_context)):
     """First expiry only: NIFTY, ATM IV, expected range."""
     if not ctx.broker_token:
         raise HTTPException(status_code=401, detail="ICICI broker token missing; re-login required")
