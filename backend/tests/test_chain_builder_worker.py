@@ -3,14 +3,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, close_redis
-from icici_breeze_backend.app.services.chain_build_service import build_canonical_chain
+from icici_breeze_backend.app.services.chain_build_service import (
+    _normalize_and_cache_cell,
+    build_canonical_chain,
+)
 from icici_breeze_backend.app.services.reference_data.keys import (
     canonical_chain_key,
+    ws_quote_key,
     ws_raw_quote_key,
 )
 from icici_breeze_backend.app.db.redis_client import cache_set_json
@@ -83,7 +88,7 @@ def test_build_canonical_chain_from_raw_tick(mock_strikes, monkeypatch, tmp_path
     raw = _raw_nifty_call_25000()
     cache_set_json(
         ws_raw_quote_key(cfg.NFO, 71474),
-        {"received_at": 1.0, "raw": raw},
+        {"received_at": time.time(), "raw": raw},
         ex=300,
     )
     payload = build_canonical_chain("NIFTY", cfg.NFO, "30-Jun-2026", lot_size=75)
@@ -152,7 +157,7 @@ def test_build_canonical_chain_bfo_symbol_only_tick(mock_strikes, monkeypatch, t
     raw = _raw_bfo_call_77000()
     cache_set_json(
         ws_raw_quote_key(cfg.BFO, 820390),
-        {"received_at": 1.0, "raw": raw},
+        {"received_at": time.time(), "raw": raw},
         ex=300,
     )
     payload = build_canonical_chain("BSESEN", cfg.BFO, "02-Jul-2026", lot_size=20)
@@ -163,4 +168,83 @@ def test_build_canonical_chain_bfo_symbol_only_tick(mock_strikes, monkeypatch, t
     cached = cache_get_json(canonical_chain_key(cfg.BFO, "BSESEN", "02-Jul-2026"))
     assert cached is not None
     assert cached["chain_rows"][0]["call"]["ltp"] == 227.35
+    close_redis()
+
+
+# --- B-04: a rebuild must not make an old tick look freshly quoted -----------------------
+
+
+def _store_nifty_tick(age_seconds: float) -> float:
+    received_at = time.time() - age_seconds
+    cache_set_json(
+        ws_raw_quote_key(cfg.NFO, 71474),
+        {"received_at": received_at, "raw": _raw_nifty_call_25000()},
+        ex=300,
+    )
+    return received_at
+
+
+def _build_nifty_cell() -> dict | None:
+    return _normalize_and_cache_cell(
+        exchange_code=cfg.NFO,
+        stock_code="NIFTY",
+        expiry_display="30-Jun-2026",
+        strike=25000.0,
+        right="call",
+        lot_size=75,
+    )
+
+
+def test_cell_keeps_the_time_its_tick_arrived(monkeypatch, tmp_path):
+    close_redis()
+    _seed_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 120)
+    received_at = _store_nifty_tick(110)
+
+    cell = _build_nifty_cell()
+
+    assert cell is not None
+    assert cell["updated_at"] == received_at
+    key = ws_quote_key(cfg.NFO, "NIFTY", "30-Jun-2026", 25000.0, "call")
+    assert cache_get_json(key)["updated_at"] == received_at
+    close_redis()
+
+
+def test_cell_lives_only_as_long_as_its_tick(monkeypatch, tmp_path):
+    close_redis()
+    _seed_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 120)
+    _store_nifty_tick(110)
+    ttls: list[int] = []
+    import icici_breeze_backend.app.services.chain_build_service as cbs
+
+    real_set = cbs.cache_set_json
+    monkeypatch.setattr(
+        cbs, "cache_set_json", lambda key, value, ex=None: (ttls.append(ex), real_set(key, value, ex=ex))[1]
+    )
+
+    _build_nifty_cell()
+    _build_nifty_cell()
+
+    # 10 s of life left, and a second rebuild does not extend it.
+    assert len(ttls) == 2 and all(1 <= ttl <= 10 for ttl in ttls)
+    close_redis()
+
+
+def test_tick_past_its_life_builds_no_cell(monkeypatch, tmp_path):
+    close_redis()
+    _seed_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 120)
+    _store_nifty_tick(121)
+    stats: dict[str, int] = {}
+
+    cell = _normalize_and_cache_cell(
+        exchange_code=cfg.NFO, stock_code="NIFTY", expiry_display="30-Jun-2026",
+        strike=25000.0, right="call", lot_size=75, stats=stats,
+    )
+
+    assert cell is None
+    assert stats == {"stale_raw": 1}
+    key = ws_quote_key(cfg.NFO, "NIFTY", "30-Jun-2026", 25000.0, "call")
+    assert cache_get_json(key) is None
     close_redis()

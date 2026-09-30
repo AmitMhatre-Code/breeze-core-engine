@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any, Callable
 
@@ -33,14 +34,33 @@ def _option_type_for_right(right: str) -> str:
     return cfg.CALL if str(right).lower().startswith("c") else cfg.PUT
 
 
-def _read_raw_tick(segment_code: str, token: int) -> dict[str, Any] | None:
+def ws_cell_max_age_seconds() -> float:
+    """How old a tick may be and still be served as a `websocket` quote.
+
+    The raw tick's own lifetime: once a contract has not ticked for this long it is no
+    longer a live quote, and readers fall through to the labelled stand-ins.
+    """
+    try:
+        return max(1.0, float(getattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 120) or 120))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _read_raw_tick(segment_code: str, token: int) -> tuple[dict[str, Any], float] | None:
+    """The stored tick and the time it arrived, or None."""
     from icici_breeze_backend.app.services.reference_data.keys import ws_raw_quote_key
 
     stored = cache_get_json(ws_raw_quote_key(segment_code, token))
     if not isinstance(stored, dict):
         return None
     raw = stored.get("raw")
-    return raw if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        received_at = float(stored.get("received_at"))
+    except (TypeError, ValueError):
+        return None
+    return raw, received_at
 
 
 def _parsed_matches_contract(
@@ -81,12 +101,21 @@ def _normalize_and_cache_cell(
         if stats is not None:
             stats["token_miss"] = stats.get("token_miss", 0) + 1
         return None
-    raw = _read_raw_tick(exchange_code, token)
-    if raw is None:
+    stored = _read_raw_tick(exchange_code, token)
+    if stored is None:
         if stats is not None:
             stats["raw_miss"] = stats.get("raw_miss", 0) + 1
         return None
-    result = normalize_icici_tick(raw)
+    raw, received_at = stored
+    # A rebuild re-reads the same tick every couple of seconds. The cell keeps the time the
+    # tick arrived and only the life that tick has left, so rebuilding never makes a quiet
+    # contract look freshly quoted (B-04).
+    remaining = ws_cell_max_age_seconds() - (time.time() - received_at)
+    if remaining <= 0:
+        if stats is not None:
+            stats["stale_raw"] = stats.get("stale_raw", 0) + 1
+        return None
+    result = normalize_icici_tick(raw, updated_at=received_at)
     if result is None:
         if stats is not None:
             stats["normalize_miss"] = stats.get("normalize_miss", 0) + 1
@@ -108,7 +137,7 @@ def _normalize_and_cache_cell(
     cache_set_json(
         ws_quote_key(exchange_code, stock_code, expiry_display, strike, right),
         cell,
-        ex=cfg.WEBSOCKET_QUOTE_TTL_SECONDS,
+        ex=max(1, min(int(cfg.WEBSOCKET_QUOTE_TTL_SECONDS), math.ceil(remaining))),
     )
     return cell
 

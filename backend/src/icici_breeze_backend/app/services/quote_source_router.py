@@ -126,6 +126,16 @@ def _cell_updated_at(cell: Any) -> float | None:
     return ts if ts > 0 else None
 
 
+def _ws_cell_expired(cell: Any, now: float | None = None) -> bool:
+    """True when a websocket cell's tick is older than a live quote may be."""
+    from icici_breeze_backend.app.services.chain_build_service import ws_cell_max_age_seconds
+
+    ts = _cell_updated_at(cell)
+    if ts is None:
+        return False
+    return ((time.time() if now is None else now) - ts) >= ws_cell_max_age_seconds()
+
+
 def _max_cell_updated_at(chain_rows: list[Any]) -> float | None:
     best: float | None = None
     for row in chain_rows:
@@ -623,6 +633,10 @@ def _fetch_cell_from_cache(
         ensure_underlying_spot_subscription(proc, user_id, exchange_code, stock_code)
         key = ws_quote_key(exchange_code, stock_code, expiry_display, strike, right_key)
         cell = cache_get_json(key)
+        if cell and _ws_cell_expired(cell):
+            # Judged on the tick's own time, not the key's presence: an old tick is a
+            # stand-in's job, and must not be served as a live websocket quote (B-04).
+            cell = None
         if cell:
             if lot_val:
                 cell["lot_size"] = lot_val

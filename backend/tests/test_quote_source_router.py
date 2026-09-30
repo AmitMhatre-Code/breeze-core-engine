@@ -1002,3 +1002,16 @@ def test_single_contract_lookup_keeps_the_underlying_spot_live(_open, _cache, _s
     cell, source = _fetch_cell_from_cache(proc, "u1", "NFO", "VISMEG", "29-Sep-2026", 105.0, "call")
     assert source == "websocket"
     mock_spot.assert_called_once_with(proc, "u1", "NFO", "VISMEG")
+
+
+# --- B-04: an old websocket cell is not served as a live quote ---------------------------
+
+
+def test_ws_cell_expired_judges_the_ticks_own_time(monkeypatch):
+    from icici_breeze_backend.app.services import quote_source_router as qsr
+
+    monkeypatch.setattr(cfg, "WS_RAW_QUOTE_TTL_SECONDS", 120)
+    assert qsr._ws_cell_expired({"updated_at": 1_000.0}, now=1_119.0) is False
+    assert qsr._ws_cell_expired({"updated_at": 1_000.0}, now=1_120.0) is True
+    # No timestamp to judge: left to the key's own TTL.
+    assert qsr._ws_cell_expired({"ltp": 1.0}, now=1_120.0) is False
