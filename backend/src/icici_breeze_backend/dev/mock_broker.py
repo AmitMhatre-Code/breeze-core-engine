@@ -9,9 +9,11 @@ import threading
 
 from icici_breeze_backend.dev.fixtures import responses as fx
 from icici_breeze_backend.dev.mock_market_data import (
+    depth_tick_fields,
     enrich_contract_fields,
     futures_identity,
     INDEX_SIGMA_PCT,
+    is_mock_depth_symbol,
     is_mock_futures_symbol,
     register_mock_futures_contract,
     resolve_underlying_spot,
@@ -314,6 +316,13 @@ class MockBreezeSdk:
                         sigma_pct=INDEX_SIGMA_PCT,
                     )
                     tick.update(futures_identity(token))
+                elif is_mock_depth_symbol(token):
+                    # The depth room shares its quote room's walk, so the book sits around the
+                    # same price the chain shows.
+                    quote_token = token.replace(".2!", ".1!", 1)
+                    state = running_state.setdefault(quote_token, seed_running_state(quote_token))
+                    tick = depth_tick_fields(token, state)
+                    tick.update(enrich_contract_fields(quote_token))
                 else:
                     state = running_state.setdefault(token, seed_running_state(token))
                     tick = step_live_tick_fields(token, state)

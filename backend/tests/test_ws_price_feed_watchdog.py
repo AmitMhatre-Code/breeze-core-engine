@@ -572,9 +572,12 @@ class TestForcedChainSubscription:
         monkeypatch.setattr(bwm, "_sdk", sdk)
         monkeypatch.setattr(bwm, "_connected", True)
         monkeypatch.setattr(bwm, "_sdk_user_id", "u1")
-        monkeypatch.setattr(bwm, "_holders", {"h1": set(_TOKENS)})
-        monkeypatch.setattr(bwm, "_sub_holders", {t: {"h1"} for t in _TOKENS})
-        monkeypatch.setattr(bwm, "_sub_meta", {t: {"stock_token": [t]} for t in _TOKENS})
+        # A chain holder holds each contract's quote room and its depth room (the liquidity
+        # check's, docs/liquidity-checks-plan.md).
+        held = set(_TOKENS) | {t.replace(".1!", ".2!") for t in _TOKENS}
+        monkeypatch.setattr(bwm, "_holders", {"h1": set(held)})
+        monkeypatch.setattr(bwm, "_sub_holders", {t: {"h1"} for t in held})
+        monkeypatch.setattr(bwm, "_sub_meta", {t: {"stock_token": [t]} for t in held})
         monkeypatch.setattr(
             bwm, "list_ws_stock_tokens_for_liquid_contracts", lambda *a, **k: list(_TOKENS)
         )
@@ -594,7 +597,8 @@ class TestForcedChainSubscription:
             )
             is True
         )
-        sdk.subscribe_feeds.assert_called_once()
+        # Quotes, then depth.
+        assert sdk.subscribe_feeds.call_count == 2
 
 
 class TestArmedRuleChainCoverage:

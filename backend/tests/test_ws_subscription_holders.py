@@ -18,6 +18,9 @@ def _reset_bwm(monkeypatch) -> None:
     monkeypatch.setattr(bwm, "_playground_events", [])
     monkeypatch.setattr(bwm, "_playground_event_seq", 0)
     monkeypatch.setattr(bwm, "_last_error", None)
+    from icici_breeze_backend.app.services.liquidity import subscriptions as depth_subs
+
+    depth_subs.reset_state_for_tests()
 
 
 def _mock_sdk(monkeypatch):
@@ -89,27 +92,32 @@ def test_sync_holder_chain_replaces_strikes(monkeypatch):
         lambda exchange_code, stock_code, expiry_display: list(state["tokens"]),
     )
 
+    def depth(tokens):
+        return [t.replace("4.1!", "4.2!") for t in tokens]
+
     ok = bwm.sync_holder_chain_subscriptions(
         proc, "u1", "h1", "NIFTY", "NFO", "30-Jun-2026", [24000.0, 25000.0]
     )
     assert ok is True
-    assert sdk.subscribe_feeds.call_count == 1
-    assert sdk.subscribe_feeds.call_args.kwargs.get("stock_token") == tokens_v1
+    # Quotes first, then each contract's depth room for the liquidity check.
+    assert sdk.subscribe_feeds.call_count == 2
+    assert sdk.subscribe_feeds.call_args_list[0].kwargs.get("stock_token") == tokens_v1
+    assert sdk.subscribe_feeds.call_args_list[1].kwargs.get("stock_token") == depth(tokens_v1)
 
     state["tokens"] = list(tokens_v2)
     ok = bwm.sync_holder_chain_subscriptions(
         proc, "u1", "h1", "NIFTY", "NFO", "30-Jun-2026", [25000.0, 26000.0]
     )
     assert ok is True
-    assert sdk.unsubscribe_feeds.call_count == 2
     unsubscribed = [
         tok
         for call in sdk.unsubscribe_feeds.call_args_list
         for tok in (call.kwargs.get("stock_token") or [])
     ]
-    assert unsubscribed == ["4.1!1", "4.1!2"]
-    assert sdk.subscribe_feeds.call_count == 2
-    assert sdk.subscribe_feeds.call_args.kwargs.get("stock_token") == ["4.1!5", "4.1!6"]
+    assert sorted(unsubscribed) == sorted(["4.1!1", "4.1!2", *depth(["4.1!1", "4.1!2"])])
+    assert sdk.subscribe_feeds.call_count == 4
+    assert sdk.subscribe_feeds.call_args_list[2].kwargs.get("stock_token") == ["4.1!5", "4.1!6"]
+    assert sdk.subscribe_feeds.call_args_list[3].kwargs.get("stock_token") == depth(["4.1!5", "4.1!6"])
 
 
 def test_release_unknown_holder_is_idempotent():

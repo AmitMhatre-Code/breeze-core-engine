@@ -4,6 +4,8 @@ import { isUnpricedLeg, unpricedNote } from "@/lib/strategy-builder/leg-quote";
 import type { ReactNode } from "react";
 import { InfoPopover } from "@/components/ui/InfoPopover";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { LiquidityWarningIcon } from "@/components/shared/legs/LiquidityWarningIcon";
+import type { LiquidityWarning } from "@/lib/liquidity";
 import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
 import { LegQuantityHeader } from "@/components/shared/legs/LegQuantityHeader";
 import { cloneLeg, LegRowActions } from "@/components/shared/legs/LegRowActions";
@@ -45,6 +47,7 @@ export function StrategyLegsPanel({
   onCalculateMargins,
   calculatingMargins,
   calculateMarginsDisabled,
+  liquidityWarnings,
 }: {
   sectionTitle?: string;
   lotSize: number;
@@ -75,6 +78,8 @@ export function StrategyLegsPanel({
   onCalculateMargins: () => void;
   calculatingMargins: boolean;
   calculateMarginsDisabled: boolean;
+  /** ⚠ beside a quantity the live book cannot absorb near the LTP, keyed by leg id. */
+  liquidityWarnings?: Record<string, LiquidityWarning>;
 }) {
   const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
   return (
@@ -155,20 +160,23 @@ export function StrategyLegsPanel({
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <LegQuantityInput
-                          legId={l.id}
-                          lots={l.lots}
-                          lotSize={lotSize}
-                          maxDigits={8}
-                          onLotsChange={(newLots) =>
-                            onLegsChange((prev) =>
-                              prev.map((x) =>
-                                x.id === l.id ? { ...x, lots: newLots } : x,
-                              ),
-                            )
-                          }
-                          className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
-                        />
+                        <span className="flex items-center gap-1">
+                          <LegQuantityInput
+                            legId={l.id}
+                            lots={l.lots}
+                            lotSize={lotSize}
+                            maxDigits={8}
+                            onLotsChange={(newLots) =>
+                              onLegsChange((prev) =>
+                                prev.map((x) =>
+                                  x.id === l.id ? { ...x, lots: newLots } : x,
+                                ),
+                              )
+                            }
+                            className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
+                          />
+                          <LiquidityWarningIcon warning={liquidityWarnings?.[l.id] ?? null} />
+                        </span>
                       </td>
                       <td className="px-2 py-1.5">
                         <LegAggressivePriceInput

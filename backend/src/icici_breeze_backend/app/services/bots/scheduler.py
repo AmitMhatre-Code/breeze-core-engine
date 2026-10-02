@@ -582,6 +582,7 @@ def _fire(
                     "order_ids": r.order_ids,
                     "rule_id": r.rule_id,
                     "error": r.error,
+                    "liquidity_note": r.liquidity_note,
                 }
                 for r in results
             ]
@@ -623,6 +624,8 @@ def _fire(
         lines = []
         for r in placed:
             line = _describe(r)
+            if r.liquidity_note:
+                line += f" — {r.liquidity_note}"
             if not r.ok:
                 line += f" — {r.error}"
             elif r.rule_id is None and not r.arm_pending:

@@ -34,6 +34,56 @@ class PlacementResult:
         return self.error is None and bool(self.order_ids)
 
 
+def fit_legs_to_book(user_id: str, bot_type: str, legs: list[Any]) -> tuple[list[Any], list[str]]:
+    """Shrink each independent short leg (a `ProposalLeg`) to what its live bids absorb, and
+    drop a leg that cannot take one lot (docs/liquidity-checks-plan.md, decision 8).
+
+    Returns the legs to place and one note per leg that changed. Each leg is its own position --
+    a covered call on one holding says nothing about another's book -- so they are fitted one
+    by one. Margin, premium and delivery exposure scale with the lots, which keeps them a
+    ceiling for the smaller size.
+    """
+    from icici_breeze_backend.app.services.liquidity import check as liquidity
+
+    out: list[Any] = []
+    notes: list[str] = []
+    for leg in legs:
+        fit = liquidity.fit_lots(
+            [
+                liquidity.SizedLeg(
+                    leg.exchange_code, leg.stock_code, leg.expiry_display,
+                    float(leg.strike_price), leg.right, liquidity.SELL,
+                )
+            ],
+            int(leg.lots),
+            int(leg.lot_size),
+        )
+        what = f"{leg.stock_code} {leg.strike_price:g} {'CE' if leg.right == 'call' else 'PE'}"
+        note = liquidity.note_bot_fit(user_id, bot_type, what, fit)
+        if note:
+            notes.append(note)
+        if fit.refused:
+            continue
+        if fit.shrunk:
+            scale = fit.lots / leg.lots
+
+            def scaled(v: Optional[float]) -> Optional[float]:
+                return None if v is None else round(float(v) * scale, 2)
+
+            leg = leg.model_copy(
+                update={
+                    "lots": fit.lots,
+                    "quantity": fit.lots * int(leg.lot_size),
+                    "premium_total": round(float(leg.premium_total) * scale, 2),
+                    "span_margin": scaled(leg.span_margin),
+                    "elm_margin": scaled(leg.elm_margin),
+                    "delivery_exposure": scaled(leg.delivery_exposure),
+                }
+            )
+        out.append(leg)
+    return out, notes
+
+
 def qty_per_order(proc: Any, stock_code: str, expiry_display: str, exchange_code: str, total_qty: int) -> int:
     """Largest lot-aligned quantity that fits under the contract's freeze limit."""
     try:

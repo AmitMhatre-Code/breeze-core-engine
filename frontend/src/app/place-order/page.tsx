@@ -47,6 +47,8 @@ import {
   inferChainBuildPhase,
 } from "@/components/shared/market-data/ChainBuildStatus";
 import { sb } from "@/lib/strategy-builder/ui";
+import { LiquidityWarningIcon } from "@/components/shared/legs/LiquidityWarningIcon";
+import { useLiquidityCheck, warningFor } from "@/lib/liquidity";
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import type {
   ChainRow,
@@ -426,6 +428,19 @@ function PlaceOrderPageInner() {
     chainSuccess?.expiry_display,
   ]);
 
+  // Before Buy/Sell is chosen both sides are judged, and the warning names the side that fails.
+  const liquidityQ = useLiquidityCheck({
+    exchangeCode: segment,
+    stockCode,
+    expiryDisplay: chainSuccess?.expiry_display?.trim() || expiryDate,
+    lotSize: lotSizeForHints,
+    legs:
+      effectiveStrike != null && qtyNum > 0
+        ? [{ ref: "ticket", strike: effectiveStrike, right, side: lockedOrderSide, quantity: qtyNum }]
+        : [],
+  });
+  const liquidityWarning = warningFor(liquidityQ.data, "ticket");
+
   function openPreview(side: OrderSide) {
     if (
       effectiveStrike == null ||
@@ -651,20 +666,23 @@ function PlaceOrderPageInner() {
                           · lot {lotSizeForHints.toLocaleString("en-IN")}
                         </span>
                       ) : null}
-                      <input
-                        type="number"
-                        min={1}
-                        className={`${sb.input} mt-1.5`}
-                        value={quantity}
-                        onChange={(e) => setQuantity(e.target.value)}
-                        onBlur={() => {
-                          if (!lotSizeForHints || lotSizeForHints <= 0) return;
-                          const n = parseNum(quantity);
-                          if (!Number.isFinite(n) || n <= 0) return;
-                          setQuantity(String(snapQuantityToLotMultiple(n, lotSizeForHints)));
-                        }}
-                        placeholder="e.g. 65"
-                      />
+                      <span className="mt-1.5 flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          className={`${sb.input} min-w-0 flex-1`}
+                          value={quantity}
+                          onChange={(e) => setQuantity(e.target.value)}
+                          onBlur={() => {
+                            if (!lotSizeForHints || lotSizeForHints <= 0) return;
+                            const n = parseNum(quantity);
+                            if (!Number.isFinite(n) || n <= 0) return;
+                            setQuantity(String(snapQuantityToLotMultiple(n, lotSizeForHints)));
+                          }}
+                          placeholder="e.g. 65"
+                        />
+                        <LiquidityWarningIcon warning={liquidityWarning} />
+                      </span>
                     </label>
                     <AggressiveLimitOrderField
                       aggressive={aggressiveLimit}

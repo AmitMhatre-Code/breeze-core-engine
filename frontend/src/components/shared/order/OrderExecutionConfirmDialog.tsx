@@ -36,6 +36,8 @@ import { useBreakChunkQty } from "@/lib/use-break-chunk-qty";
 import { invalidateTradingShellQueries } from "@/lib/trading-cache";
 import { useRateLimitCountdown } from "@/lib/use-rate-limit-countdown";
 import { Modal } from "@/components/ui/Modal";
+import { LiquidityWarningLines } from "@/components/shared/legs/LiquidityWarningIcon";
+import { useLiquidityCheck, warningFor } from "@/lib/liquidity";
 
 export type ExecutionPreviewLeg = {
   strike: number;
@@ -226,6 +228,22 @@ export function OrderExecutionConfirmDialog({
     isMarket: boolean;
     isTolerance: boolean;
   };
+
+  // Warn-only (docs/liquidity-checks-plan.md): a leg the live book cannot absorb near its LTP
+  // gets a red line. Square-offs see it too, and are never held back by it.
+  const liquidityQ = useLiquidityCheck({
+    exchangeCode,
+    stockCode,
+    expiryDisplay,
+    legs: legs.map((l, i) => ({
+      ref: String(i),
+      strike: l.strike,
+      right: l.right,
+      side: l.side,
+      quantity: Math.round(l.quantity),
+    })),
+    enabled: open && productType.toLowerCase().startsWith("opt"),
+  });
 
   const pricedLegs: PricedLeg[] = useMemo(() => {
     const map = resolvedPricesQ.data;
@@ -680,6 +698,9 @@ export function OrderExecutionConfirmDialog({
                       : formatIndianMoneyCompact(linePrem)}
                   </span>
                 </div>
+                <LiquidityWarningLines
+                  warning={warningFor(liquidityQ.data, String(idx))}
+                />
               </li>
             );
           })}

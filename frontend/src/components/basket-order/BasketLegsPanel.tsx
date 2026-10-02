@@ -5,6 +5,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { InfoPopover } from "@/components/ui/InfoPopover";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
+import { LiquidityWarningIcon } from "@/components/shared/legs/LiquidityWarningIcon";
+import type { LiquidityWarning } from "@/lib/liquidity";
 import { LegQuantityInput } from "@/components/shared/legs/LegQuantityInput";
 import { LegQuantityHeader } from "@/components/shared/legs/LegQuantityHeader";
 import { cloneLeg, LegRowActions } from "@/components/shared/legs/LegRowActions";
@@ -76,6 +78,7 @@ export function BasketLegsPanel({
   calculatingMargins,
   calculateMarginsDisabled,
   scaleControls,
+  liquidityWarnings,
 }: {
   sectionLabel: string;
   strikes: number[];
@@ -113,6 +116,8 @@ export function BasketLegsPanel({
   calculatingMargins: boolean;
   calculateMarginsDisabled: boolean;
   scaleControls: BasketScaleControls;
+  /** ⚠ beside a quantity the live book cannot absorb near the LTP, keyed by leg id. */
+  liquidityWarnings?: Record<string, LiquidityWarning>;
 }) {
   const activeLegCount = legs.filter((l) => l.lots > 0).length;
 
@@ -245,20 +250,23 @@ export function BasketLegsPanel({
                           />
                         </td>
                         <td className="px-2.5 py-2">
-                          <LegQuantityInput
-                            legId={l.id}
-                            lots={l.lots}
-                            lotSize={lotSize}
-                            maxDigits={8}
-                            onLotsChange={(newLots) =>
-                              onLegsChange((prev) =>
-                                prev.map((x) =>
-                                  x.id === l.id ? { ...x, lots: newLots } : x,
-                                ),
-                              )
-                            }
-                            className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
-                          />
+                          <span className="flex items-center gap-1">
+                            <LegQuantityInput
+                              legId={l.id}
+                              lots={l.lots}
+                              lotSize={lotSize}
+                              maxDigits={8}
+                              onLotsChange={(newLots) =>
+                                onLegsChange((prev) =>
+                                  prev.map((x) =>
+                                    x.id === l.id ? { ...x, lots: newLots } : x,
+                                  ),
+                                )
+                              }
+                              className={`${sb.tableInput} w-[10ch] min-w-[7rem] max-w-[8rem] tabular-nums`}
+                            />
+                            <LiquidityWarningIcon warning={liquidityWarnings?.[l.id] ?? null} />
+                          </span>
                         </td>
                         <td className="px-2.5 py-2">
                           <LegAggressivePriceInput

@@ -12,6 +12,7 @@ import { BotAuditLogsScreen } from "./screens/BotAuditLogsScreen";
 import { BrokerCredentialsScreen } from "./screens/BrokerCredentialsScreen";
 import { DeleteAccountScreen } from "./screens/DeleteAccountScreen";
 import { ExchangeCalendarScreen } from "./screens/ExchangeCalendarScreen";
+import { LiquidityChecksScreen } from "./screens/LiquidityChecksScreen";
 import { QuantityLimitsScreen } from "./screens/QuantityLimitsScreen";
 import { ReferenceDataLoadsScreen } from "./screens/ReferenceDataLoadsScreen";
 import { StorageScreen } from "./screens/StorageScreen";
@@ -22,6 +23,7 @@ type ScreenKey =
   | "credentials"
   | "quantity-limits"
   | "trading-costs"
+  | "liquidity-checks"
   | "api-usage"
   | "reference-data-loads"
   | "exchange-calendar"
@@ -50,6 +52,7 @@ const SCREENS: Record<ScreenKey, ComponentType> = {
   credentials: BrokerCredentialsScreen,
   "quantity-limits": QuantityLimitsScreen,
   "trading-costs": TradingCostsScreen,
+  "liquidity-checks": LiquidityChecksScreen,
   "api-usage": ApiUsageScreen,
   "reference-data-loads": ReferenceDataLoadsScreen,
   "exchange-calendar": ExchangeCalendarScreen,
@@ -70,6 +73,7 @@ const NAV_GROUPS: NavGroup[] = [
       { key: "credentials", label: "Broker Credentials", icon: LockIcon },
       { key: "quantity-limits", label: "Quantity Limits", icon: GaugeIcon },
       { key: "trading-costs", label: "Trading Costs", icon: GaugeIcon },
+      { key: "liquidity-checks", label: "Liquidity Checks", icon: GaugeIcon },
       { key: "api-usage", label: "API Usage", icon: ActivityIcon },
     ],
   },

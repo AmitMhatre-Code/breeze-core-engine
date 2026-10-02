@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 import sqlite3
 import time
+import zlib
 from functools import lru_cache
 
 
@@ -186,4 +187,46 @@ def step_live_tick_fields(
         "lowerCktLm": round(state["prev_close"] * 0.9, 2), "upperCktLm": round(state["prev_close"] * 1.1, 2),
         "ltt": int(time.time()), "close": state["prev_close"],
         "OI": random.randint(1_000_000, 20_000_000), "CHNGOI": random.randint(-50_000, 50_000),
+    }
+
+
+def is_mock_depth_symbol(symbol: str) -> bool:
+    """A contract's depth room (`4.2!` NFO, `8.2!` BFO), as the liquidity check subscribes it."""
+    prefix, sep, _token = str(symbol or "").partition("!")
+    return bool(sep) and prefix in ("4.2", "8.2")
+
+
+# Depth per level falls off by this much a level, and each level sits this share of the premium
+# further from the touch, so a big enough order walks visibly away from the LTP.
+_DEPTH_LEVEL_STEP_PCT = 0.03
+
+
+def depth_tick_fields(symbol: str, state: dict) -> dict:
+    """A five-level book around `state`'s current price, in breeze_connect's parsed depth shape
+    (`parse_market_depth`'s NSE F&O layout, with order counts and flags).
+
+    Size comes from a hash of the token rather than its strike, so the same contract is always as
+    deep or as thin and a few contracts in every chain are thin enough to show the liquidity
+    warning at ordinary quantities.
+    """
+    last = float(state["last"])
+    spread = max(0.05, last * 0.001)
+    step = max(0.05, last * _DEPTH_LEVEL_STEP_PCT)
+    base = 25 * (zlib.crc32(symbol.encode()) % 40 + 1)
+    levels = []
+    for k in range(1, 6):
+        qty = int(base * (1.0 + 0.5 * (k - 1)))
+        bid = round(max(0.05, last - spread - step * (k - 1)), 2)
+        ask = round(last + spread + step * (k - 1), 2)
+        levels.append({
+            f"BestBuyRate-{k}": bid, f"BestBuyQty-{k}": qty,
+            f"BuyNoOfOrders-{k}": random.randint(1, 9), f"BuyFlag-{k}": "",
+            f"BestSellRate-{k}": ask, f"BestSellQty-{k}": qty,
+            f"SellNoOfOrders-{k}": random.randint(1, 9), f"SellFlag-{k}": "",
+        })
+    return {
+        "symbol": symbol,
+        "time": time.strftime("%c"),
+        "depth": levels,
+        "quotes": "Market Depth",
     }

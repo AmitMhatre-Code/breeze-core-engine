@@ -82,6 +82,10 @@ class ReasonCode:
     TRADING_READ_ONLY = "trading_read_only"
     NOT_A_FIRING_DAY = "not_a_firing_day"
     MARGIN_EXHAUSTED = "margin_exhausted"
+    # The live order book could not absorb even the bot's minimum size within the liquidity
+    # threshold, or a leg's LTP could not be trusted (docs/liquidity-checks-plan.md). A size the
+    # book did absorb is traded instead, with a note, and is not a skip.
+    LIQUIDITY_THIN = "liquidity_thin"
     # Semi-autonomous (`approval_mode="telegram"`) outcomes. A proposal sent and still
     # unanswered is deliberately NOT a terminal state -- see `has_committed_run_today`.
     AWAITING_APPROVAL = "awaiting_approval"
@@ -203,6 +207,8 @@ TRANSIENT_REASON_CODES: frozenset[str] = frozenset(
         ReasonCode.MARGIN_LOOKUP_FAILED,
         ReasonCode.BROKER_ERROR,
         ReasonCode.RATE_LIMITED,
+        # A thin book is a reading of this minute, not of the day: books refill.
+        ReasonCode.LIQUIDITY_THIN,
     }
 )
 

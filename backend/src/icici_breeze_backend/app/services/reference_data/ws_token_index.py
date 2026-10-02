@@ -216,11 +216,23 @@ def list_ws_stock_tokens_for_liquid_contracts(
     expiry_display: str,
 ) -> list[str]:
     """WS stock_token symbols for all liquid CE/PE at stock+expiry."""
+    return sorted(
+        symbol for _strike, symbol in list_ws_tokens_with_strikes(exchange_code, stock_code, expiry_display)
+    )
+
+
+def list_ws_tokens_with_strikes(
+    exchange_code: str,
+    stock_code: str,
+    expiry_display: str,
+) -> list[tuple[float, str]]:
+    """(strike, WS symbol) for all liquid CE/PE at stock+expiry -- for callers that keep only
+    a band of strikes (the liquidity check's depth subscriptions when ICICI caps them)."""
     ensure_token_map_ready()
     short = short_name_for(stock_code).upper()
     disp = normalize_expiry_display(expiry_display)
     aliases = {short, *(a.upper() for a in aliases_for(stock_code))}
-    out: list[str] = []
+    out: list[tuple[float, str]] = []
     seen: set[str] = set()
     with _lock:
         by_contract = dict(_token_by_contract)
@@ -229,12 +241,15 @@ def list_ws_stock_tokens_for_liquid_contracts(
             parts = ckey.split("|")
             if len(parts) != 5:
                 continue
-            ex, stk, exp, _strike, _opt = parts
+            ex, stk, exp, strike, _opt = parts
             if ex == exchange_code.upper() and stk == alias and exp == disp:
                 if ws_symbol not in seen:
                     seen.add(ws_symbol)
-                    out.append(ws_symbol)
-    return sorted(out)
+                    try:
+                        out.append((float(strike), ws_symbol))
+                    except ValueError:
+                        out.append((0.0, ws_symbol))
+    return out
 
 
 def _lookup_token_row_memory(token: int, segment_code: str | None) -> tuple[Any, ...] | None:

@@ -244,8 +244,12 @@ def _on_ticks(ticks: Any) -> None:
 def _attach_sdk_ticks_handler(sdk: Any) -> None:
     from icici_breeze_backend.app.services.ws_tick_pipeline import start_tick_pipeline
 
+    from icici_breeze_backend.app.services.liquidity.book import register_listener_once
+
     sdk.on_ticks = _on_ticks
     start_tick_pipeline()
+    # The liquidity check's book store reads the same messages (docs/liquidity-checks-plan.md).
+    register_listener_once()
 
 
 def _reset_stale_auth_latch(sdk: Any) -> None:
@@ -804,6 +808,14 @@ def subscribe_option(
     return _subscribe_stock_token_batch(proc, user_id, [ws_symbol], holder_id=hid)
 
 
+def subscribe_lookup_symbol(proc: "Processor", user_id: str, ws_symbol: str) -> bool:
+    """Subscribe one room (e.g. a contract's depth room, `4.2!44684`) as a lookup: no holder,
+    released after `_UNTRACKED_IDLE_SECONDS` without being asked for again (B-41)."""
+    with _lock:
+        _untracked_seen[ws_symbol] = time.monotonic()
+    return _subscribe_stock_token_batch(proc, user_id, [ws_symbol], holder_id=_UNTRACKED_HOLDER)
+
+
 def release_idle_lookups(now: float | None = None) -> int:
     """Release single-contract lookup subscriptions nobody has asked for in a while (B-41).
 
@@ -848,18 +860,36 @@ def sync_holder_chain_subscriptions(
     ones this holder doesn't already have -- used on a fresh broker session so a
     login always re-arms the feed rather than trusting stale bookkeeping."""
     del strikes  # liquid tokens resolved from scrip master
+    from icici_breeze_backend.app.services.liquidity import subscriptions as depth_subs
+
     hid = _effective_holder(holder_id)
-    desired = set(
+    quotes = set(
         list_ws_stock_tokens_for_liquid_contracts(exchange_code, stock_code, expiry_display)
     )
+    # Each contract's depth room rides with its quote room, under the same holder, for the
+    # liquidity check (docs/liquidity-checks-plan.md). The return value stays the quotes'
+    # alone: callers gate a daily retry on it, and a refused depth room is not a dead chain.
+    depth = set(depth_subs.depth_tokens_for_chain(exchange_code, stock_code, expiry_display, sorted(quotes)))
+    desired = quotes | depth
     with _lock:
         current = set(_holders.get(hid, set()))
     for token in sorted(current - desired):
         _detach_holder_from_token(hid, token)
-    new_tokens = sorted(desired) if force else sorted(desired - current)
+    new_quotes = sorted(quotes) if force else sorted(quotes - current)
+    new_depth = sorted(depth) if force else sorted(depth - current)
     ok = True
-    if new_tokens:
-        ok = _subscribe_stock_token_batch(proc, user_id, new_tokens, holder_id=hid, force=force)
+    if new_quotes:
+        ok = _subscribe_stock_token_batch(proc, user_id, new_quotes, holder_id=hid, force=force)
+    if new_depth and ok:
+        if not _subscribe_stock_token_batch(proc, user_id, new_depth, holder_id=hid, force=force):
+            # Quotes went through and depth did not: read it as ICICI capping subscriptions,
+            # and keep only the near-money band from now on.
+            depth_subs.mark_capped(_last_error or "depth subscribe refused")
+            keep = set(depth_subs.depth_tokens_for_chain(exchange_code, stock_code, expiry_display, sorted(quotes)))
+            with _lock:
+                held = set(_holders.get(hid, set()))
+            for token in sorted((depth - keep) & held):
+                _detach_holder_from_token(hid, token)
     register_holder_chain(hid, exchange_code, stock_code, expiry_display)
     return ok
 

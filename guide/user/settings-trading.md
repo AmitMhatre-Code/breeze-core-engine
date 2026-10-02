@@ -4,7 +4,7 @@
 
 | Group | Screens | Where in this guide |
 |---|---|---|
-| (top) | Broker Credentials, Quantity Limits, Trading Costs, API Usage | This page |
+| (top) | Broker Credentials, Quantity Limits, Trading Costs, Liquidity Checks, API Usage | This page |
 | **Automation** | Reference Data Loads, Exchange Calendar | [Settings: automation and alerts](settings-automation.md) |
 | **Alerts** | Telegram Alerts | [Settings: automation and alerts](settings-automation.md#telegram-alerts) |
 | **Advanced** | Engine Settings | [Settings: automation and alerts](settings-automation.md#engine-settings) |
@@ -64,6 +64,22 @@ The brokerage and statutory charges the app uses to work out net P&L for every b
 | **Simulation only** | **Simulation slippage** (× spread) | How far past the quoted price simulated fills are assumed to happen, as a fraction of the bid-ask spread. Simulations and backtests would otherwise fill at the quote, which is optimistic. Does not affect live orders. |
 
 Click **Save** to keep your changes, or **Discard** to undo them.
+
+## Liquidity Checks
+
+The limits behind the [liquidity warnings](place-order.md#liquidity-warnings) on Place Order, Basket Order and the Strategy Builder, and behind the way the Strategy Builder and the [bots](bots.md#safety-rails-every-bot-shares) size their trades. They apply to everyone on this deployment.
+
+![Liquidity Checks](images/dark/settings-liquidity-checks.png)
+
+| Field | Default | What it does |
+|---|---|---|
+| **Distance from LTP** (% of LTP) | 10 | A quantity warns when its estimated average fill is further than this from the LTP... |
+| **And at least** (ticks) | 5 | ...and also further than this many ticks of ₹0.05. Both must be exceeded, so a single tick on a cheap option (6% of ₹0.80) does not warn. |
+| **LTP is old after** (minutes) | 5 | A last trade older than this, or an LTP outside the current bid and ask, gets its own warning. |
+
+Click **Save**; the next check uses the new limits.
+
+The app keeps the full five-level order book for every strike of the chains it is streaming. If ICICI ever refuses those extra subscriptions, a note on this screen says so: the full book is then kept only for strikes near the money and for the legs you are entering, and other strikes are checked against the best bid and offer alone.
 
 ## API Usage
 

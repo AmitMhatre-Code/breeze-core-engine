@@ -532,6 +532,8 @@ class FireResult:
     # Why the stop failed to arm, kept apart from `error` (which also carries placement
     # rejections) so a report can say "placed" and "stop failed" as two separate facts.
     arm_error: Optional[str] = None
+    # Set when the order book made the bot trade fewer lots than it planned.
+    liquidity_note: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -773,6 +775,8 @@ def execute_plan(
     if run_id:
         result.run_id = run_id
     exchange = result.exchange_code
+    if not _fit_to_book(user_id, result):
+        return result
     # Captured before this bot's own legs go on, and used after placement: an SG rule pools
     # P&L across every leg sharing (stock_code, expiry_display), so arming one after adding
     # to a group that already had something else in it would silently fold an unrelated
@@ -832,6 +836,52 @@ def execute_plan(
             expiry_display=result.expiry_display,
         )
     return result
+
+
+def _fit_to_book(user_id: str, result: FireResult) -> bool:
+    """Shrink the plan to what every leg's live book absorbs, or refuse it
+    (docs/liquidity-checks-plan.md, decision 8). False when nothing may be placed.
+
+    The legs keep one size, so a strangle shrinks as a strangle. Margin and premium scale with
+    the lots: ICICI's margin is not linear in size (B-55), but a smaller position needs no more
+    than its share, so the planned figure stays a ceiling.
+    """
+    from icici_breeze_backend.app.db.bots_migrate import BOT_EXPIRY_INDEX_WRITER
+    from icici_breeze_backend.app.services.liquidity import check as liquidity
+
+    if result.lots <= 0 or not result.legs:
+        return True
+    lot_size = int(result.quantity // result.lots)
+    fit = liquidity.fit_lots(
+        [
+            liquidity.SizedLeg(
+                result.exchange_code, result.index_code, result.expiry_display,
+                float(leg["strike_price"]), leg["right"], liquidity.SELL,
+            )
+            for leg in result.legs
+        ],
+        result.lots,
+        lot_size,
+    )
+    label = f"{INDEX_LABEL.get(result.index_code, result.index_code)} {result.expiry_display}"
+    note = liquidity.note_bot_fit(user_id, BOT_EXPIRY_INDEX_WRITER, label, fit)
+    if fit.refused:
+        result.reason_code = ReasonCode.LIQUIDITY_THIN
+        result.error = note
+        return False
+    if fit.shrunk:
+        scale = fit.lots / result.lots
+        result.lots = fit.lots
+        result.quantity = fit.lots * lot_size
+        if result.premium_total is not None:
+            result.premium_total = round(result.premium_total * scale, 2)
+        if result.margin_total is not None:
+            result.margin_total = round(result.margin_total * scale, 2)
+        for leg in result.legs:
+            leg["quantity"] = result.quantity
+            leg["premium_total"] = round(float(leg.get("bid") or 0) * result.quantity, 2)
+        result.liquidity_note = note
+    return True
 
 
 def exit_terms(result: FireResult, config: ExpiryIndexWriterConfig) -> Optional[dict]:

@@ -442,6 +442,16 @@ def notify_bot_feed_back(
     )
 
 
+def notify_bot_liquidity(user_id: str, bot_type: str, text: str) -> None:
+    """A bot shrank or skipped an entry because the book was thin (docs/liquidity-checks-plan.md).
+    The caller throttles it to once per contract per day."""
+    _notify(
+        user_id,
+        "\n".join([f"⚠️ *{bot_label(bot_type)} — thin order book*", "", text]),
+        kind="bot liquidity",
+    )
+
+
 def _notify(user_id: str, text: str, *, kind: str) -> None:
     try:
         status = get_status(user_id)

@@ -6,6 +6,7 @@ from typing import Any
 from icici_breeze_backend.app.core.strike import Strike, parse_strike
 from icici_breeze_backend.audit.strategy_builder_audit import quote_row_to_audit
 from icici_breeze_backend.app.services.options_strategy_engine.audit_helpers import audit_calc
+from icici_breeze_backend.app.services.options_strategy_engine.book_liquidity import apply_book_check
 from icici_breeze_backend.app.services.options_strategy_engine.helpers import (
     nearest_atm,
     quote_from_api,
@@ -36,7 +37,13 @@ def record_ingested_strikes(
             strike,
             right,
             included=parsed.liquid,
-            reason="Two-sided depth (buy_qty>0 and sell_qty>0)" if parsed.liquid else "Missing bid or ask quantity",
+            reason=(
+                "Two-sided depth (buy_qty>0 and sell_qty>0)"
+                if parsed.liquid
+                else "Order book too thin for one lot"
+                if parsed.book_sell_ok is False or parsed.book_buy_ok is False
+                else "Missing bid or ask quantity"
+            ),
             quote=quote_row_to_audit(parsed),
             context=context,
         )
@@ -126,6 +133,7 @@ def build_bulk_chain_cache(ctx: EngineContext) -> None:
     ingested_pe = ingest_chain_rows(put_rows, "Put")
     ctx.cache.update(ingested_ce)
     ctx.cache.update(ingested_pe)
+    apply_book_check(ctx, [*ingested_ce.values(), *ingested_pe.values()])
     record_ingested_strikes(ctx.audit, ingested_ce, context="Fetch full CE chain")
     record_ingested_strikes(ctx.audit, ingested_pe, context="Fetch full PE chain")
     if ctx.progress is not None:

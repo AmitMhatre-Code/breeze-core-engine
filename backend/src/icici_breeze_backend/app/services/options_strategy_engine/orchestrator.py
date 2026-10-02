@@ -37,6 +37,7 @@ from icici_breeze_backend.app.services.portfolio_margin_netting import (
 from icici_breeze_backend.app.services.reference_data.bhavcopy_store import _lookup_bhav_row
 from icici_breeze_backend.app.services.reference_data.symbol_registry import is_index as symbol_is_index
 import icici_breeze_backend.app.core.config as cfg
+from icici_breeze_backend.app.services.options_strategy_engine.book_liquidity import cap_results_to_book
 from icici_breeze_backend.app.services.options_strategy_engine.budget_resize import resize_results_to_budgets
 from icici_breeze_backend.app.services.options_strategy_engine.strategies.directional._common import (
     refresh_directional_tile_metrics,
@@ -652,6 +653,10 @@ async def run_propose_trades(
     await resize_results_to_budgets(
         proc, user_id, exchange_code, ctx.stock_code, expiry_display, all_ok, ctx, audit
     )
+    # Margin sized them; the book may hold less (docs/liquidity-checks-plan.md, decision 7). Before
+    # the display margins below, so they describe the capped size.
+    cap_results_to_book(ctx, all_ok)
+    all_ok = [r for r in all_ok if r.status == "ok"]
     for res in recommended_results + relaxed_results:
         log_strategy_result(ctx, res)
 

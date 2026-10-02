@@ -304,6 +304,48 @@ def size_fly(
     return best, best_margin, None
 
 
+def _fit_fly_to_book(
+    proc: Any,
+    user_id: str,
+    config: IronFlyScalperConfig,
+    expiry: str,
+    legs: tuple[FlyLeg, ...],
+    lot_size: int,
+    lots: int,
+    margin: float,
+) -> tuple[int, float, Optional[tuple[str, str]]]:
+    """Shrink the fly to what all four books absorb, never below `min_lots`
+    (docs/liquidity-checks-plan.md, decision 8). Margin is re-asked for a smaller fly, one call,
+    because ICICI's margin is not linear in size (B-55); if that call fails the planned figure is
+    scaled, which overstates it -- the safe direction for a number only reported."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_IRON_FLY_SCALPER
+    from icici_breeze_backend.app.services.liquidity import check as liquidity
+
+    fit = liquidity.fit_lots(
+        [
+            liquidity.SizedLeg(INDEX_EXCHANGE, INDEX_STOCK_CODE, expiry, float(l.strike), l.right, l.action)
+            for l in legs
+        ],
+        lots,
+        lot_size,
+        min_lots=config.min_lots,
+    )
+    note = liquidity.note_bot_fit(user_id, BOT_IRON_FLY_SCALPER, f"NIFTY fly {expiry}", fit)
+    if fit.refused:
+        return 0, margin, (ReasonCode.LIQUIDITY_THIN, note or "The order books are too thin.")
+    if not fit.shrunk:
+        return lots, margin, None
+    verified = margin_for_mixed_legs(
+        proc,
+        user_id,
+        exchange_code=INDEX_EXCHANGE,
+        stock_code=INDEX_STOCK_CODE,
+        expiry_display=expiry,
+        legs=[(l.right, l.strike, lot_size * fit.lots, l.action) for l in legs],
+    )
+    return fit.lots, (verified if verified is not None else margin * fit.lots / lots), None
+
+
 def plan_entry(
     proc: Any, user_id: str, config: IronFlyScalperConfig, vix: Optional[float] = None
 ) -> tuple[Optional[FlyPlan], Optional[tuple[str, str]]]:
@@ -320,6 +362,9 @@ def plan_entry(
         return None, (ReasonCode.CHAIN_NOT_READY, "Lot size unavailable from the scrip master.")
 
     lots, margin, problem = size_fly(proc, user_id, config, expiry, legs, lot_size)
+    if problem is not None:
+        return None, problem
+    lots, margin, problem = _fit_fly_to_book(proc, user_id, config, expiry, legs, lot_size, lots, margin)
     if problem is not None:
         return None, problem
 

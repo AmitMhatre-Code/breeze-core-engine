@@ -322,6 +322,7 @@ const SHOTS = [
     ["settings-credentials", "credentials", "full"],
     ["settings-quantity-limits", "quantity-limits", "viewport"],
     ["settings-trading-costs", "trading-costs", "full"],
+    ["settings-liquidity-checks", "liquidity-checks", "full"],
     ["settings-api-usage", "api-usage", "full"],
     ["settings-reference-data", "reference-data-loads", "viewport"],
     ["settings-exchange-calendar", "exchange-calendar", "full"],

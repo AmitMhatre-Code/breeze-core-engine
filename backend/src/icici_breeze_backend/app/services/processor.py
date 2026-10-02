@@ -1432,15 +1432,28 @@ class processor():
                         if elm == cfg.CHECKED:
                             margin = margin + (float(temp['spot_price']) * float(lot_size) * cfg.ELM)
                         temp['quantity'] = math.floor(limits * 100000 / margin) * lot_size
-                        depth_known = i.get("total_buy_qty") is not None
-                        buy_cap = int(i.get("total_buy_qty") or 0)
-                        book_ok = buy_cap > 0 and temp["quantity"] <= buy_cap
-                        # Can't size against a book we don't have: an unknown or
-                        # BSE-wiped book must not cap the line to zero.
-                        if not depth_known and temp["quantity"] > 0:
-                            book_ok = True
-                        elif exchange_code == cfg.BFO and buy_cap == 0 and temp["quantity"] > 0:
-                            book_ok = True
+                        # Sized to the margin limit, then capped at what the live bids absorb
+                        # within the liquidity threshold (docs/liquidity-checks-plan.md). It
+                        # replaces a cap on `total_buy_qty`, the whole book's resting total,
+                        # which counts bids nowhere near the touch. A book nobody can judge
+                        # (closed market, BSE's wiped book) leaves the size alone.
+                        if temp["quantity"] > 0 and lot_size:
+                            from icici_breeze_backend.app.services.liquidity import check as liquidity_check
+
+                            fit = liquidity_check.fit_lots(
+                                [
+                                    liquidity_check.SizedLeg(
+                                        exchange_code, stock_code, _expiry_api_to_display(expiry_date),
+                                        float(strike), right, cfg.SELL,
+                                    )
+                                ],
+                                int(temp["quantity"] // lot_size),
+                                int(lot_size),
+                                treat_stale_as_fail=False,
+                            )
+                            temp["quantity"] = fit.lots * int(lot_size)
+                            temp["book_capped"] = fit.shrunk
+                        book_ok = temp["quantity"] > 0
                         if book_ok:
                             bid_for_prem = float(i.get("best_bid_price") or 0)
                             if bid_for_prem <= 0:

@@ -62,9 +62,15 @@ class QuoteRow:
     # so every strategy module keeps its existing arithmetic -- only the gates
     # that would otherwise read "unknown" as "no interest" consult this.
     depth_known: bool = True
+    # Whether the live book takes one lot on each side (docs/liquidity-checks-plan.md). None when
+    # it was not judged (market closed, no book seen), which leaves the gates below to decide.
+    book_sell_ok: bool | None = None
+    book_buy_ok: bool | None = None
 
     @property
     def liquid(self) -> bool:
+        if self.book_sell_ok is False or self.book_buy_ok is False:
+            return False
         if not self.depth_known:
             # Fall back to price evidence: a contract quoting a two-sided market
             # or printing a trade is tradeable regardless of a missing book.

@@ -16,6 +16,7 @@ import {
   useRecentlyTradedScrips,
 } from "@/lib/use-recently-traded-scrips";
 import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
+import { useLegLiquidityWarnings } from "@/lib/strategy-builder/leg-liquidity";
 import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { BuildYourOwnChainSection } from "@/components/strategy-builder/BuildYourOwnChainSection";
 import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
@@ -509,6 +510,14 @@ export default function BasketOrderPage() {
   const aggressiveControls = useAggressiveOrderControls();
   const anyAggressiveLeg = legs.some((l) => l.lots > 0 && l.aggressiveLimit);
 
+  const legLiquidityWarnings = useLegLiquidityWarnings({
+    exchangeCode: segmentExchange,
+    stockCode,
+    expiryDisplay: expiryDate,
+    lotSize: lotSize ?? 0,
+    legs,
+  });
+
   const strategyExecuteLegs = useMemo(
     () =>
       legs
@@ -638,6 +647,7 @@ export default function BasketOrderPage() {
             <SectionGate locked={!section1Complete}>
               <div className="border-b border-border-soft">
                 <BasketLegsPanel
+                  liquidityWarnings={legLiquidityWarnings}
                   sectionLabel="2. Legs"
                   strikes={strikes}
                   chainBusy={chainQ.isFetching}

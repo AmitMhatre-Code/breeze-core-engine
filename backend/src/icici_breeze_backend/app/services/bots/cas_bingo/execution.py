@@ -25,6 +25,7 @@ card back to Simulation.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -760,6 +761,57 @@ def enter(
 
 
 def _enter(
+    proc: Any,
+    user_id: str,
+    config: CasBingoConfig,
+    run_id: str,
+    plan: Plan,
+    *,
+    live: bool,
+    charges: ChargesModel,
+    extra: dict[str, Any],
+) -> EntryOutcome:
+    # Before margin and liquidation: buying back shorts to make room for an entry the book
+    # then refuses would be a cost with nothing to show for it (docs/liquidity-checks-plan.md).
+    fitted, liquidity_note = _fit_to_book(user_id, plan)
+    if fitted is None:
+        return EntryOutcome(
+            False, ReasonCode.LIQUIDITY_THIN, liquidity_note or "The order books are too thin.",
+            terminal=False,
+        )
+    plan = fitted
+    outcome = _enter_sized(proc, user_id, config, run_id, plan, live=live, charges=charges, extra=extra)
+    if liquidity_note:
+        outcome.reason_text = f"{outcome.reason_text} {liquidity_note}".strip()
+        outcome.detail = {**outcome.detail, "liquidity_note": liquidity_note}
+    return outcome
+
+
+def _fit_to_book(user_id: str, plan: Plan) -> tuple[Optional[Plan], Optional[str]]:
+    """The plan at the size every leg's book absorbs, or None to skip (decision 8). The legs
+    keep one size. `margin_required` scales with the lots: exact for a debit, and an upper bound
+    for a credit spread's broker margin, which only falls faster than linearly as size drops."""
+    from icici_breeze_backend.app.services.liquidity import check as liquidity
+
+    fit = liquidity.fit_lots(
+        [
+            liquidity.SizedLeg(plan.exchange_code, plan.index_code, plan.expiry_display, float(l.strike), l.right, l.action)
+            for l in plan.legs
+        ],
+        plan.lots,
+        plan.lot_size,
+    )
+    note = liquidity.note_bot_fit(user_id, BOT_CAS_BINGO, f"{plan.index_code} {plan.structure}", fit)
+    if fit.refused:
+        return None, note
+    if fit.shrunk:
+        plan = dataclasses.replace(
+            plan, lots=fit.lots, margin_required=round(plan.margin_required * fit.lots / plan.lots, 2)
+        )
+    return plan, note
+
+
+def _enter_sized(
     proc: Any,
     user_id: str,
     config: CasBingoConfig,

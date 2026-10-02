@@ -320,6 +320,22 @@ def plan_entry(
             f"{config.premium_outlay_inr:,.0f} outlay.",
         )
 
+    # The outlay sized it; the offers may hold less (docs/liquidity-checks-plan.md).
+    from icici_breeze_backend.app.db.bots_migrate import BOT_MOMENTUM_LONG_SCALPER
+    from icici_breeze_backend.app.services.liquidity import check as liquidity
+
+    fit = liquidity.fit_lots(
+        [liquidity.SizedLeg(INDEX_EXCHANGE, INDEX_STOCK_CODE, expiry, float(strike), right, liquidity.BUY)],
+        lots,
+        lot_size,
+    )
+    note = liquidity.note_bot_fit(
+        user_id, BOT_MOMENTUM_LONG_SCALPER, f"NIFTY {int(strike)} {right}", fit
+    )
+    if fit.refused:
+        return None, (ReasonCode.LIQUIDITY_THIN, note or "The order book is too thin.")
+    lots = fit.lots
+
     return (
         EntryPlan(
             expiry_display=expiry,

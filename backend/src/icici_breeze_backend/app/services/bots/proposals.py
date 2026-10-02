@@ -450,6 +450,15 @@ def _approve_holdings(
             reason_code=ReasonCode.QUOTE_UNAVAILABLE,
         )
 
+    # The book at approval, not at the scan, decides the size (docs/liquidity-checks-plan.md).
+    repriced, liquidity_notes = placement.fit_legs_to_book(user_id, BOT_HOLDINGS_WRITER, repriced)
+    if not repriced:
+        raise ApprovalRefused(
+            " ".join(liquidity_notes) + " Nothing was placed.",
+            status_code=409,
+            reason_code=ReasonCode.LIQUIDITY_THIN,
+        )
+
     results = placement.place_short_legs(
         processor(),
         user_id,
@@ -482,8 +491,9 @@ def _approve_holdings(
         # failure -- the ones that placed are open and holding margin.
         status="completed" if all_ok else ("partial" if ok_count else "failed"),
         reason_code=ReasonCode.ORDERS_PLACED if all_ok else ReasonCode.ORDER_REJECTED,
-        reason_text=f"{ok_count} of {len(results)} leg(s) placed.",
-        detail={"legs": [p.model_dump() for p in placed]},
+        reason_text=f"{ok_count} of {len(results)} leg(s) placed."
+        + ("".join(f" {n}" for n in liquidity_notes)),
+        detail={"legs": [p.model_dump() for p in placed], "liquidity_notes": liquidity_notes},
     )
     # The *approved* proposal is resolved, not the freshly-scanned one, so the run log shows
     # which snapshot the user actually acted on.

@@ -1057,3 +1057,20 @@ The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short 
 - **Smaller fixes.** A freeze limit below one lot is an error message, not a 500 (B-47). `update_leg_order_ids` checks the rule's owner (B-48).
 
 **What it does not cover.** Other routers (`route_settings`, `route_strategy_builder` and the rest) still run on the event loop. What remark, if any, ICICI puts on a GTT's fired order is unobserved; if it is recognisable, the GTT match can become positive.
+
+## 62. A ticket's quantity is judged against the live order book and the LTP: tickets warn, the Strategy Builder caps, bots shrink or skip, exits are never held
+
+**Decision** (2026-10-02; the questions and answers are in `docs/liquidity-checks-plan.md`). For one contract, side and quantity, `liquidity/estimate.py` walks the visible book (five levels from the depth room, else the top of book from the quote room, labelled as such) and compares the average fill with the **LTP**. It fails when the adverse distance exceeds **both** `max_deviation_pct` (10) of the LTP **and** `min_deviation_ticks` (5); when the quantity exceeds the visible book (`beyond_book`); or when there is no other side (`no_book`). Separately, an LTP whose last trade is older than `ltp_stale_seconds` (300), or that sits outside the current bid and ask, is `stale_ltp`. The three numbers are one global settings row (Settings → Liquidity Checks), never environment variables.
+
+- **Place Order, Basket, Strategy Builder Execute warn only**: a ⚠ beside the quantity and a red ⚠ line on the confirmation modal, square-offs included. The ⚡ modes are unchanged.
+- **The Strategy Builder** excludes a strike that cannot take one lot on either side (`QuoteRow.book_*_ok`), and caps each margin-sized proposal at its thinnest leg's book (`Capped by order book`). A stale LTP neither excludes nor caps there.
+- **Bots** shrink to the largest passing lot count, at the same strikes, or skip with `liquidity_thin` (transient: a book refills). A stale LTP is a skip. One Telegram per contract per day. Paper is sized the same way; backtests cannot be, history has no book. CAS Bingo checks before liquidation, so it never buys back shorts for an entry it then refuses.
+- **The uncovered-shorts scan's** cap on `total_buy_qty` is replaced by the sell-side check. `total_buy_qty` is the whole book's resting total and counts bids far from the touch.
+- **Unknown is neither pass nor fail.** Closed market, or no book seen this session: tickets show nothing, sizing callers keep their size.
+
+**Why LTP and not the mid**: it was the user's choice, because the LTP is the number a trader reads and expects to trade near. Its weakness, a thin strike's LTP being old or outside the book, is surfaced as its own warning rather than silently swapped for the mid.
+
+**Why whole-chain depth**: also the user's choice over depth on demand. It doubles a chain's subscriptions. Whether ICICI caps subscriptions per session is unobserved (B-41), so a refused depth batch, with the quotes accepted, caps depth to the 10 strikes either side of the money for the day, and the tickets pin their own legs' depth as lookups.
+
+**What it does not cover.** The depth payload has never been captured live (#33's caveat applies: the parser keys on `BestBuyQty-k` names, not positions); the tick-debug capture should be on for the first live session. A refusal reported as success is not detected as a cap; those contracts fall back to the top of book. Hidden and iceberg liquidity, and book refill between freeze slices, are not modelled, so large sliced orders read pessimistic. Futures and equity tickets are not checked.
+

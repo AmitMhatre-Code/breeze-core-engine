@@ -32,9 +32,9 @@ Each leg is a row in the table:
 | **Strike** | The strike price. Click the header to sort the legs by strike. |
 | **Type** | CE or PE. |
 | **Position** | Buy or sell. |
-| **Quantity** | The quantity in units. It is rounded to a whole number of lots automatically (the **i** icon explains). A leg with zero quantity stays in the table but is left out of the order. |
+| **Quantity** | The quantity in units. It is rounded to a whole number of lots automatically (the **i** icon explains). A leg with zero quantity stays in the table but is left out of the order. A **⚠** beside it is a [liquidity warning](place-order.md#liquidity-warnings): the live order book is too thin to fill this quantity near the LTP. Legs selling (or buying) the same strike are checked together. |
 | **Price ₹** | The limit price, filled in from the market. The **lightning bolt** makes the leg an [aggressive order](place-order.md#aggressive-orders). |
-| **B:S** | Buy-to-sell ratio of the quantity waiting in the order book for this contract: a quick liquidity check. |
+| **B:S** | Buy-to-sell ratio of the quantity waiting in the whole order book for this contract. It counts orders far from the current price too, so the ⚠ beside **Quantity** is the better guide to whether your size will fill. |
 | **Premium** | Premium received (+) or paid (−) for the leg. **No quote** means the contract has no market price yet: type a price, or pick another strike. |
 | **Margin** | The leg's margin on its own, once calculated. The **i** icon explains that it is approximate. |
 | Copy and delete icons | Duplicate the leg, or remove it. |

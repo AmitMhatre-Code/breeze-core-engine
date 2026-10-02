@@ -65,6 +65,8 @@ Above the cards:
 | Outlook filters | Show only trades with the outlooks you tick. |
 | **Sort** | Order the cards by **Score (high → low)**, **Server order**, **Probability of profit (high → low)**, **Net Premium (high → low)** or **Max Loss (low → high)**. |
 
+While the market is open, proposals are also sized to the live order book. A strike whose book cannot take even one lot near its LTP is never proposed. If the book holds less than the margin would allow, the proposal is cut down to what the thinnest leg can absorb and marked **Capped by order book**. The check is the same one behind the [liquidity warnings](place-order.md#liquidity-warnings).
+
 **Near-threshold alternatives**, below the main cards, are trades that just missed your PoP or return thresholds, or unlimited-loss structures left out because you set a max loss. They are the closest matches if you relax your constraints.
 
 Selecting a strategy with unlimited loss opens **Risk warning — unlimited loss**. Click **I understand — select** to go ahead, or **Cancel**.
@@ -89,7 +91,7 @@ This expandable panel explains the search:
 
 ## 4. Legs
 
-The selected trade's legs, which you can adjust before executing. The table works like [Basket Order's](basket-order.md#2-legs): strike, type, position, quantity, price (with the **lightning bolt** for [aggressive orders](place-order.md#aggressive-orders)), premium and per-leg margin. **Add leg** adds another leg.
+The selected trade's legs, which you can adjust before executing. The table works like [Basket Order's](basket-order.md#2-legs): strike, type, position, quantity, price (with the **lightning bolt** for [aggressive orders](place-order.md#aggressive-orders)), premium and per-leg margin. **Add leg** adds another leg. A **⚠** beside a quantity is a [liquidity warning](place-order.md#liquidity-warnings).
 
 | Item | What it shows or does |
 |---|---|

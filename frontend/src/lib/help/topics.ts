@@ -118,7 +118,23 @@ export const helpTopics: HelpTopic[] = [
       "Orders may partially fill, remain pending, or be rejected depending on market conditions.",
     ],
     keywords: ["mkt", "market", "ltp", "limit", "tolerance", "aggressive"],
-    relatedTopicIds: ["parked-orders", "chunk-splitting"],
+    relatedTopicIds: ["parked-orders", "chunk-splitting", "liquidity-checks"],
+  },
+  {
+    id: "liquidity-checks",
+    guide: "place-order#liquidity-warnings",
+    category: "orders",
+    title: "Liquidity warnings (⚠ beside a quantity)",
+    summary:
+      "A ⚠ means the live order book is too thin to fill your quantity near the last traded price.",
+    body: [
+      "While you enter a quantity, the app walks the strike's live order book (the best five bids and offers) and estimates the average price your whole quantity would fill at.",
+      "A ⚠ appears beside the quantity when that average is more than 10% and more than 5 ticks away from the LTP, when the quantity is bigger than the visible book, when nobody is quoting the side you need, or when the LTP itself is old or outside the current bid and ask. Hover over it to see which.",
+      "The confirmation dialog repeats the warning in red under the leg. It never blocks an order or a square-off, and nothing is checked while the market is closed.",
+      "The Strategy Builder caps its proposals to what the book absorbs, and bots trade fewer lots or skip the entry. The limits are in Settings → Liquidity Checks.",
+    ],
+    keywords: ["liquidity", "thin", "illiquid", "depth", "order book", "slippage", "spread", "warning"],
+    relatedTopicIds: ["aggressive-limit", "chunk-splitting"],
   },
   {
     id: "clone-square-off",

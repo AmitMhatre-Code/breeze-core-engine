@@ -14,6 +14,7 @@ import {
 } from "@/lib/use-recently-traded-scrips";
 import { QuoteSourceBadge } from "@/components/shared/market-data/QuoteSourceBadge";
 import { ExchangeFlipToggle } from "@/components/shared/order/ExchangeFlipToggle";
+import { useLegLiquidityWarnings } from "@/lib/strategy-builder/leg-liquidity";
 import { OrderExecutionConfirmDialog } from "@/components/shared/order/OrderExecutionConfirmDialog";
 import { ExpirySelectPill } from "@/components/shared/order/ExpirySelectPill";
 import { OutlookFilterButtons } from "@/components/strategy-builder/OutlookFilterButtons";
@@ -734,6 +735,14 @@ export default function StrategyBuilderPage() {
 
   const aggressiveControls = useAggressiveOrderControls();
 
+  const legLiquidityWarnings = useLegLiquidityWarnings({
+    exchangeCode: segmentExchange,
+    stockCode,
+    expiryDisplay: expiryDate,
+    lotSize: lotSize ?? 0,
+    legs,
+  });
+
   const strategyExecuteLegs = useMemo(
     () =>
       legs
@@ -1239,6 +1248,7 @@ export default function StrategyBuilderPage() {
           <SectionGate locked={!section4Ready}>
             <div id="strategy-builder-legs" className="p-5">
             <StrategyLegsPanel
+              liquidityWarnings={legLiquidityWarnings}
               sectionTitle={`4. Legs${selectedTradeName ? ` — ${selectedTradeName}` : ""}`}
               lotSize={lotSize}
               legs={legs}

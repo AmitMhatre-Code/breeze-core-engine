@@ -196,14 +196,29 @@ def fire_autonomous(
             )
             return 0.0
 
+        # Margin picked these; the live bids may hold less (docs/liquidity-checks-plan.md).
+        # Proposals are fitted too, so the user approves the size that will actually go out.
+        chosen, liquidity_notes = placement.fit_legs_to_book(user_id, BOT_HOLDINGS_WRITER, chosen)
+        if not chosen:
+            repo.finish_run(
+                run_id,
+                status="skipped",
+                reason_code=ReasonCode.LIQUIDITY_THIN,
+                reason_text=" ".join(liquidity_notes) or "The order books are too thin.",
+                detail={"skipped": skipped, "dropped": dropped, "liquidity_notes": liquidity_notes},
+            )
+            return 0.0
+        premium_total = round(sum(float(l.premium_total or 0) for l in chosen), 2)
+        delivery_used = round(sum(float(l.delivery_exposure or 0) for l in chosen), 2)
+
         if propose_only:
             from icici_breeze_backend.app.services.bots import hitl
 
             totals = {
-                "premium_total": alloc.premium_total,
+                "premium_total": premium_total,
                 "span_total": round(sum(float(l.span_margin or 0) for l in chosen), 2),
                 "elm_total": round(sum(float(l.elm_margin or 0) for l in chosen), 2),
-                "delivery_exposure_total": alloc.delivery_used,
+                "delivery_exposure_total": delivery_used,
                 "delivery_cash_budget": config.delivery_cash_budget,
                 "leg_count": len(chosen),
                 "selected_count": len(chosen),
@@ -215,7 +230,7 @@ def fire_autonomous(
                 legs=chosen,
                 totals=totals,
                 ttl_minutes=config.proposal_ttl_minutes,
-                detail={"skipped": skipped, "dropped": dropped, **totals},
+                detail={"skipped": skipped, "dropped": dropped, "liquidity_notes": liquidity_notes, **totals},
             )
             return 0.0
 
@@ -230,8 +245,9 @@ def fire_autonomous(
             "skipped": skipped,
             "dropped": dropped,
             "margin_used": alloc.margin_used,
-            "delivery_used": alloc.delivery_used,
-            "premium_total": alloc.premium_total,
+            "delivery_used": delivery_used,
+            "premium_total": premium_total,
+            "liquidity_notes": liquidity_notes,
             "legs": [
                 {
                     "stock_code": r.stock_code,
@@ -256,7 +272,7 @@ def fire_autonomous(
             reason_code=ReasonCode.ORDERS_PLACED if ok else ReasonCode.ORDER_REJECTED,
             reason_text=(
                 f"{len(ok)} of {len(results)} leg(s) placed for "
-                f"Rs {alloc.premium_total:,.0f} of premium."
+                f"Rs {premium_total:,.0f} of premium."
             ),
             detail=detail,
         )

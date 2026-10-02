@@ -29,6 +29,7 @@ from icici_breeze_backend.app.api.v1 import route_bots
 from icici_breeze_backend.app.api.v1 import route_bots_backtest
 from icici_breeze_backend.app.api.v1 import route_signals
 from icici_breeze_backend.app.api.v1 import route_storage
+from icici_breeze_backend.app.api.v1 import route_liquidity
 
 v1_router = APIRouter()
 
@@ -56,6 +57,7 @@ v1_router.include_router(route_bots.router, prefix="/bots", tags=[""], include_i
 v1_router.include_router(route_bots_backtest.router, prefix="/bots", tags=[""], include_in_schema=False)
 v1_router.include_router(route_signals.router, prefix="/api/signals", tags=[""], include_in_schema=False)
 v1_router.include_router(route_storage.router, prefix="/api/settings/storage", tags=[""], include_in_schema=False)
+v1_router.include_router(route_liquidity.router, prefix="/api/settings/liquidity", tags=[""], include_in_schema=False)
 v1_router.include_router(
     route_strategy_builder.router,
     prefix="/strategy-builder",

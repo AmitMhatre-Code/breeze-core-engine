@@ -94,7 +94,7 @@ The UI uses **React Query** for server state and **Chart.js** where charts are s
 
 ### Settings API
 
-- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)), and storage (`/storage/status` polled by the banner, `/storage` inventory, `/storage/threshold`, `/storage/delete` + `/storage/job`).
+- **`/api/settings/*`**: JSON for credentials, quantity limits, margin source (including SPAN baseline refresh), scrip master refresh, API usage aggregates, exchange-calendar preferences, the margin comparison harness (`/margin-harness/run`, `/runs`, `/runs/{id}/download`), the reference-data pipeline (`/reference-data-loads/status`, `/schedule`, `/load-now` — see [Architecture — Reference data pipeline](./architecture.md#reference-data-pipeline)), storage (`/storage/status` polled by the banner, `/storage` inventory, `/storage/threshold`, `/storage/delete` + `/storage/job`), and the liquidity check (`/liquidity` settings GET/PUT, `/liquidity/check` polled by the order tickets; design-decisions #62).
 
 ### Signals and bots
 

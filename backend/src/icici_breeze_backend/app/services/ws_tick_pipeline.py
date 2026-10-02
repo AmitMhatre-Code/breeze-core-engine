@@ -23,6 +23,7 @@ from typing import Any
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import get_redis
+from icici_breeze_backend.app.services.liquidity.book import is_depth_payload
 from icici_breeze_backend.app.services.reference_data.keys import (
     WS_TICK_DIRTY_CHANNEL,
     pnl_quote_key,
@@ -295,6 +296,11 @@ def ingest_tick(raw: Any) -> None:
             listener(payload)
         except Exception:
             pass
+    # Depth messages stop here. breeze_connect stamps contract identity onto them like a quote,
+    # so past this point one would read as that contract's quote with no LTP and blank its
+    # chain cell and P&L mark. Only the liquidity book reads them (its raw listener, above).
+    if is_depth_payload(payload):
+        return
     if isinstance(payload, dict):
         try:
             _stage_pnl_quote(payload)
