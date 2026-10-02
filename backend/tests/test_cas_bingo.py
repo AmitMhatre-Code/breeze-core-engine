@@ -29,6 +29,7 @@ from icici_breeze_backend.app.services.bots.cas_bingo import execution, liquidat
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
 from icici_breeze_backend.app.services.bots.scalping import live
 from icici_breeze_backend.app.services.bots.scalping.momentum_bot import Quote
+from icici_breeze_backend.audit import bot_audit
 
 DAY = datetime.date(2026, 9, 15)
 WINDOWS = [("14:30", "15:15"), ("15:15", "15:29")]
@@ -459,7 +460,24 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "icici_breeze_backend.app.services.telegram_alerts._notify", lambda *a, **k: None
     )
+    # Entries, exits and passes now append to the audit trail; without this they land in the
+    # developer's real backend/data/ looking like genuine trading days.
+    audit = tmp_path / "bots-audit"
+    audit.mkdir()
+    monkeypatch.setattr(bot_audit, "audit_dir", lambda: str(audit))
+    bot_audit._last_signature.clear()
     return path
+
+
+def _audit_records() -> list[dict]:
+    import json
+    import os
+
+    out = []
+    for name in sorted(os.listdir(bot_audit.audit_dir())):
+        with open(os.path.join(bot_audit.audit_dir(), name), encoding="utf-8") as fh:
+            out.extend(json.loads(line) for line in fh)
+    return out
 
 
 def test_paper_entry_records_the_net_premium(db):
@@ -507,6 +525,42 @@ def test_short_margin_with_liquidation_off_is_refused(db, monkeypatch):
         live=False, charges=ChargesModel(), extra={},
     )
     assert not outcome.opened and outcome.reason_code == ReasonCode.MARGIN_INSUFFICIENT
+
+
+def test_a_refused_entry_is_kept_in_the_audit_trail(db, monkeypatch):
+    p, _ = _plan("bull_call_debit")
+    monkeypatch.setattr(execution, "_available", lambda proc, user: 1.0)
+    execution.enter(
+        FakeProc(), USER, CasBingoConfig(liquidation={"enabled": False}), "r", p,
+        live=False, charges=ChargesModel(), extra={"trigger": "manual"},
+    )
+    (record,) = _audit_records()
+    assert record["event"] == "entry" and record["run_id"] == "r"
+    assert record["payload"]["opened"] is False
+    assert record["payload"]["reason_code"] == ReasonCode.MARGIN_INSUFFICIENT
+    assert record["payload"]["plan"]["structure"] == "bull_call_debit"
+
+
+def test_each_pass_is_audited_and_quiet_repeats_collapse_on_every_index(db):
+    config = CasBingoConfig()
+    # Today, not a fixed date: retention prunes against the wall clock (test_bot_audit.py).
+    outside = datetime.datetime.now(IST).replace(hour=11, minute=0, second=0, microsecond=0)
+    waiting = {
+        "NIFTY": (ReasonCode.OUTSIDE_SESSION_WINDOW, "NIFTY: waiting."),
+        "BSESEN": (ReasonCode.OUTSIDE_SESSION_WINDOW, "SENSEX: waiting."),
+    }
+    runtime._record_audit(USER, "r", config, waiting, outside)
+    runtime._record_audit(USER, "r", config, waiting, outside)
+    # Only the second index moved: still a transition worth writing.
+    runtime._record_audit(
+        USER, "r", config,
+        {**waiting, "BSESEN": (ReasonCode.ALREADY_RAN_TODAY, "SENSEX: already entered today.")},
+        outside,
+    )
+    records = _audit_records()
+    assert len(records) == 2
+    assert records[-1]["decision"]["indices"]["BSESEN"]["reason_code"] == ReasonCode.ALREADY_RAN_TODAY
+    assert records[-1]["in_window"] is False
 
 
 def _gate_closed(monkeypatch):

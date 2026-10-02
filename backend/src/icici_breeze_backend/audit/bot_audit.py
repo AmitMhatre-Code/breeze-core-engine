@@ -1,4 +1,4 @@
-"""Append-only per-day audit trail for the scalping bots.
+"""Append-only per-day audit trail for the scalping bots and CAS Bingo.
 
 **Why this exists.** A scalper's run row holds one verdict -- the last one published. Every
 decision before it is overwritten, and the log line that carried the detail lives in a
@@ -117,11 +117,16 @@ def record_pass(
     reason_text: Optional[str],
     in_window: bool,
     now: Optional[datetime] = None,
+    signature: Optional[str] = None,
 ) -> None:
     """Append one driver pass. Never raises -- an audit write must not stop a bot.
 
     `detail` is `runtime._audit_detail`'s output, so the file carries exactly the feed and
     gate state the run row shows, plus everything the run row has no room for.
+
+    `signature` replaces the default out-of-window change test for a bot whose pass is not
+    one verdict: CAS Bingo judges each expiring index separately, and keying on the first
+    index's code alone would drop the second's transitions.
     """
     try:
         stamp = now or now_ist()
@@ -139,13 +144,10 @@ def record_pass(
         }
 
         key = (user_id, bot_type)
-        if not in_window:
-            signature = _signature(record)
-            if _last_signature.get(key) == signature:
-                return
-            _last_signature[key] = signature
-        else:
-            _last_signature[key] = _signature(record)
+        signature = signature if signature is not None else _signature(record)
+        if not in_window and _last_signature.get(key) == signature:
+            return
+        _last_signature[key] = signature
 
         _append(user_id, bot_type, stamp.date(), record)
     except Exception:  # noqa: BLE001 -- the trail is diagnostic; the bot outranks it

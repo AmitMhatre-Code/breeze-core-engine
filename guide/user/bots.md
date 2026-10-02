@@ -192,8 +192,8 @@ The **Activity** section at the bottom of the page lists every scan, order and s
 | **Today** / **Week** / **Month** / **Custom** | The period shown. |
 | **Started**, bot, **Trigger**, **Outcome**, **Reason** | When the run started, which bot, what started it (schedule, you, Telegram), what happened, and why. |
 | Bundles | Back-to-back runs with the same outcome are bundled; expand one to see each run. |
-| Expanded run | Each cycle's **Contract**, **Lots**, **Gross** P&L, **Friction** (costs) and **Exit**. |
-| Download | **Download full-day audit trail** for a run, or **Download backtest results (.zip)** for a backtest. |
+| Expanded run | For the Long Scalper, Intraday Iron Fly and CAS Bingo: each cycle's **Contract**, **Lots**, **Gross** P&L, **Friction** (costs) and **Exit**. A CAS Bingo trade sits under the run that entered it, so a later "already entered today" run expands to nothing. |
+| Download | **Download full-day audit trail** for a scalper or CAS Bingo run, or **Download backtest results (.zip)** for a backtest. |
 
 Backtests appear in Activity too, marked **Backtest**. While one runs, **Show live progress** displays how long it has run, the last update, ICICI calls used and memory, with **Stop backtest**.
 

@@ -305,6 +305,46 @@ def _entry_for_index(
     return outcome.reason_code, f"{label}: {outcome.reason_text}"
 
 
+def _audit_exit(user_id: str, cycle: Any, event: str, payload: dict[str, Any]) -> None:
+    from icici_breeze_backend.audit import bot_audit
+
+    bot_audit.record_event(
+        user_id, BOT_CAS_BINGO, cycle.run_id, event,
+        {"cycle_id": cycle.id, "cycle_no": cycle.cycle_no, "paper": cycle.paper, **payload},
+    )
+
+
+def _record_audit(
+    user_id: str, run_id: str, config: CasBingoConfig,
+    verdicts: dict[str, tuple[str, str]], now: datetime.datetime,
+) -> None:
+    """Append this pass to the day's audit trail (`audit.bot_audit`), as the scalpers do.
+
+    The run row is published at most once a minute and holds only the latest verdict; the
+    trail is what still says, the next morning, that the signal was read all window and
+    never flipped. Full fidelity inside the entry windows, changes only outside them."""
+    from icici_breeze_backend.audit import bot_audit
+
+    if not verdicts:
+        return
+    bot_audit.record_pass(
+        user_id, BOT_CAS_BINGO, run_id,
+        detail={
+            "action": "scan",
+            "decision": {
+                "strategy": config.strategy,
+                "mode": config.mode,
+                "indices": {k: {"reason_code": c, "reason_text": t} for k, (c, t) in verdicts.items()},
+            },
+        },
+        reason_code=next(iter(verdicts.values()))[0],
+        reason_text=" · ".join(t for _c, t in verdicts.values()),
+        in_window=_in_window(config, now),
+        now=now,
+        signature="|".join(f"{k}={c}" for k, (c, _t) in sorted(verdicts.items())),
+    )
+
+
 def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: datetime.datetime) -> None:
     from icici_breeze_backend.app.services.bots.charges import load_charges
     from icici_breeze_backend.app.services.market_calendar import is_market_open
@@ -327,6 +367,7 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
                 level = market.settlement_level(index_code, expiry)
                 if level:
                     execution.settle(cycle, level)
+                    _audit_exit(user_id, cycle, "settled", {"level": level})
                 elif cycle.id not in _unsettled_logged:
                     _unsettled_logged.add(cycle.id)
                     _logger.warning(
@@ -340,7 +381,8 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
             if not cycle.paper and held_legs.is_unwinding(cycle):
                 # What is left of a close that stuck. The exit was already decided; the
                 # structure's own target/stop no longer describe it (B-01). `close_live`
-                # owns the back-off and the broker check.
+                # owns the back-off and the broker check. Not audited: it repeats on every
+                # pass until flat, and the exit itself was recorded when it was decided.
                 execution.close_live(
                     proc, user_id, config, cycle, {}, held_legs.remainder_verdict(cycle),
                     load_charges(),
@@ -352,6 +394,7 @@ def _manage_open_cycles(proc: Any, user_id: str, config: CasBingoConfig, now: da
             )
             if verdict is None:
                 continue
+            _audit_exit(user_id, cycle, "exit", {"reason_code": verdict[0], "reason_text": verdict[1]})
             if cycle.paper:
                 execution.close_paper(cycle, quotes, verdict, load_charges())
             else:
@@ -475,6 +518,7 @@ def tick_user(user_id: str, config: CasBingoConfig, *, armed: bool, proc: Any = 
                 verdicts[code] = (ReasonCode.INTERNAL_ERROR, f"{market.INDEX_LABEL[code]}: the entry pass failed.")
         _seed_last_word(user_id, run_id, now.date())
         _note_last_word(user_id, verdicts, now.date())
+        _record_audit(user_id, run_id, config, verdicts, now)
     _publish(user_id, run_id, verdicts, _day_last_words(user_id, now.date()))
     _finalise_if_done(user_id, run_id, now)
     return verdicts

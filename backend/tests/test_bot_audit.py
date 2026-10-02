@@ -106,6 +106,17 @@ def test_out_of_window_still_records_a_change(audit_root):
     assert [r["feed"]["counter_resets"] for r in rows] == [0, 1]
 
 
+def test_a_caller_signature_replaces_the_default_change_test(audit_root):
+    """CAS Bingo judges two indices a pass; the default test sees only the first one's code."""
+    for sig in ("NIFTY=a|SENSEX=a", "NIFTY=a|SENSEX=a", "NIFTY=a|SENSEX=b"):
+        bot_audit.record_pass(
+            USER, BOT, "run-1", detail=_detail(), reason_code="a",
+            reason_text="x", in_window=False, now=_at(3, 0), signature=sig,
+        )
+    rows = _read(os.path.join(audit_root, bot_audit.file_name(USER, BOT, _at(3).date())))
+    assert len(rows) == 2
+
+
 def test_the_record_carries_the_feed_counters(audit_root):
     """The numbers that name a reset-heavy session, kept where logs cannot rotate them away."""
     bot_audit.record_pass(

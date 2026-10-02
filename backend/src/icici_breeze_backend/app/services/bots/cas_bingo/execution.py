@@ -734,7 +734,42 @@ def enter(
     extra: dict[str, Any],
 ) -> EntryOutcome:
     """Margin check, liquidation if short, then the entry. Shared by the loop and the manual
-    sheet so the two cannot drift."""
+    sheet so the two cannot drift.
+
+    Every attempt goes into the day's audit trail, refusals included: a run row keeps only
+    its latest verdict, and "margin was short at 15:16" is gone by 15:17 otherwise."""
+    from icici_breeze_backend.audit import bot_audit
+
+    outcome = _enter(
+        proc, user_id, config, run_id, plan, live=live, charges=charges, extra=extra
+    )
+    bot_audit.record_event(
+        user_id, BOT_CAS_BINGO, run_id, "entry",
+        {
+            "opened": outcome.opened,
+            "reason_code": outcome.reason_code,
+            "reason_text": outcome.reason_text,
+            "cycle_id": outcome.cycle_id,
+            "live": live,
+            "trigger": extra.get("trigger"),
+            "plan": plan.summary(),
+            "liquidation": outcome.liquidation,
+        },
+    )
+    return outcome
+
+
+def _enter(
+    proc: Any,
+    user_id: str,
+    config: CasBingoConfig,
+    run_id: str,
+    plan: Plan,
+    *,
+    live: bool,
+    charges: ChargesModel,
+    extra: dict[str, Any],
+) -> EntryOutcome:
     available = _available(proc, user_id)
     if available is None:
         return EntryOutcome(

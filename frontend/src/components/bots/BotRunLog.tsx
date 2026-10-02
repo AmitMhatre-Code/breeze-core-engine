@@ -17,6 +17,8 @@ import {
 import {
   isScalper,
   useBotCycles,
+  BOT_CAS_BINGO,
+  type CasBingoStructure,
   useBotRunBundles,
   useBundleRuns,
   type BotCycle,
@@ -54,17 +56,45 @@ function cycleTime(iso: string | null): string {
   return iso ? String(iso).slice(11, 19) : "—";
 }
 
+const CAS_STRUCTURE_SHORT: Record<CasBingoStructure, string> = {
+  bull_put_credit: "Bull put",
+  bear_call_credit: "Bear call",
+  bull_call_debit: "Bull call",
+  bear_put_debit: "Bear put",
+  long_strangle: "Strangle",
+};
+
+type CycleLeg = { right?: string; strike_price?: number };
+
+function rightCode(leg: CycleLeg): "CE" | "PE" {
+  return String(leg.right ?? "").toUpperCase() === "PUT" ? "PE" : "CE";
+}
+
+/** Every leg, not the first: a CAS Bingo spread labelled by one strike reads as a naked
+ *  option. One right is stated once ("81500/81700 CE"); a strangle's two are each named. */
+function casBingoLabel(cycle: BotCycle): string {
+  const plan = (cycle.detail as { plan?: { index_label?: string } } | null)?.plan;
+  const index = plan?.index_label ?? String(cycle.detail?.index_code ?? "");
+  const kind = CAS_STRUCTURE_SHORT[cycle.structure as CasBingoStructure] ?? cycle.structure;
+  const legs = ((cycle.legs ?? []) as CycleLeg[])
+    .map((leg) => ({ strike: Math.round(Number(leg.strike_price ?? 0)), right: rightCode(leg) }))
+    .sort((a, b) => a.strike - b.strike);
+  const strikes =
+    new Set(legs.map((l) => l.right)).size === 1
+      ? `${legs.map((l) => l.strike).join("/")} ${legs[0].right}`
+      : legs.map((l) => `${l.strike} ${l.right}`).join(" / ");
+  return [index, kind, legs.length ? strikes : ""].filter(Boolean).join(" ");
+}
+
 function legLabel(cycle: BotCycle): string {
-  const leg = (cycle.legs ?? [])[0] as
-    | { right?: string; strike_price?: number }
-    | undefined;
+  if (cycle.bot_type === BOT_CAS_BINGO) return casBingoLabel(cycle);
+  const leg = (cycle.legs ?? [])[0] as CycleLeg | undefined;
   if (cycle.structure === "iron_fly") {
     const centre = (cycle.detail as { atm_strike?: number } | null)?.atm_strike;
     return centre ? `Fly ${Math.round(centre)}` : "Fly";
   }
   if (!leg) return cycle.structure;
-  const right = String(leg.right ?? "").toUpperCase() === "PUT" ? "PE" : "CE";
-  return `${right} ${Math.round(Number(leg.strike_price ?? 0))}`;
+  return `${rightCode(leg)} ${Math.round(Number(leg.strike_price ?? 0))}`;
 }
 
 /** A session's round trips.
@@ -192,14 +222,15 @@ function ExpandToggle({
  *  the bot, trigger, outcome and day's audit trail, so the member shows only its time and why. */
 function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  // A scalper session has cycles beneath it, a finished backtest the trades it replayed (#35),
-  // and a running one its live progress; the writers resolve in one pass and have nothing to
-  // expand into.
+  // A scalper session has cycles beneath it, as does a CAS Bingo session or manual entry; a
+  // finished backtest has the trades it replayed (#35), and a running one its live progress.
+  // The writers resolve in one pass and have nothing to expand into.
   const isBacktest = run.trigger === "backtest";
   const backtestBot = isBacktest ? BACKTEST_SLUG[run.bot_type] : undefined;
   const runningBacktest = isBacktest && run.status === "running";
   const expandable =
     (isScalper(run.bot_type) && run.trigger === "session") ||
+    (run.bot_type === BOT_CAS_BINGO && (run.trigger === "session" || run.trigger === "manual")) ||
     runningBacktest ||
     (isBacktest && run.status === "completed" && Boolean(backtestBot));
   const feed = isBacktest ? null : describeFeed(run.detail);
