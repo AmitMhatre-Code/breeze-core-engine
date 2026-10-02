@@ -36,11 +36,13 @@ The right-hand panel shows live figures for the chosen contract, with a badge sa
 | **LTP ₹** | Last traded price. |
 | **B:S ratio** | Total quantity bid against total quantity offered in the order book. |
 | **Buy qty** / **Sell qty** | Total quantity waiting to buy and to sell. |
+| **Delta** | How much the option's price moves for a 1-point move in the underlying, per unit. See [Delta](glossary.md#delta). |
+| **IV** | The implied volatility the delta was worked out with. |
 | **Margin / lot · Buy** and **· Sell** | Margin needed for one lot, bought or sold. |
 
 ## Order summary
 
-Below it, **Order summary** repeats the contract, **Expiry**, **Quantity** and **Limit price**, the **Est. margin** for the side you are about to trade, and the **Order value** (price × quantity).
+Below it, **Order summary** repeats the contract, **Expiry**, **Quantity** and **Limit price**, the **Est. margin** for the side you are about to trade, **Position Δ** (the delta × quantity, negative for a sell: the units of the underlying the order would make you long or short) and the **Order value** (price × quantity).
 
 ## Cloned orders
 

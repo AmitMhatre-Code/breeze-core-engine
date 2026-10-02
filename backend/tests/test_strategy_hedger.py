@@ -179,6 +179,42 @@ class TestStrategyHedger(unittest.TestCase):
         )
         self.assertLess(out["summary"]["strategy_delta"], 0)
 
+    def test_quantity_is_units_not_lots(self):
+        """ICICI position quantity is already in units: 50 at lot size 50 is one lot.
+
+        Delta, gamma, premium and a wing's max loss must scale with 50 units, not 50 x 50.
+        """
+        positions = [
+            {
+                "stock_code": "NIFTY",
+                "expiry_date": "27-Jun-2025",
+                "strike_price": 24500,
+                "right": "Call",
+                "action": "Sell",
+                "quantity": 50,
+                "ltp": 120.0,
+                "span_margin_required": 200000.0,
+            }
+        ]
+        chain = [_chain_row(24700, "Call", ask=55.0)]
+        out = generate_strategy_level_hedges(
+            positions,
+            chain,
+            spot_price=24000.0,
+            user_max_loss=500_000.0,
+            days_to_expiry=10,
+            lot_size=50,
+        )
+        summary = out["summary"]
+        # One short call's delta is between 0 and 1 per unit, so 50 units stay within -50.
+        self.assertLess(summary["strategy_delta"], 0)
+        self.assertGreaterEqual(summary["strategy_delta"], -50)
+        self.assertAlmostEqual(summary["net_premium_cash"], 50 * 120.0)
+        (wing,) = out["candidates"]
+        self.assertEqual(wing["hedge_quantity"], 50)
+        # Width 200, credit 120 - 55 = 65 -> 135 per unit, for 50 units.
+        self.assertAlmostEqual(wing["max_loss_estimate"], 135.0 * 50)
+
     def test_bs_gamma_matches_frontend_formula(self):
         gamma = bs_gamma(24000.0, 24500.0, 10 / 365.0, 0.18)
         self.assertGreater(gamma, 0)

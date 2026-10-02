@@ -29,6 +29,13 @@ import { StrikeSelectPill } from "@/components/shared/order/StrikeSelectPill";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import {
+  buildGreeksModel,
+  formatOptionDelta,
+  formatPositionDelta,
+  netDeltaTitle,
+  optionDelta,
+} from "@/lib/strategy-builder/greeks";
 import { snapQuantityToLotMultiple } from "@/lib/strategy-builder/leg-ui-helpers";
 import {
   consumePlaceOrderClonePayload,
@@ -514,6 +521,20 @@ function PlaceOrderPageInner() {
       ? priceNum * qtyNum
       : null;
   const expiryDisplay = chainSuccess?.expiry_display?.trim() || expiryDate.trim();
+
+  // Off the same polling chain as the scrip details, so it ticks with the LTP.
+  const greeksModel = useMemo(
+    () => buildGreeksModel(chainSuccess, expiryDate),
+    [chainSuccess, expiryDate],
+  );
+  const contractDelta =
+    greeksModel && effectiveStrike != null
+      ? optionDelta(greeksModel, right, effectiveStrike)
+      : null;
+  const orderDelta =
+    contractDelta && qtyNum > 0
+      ? (previewSide === "Buy" ? 1 : -1) * qtyNum * contractDelta.perUnit
+      : null;
   const isAtmStrike =
     defaultStrike != null &&
     effectiveStrike != null &&
@@ -790,6 +811,21 @@ function PlaceOrderPageInner() {
                       value={cellDetails.totalSellQty.toLocaleString("en-IN")}
                       tone="down"
                     />
+                    <ScripStat
+                      label="Delta"
+                      value={formatOptionDelta(contractDelta?.perUnit)}
+                      title={
+                        contractDelta
+                          ? `Change in this option's price per 1-point move in ${stockCode || "the underlying"}, per unit. IV ${(contractDelta.sigma * 100).toFixed(1)}%.`
+                          : "Delta unavailable: the chain has no usable price for this strike yet."
+                      }
+                    />
+                    <ScripStat
+                      label="IV"
+                      value={
+                        contractDelta ? `${(contractDelta.sigma * 100).toFixed(1)}%` : "—"
+                      }
+                    />
                     <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3 border-t border-border-soft pt-[13px]">
                       <ScripStat
                         label="Margin / lot · Buy"
@@ -867,6 +903,11 @@ function PlaceOrderPageInner() {
                     label={`Est. margin (${previewSide})`}
                     value={estMargin != null ? formatIndianMoneyCompact(estMargin) : "—"}
                   />
+                  <SummaryRow
+                    label="Position Δ"
+                    value={formatPositionDelta(orderDelta)}
+                    title={netDeltaTitle(orderDelta, cellDetails?.lotSize)}
+                  />
                 </div>
                 <div className="mt-[3px] flex items-baseline justify-between border-t border-border pt-[11px]">
                   <span className="text-button font-semibold text-foreground">
@@ -890,14 +931,16 @@ function ScripStat({
   value,
   tone,
   emphasize,
+  title,
 }: {
   label: string;
   value: string;
   tone?: "up" | "down";
   emphasize?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" title={title}>
       <div className="text-micro font-semibold uppercase tracking-[.06em] text-faint">
         {label}
       </div>
@@ -912,9 +955,17 @@ function ScripStat({
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-center justify-between gap-3" title={title}>
       <span className="text-muted">{label}</span>
       <span className="font-mono font-semibold tabular-nums text-foreground">{value}</span>
     </div>

@@ -5,12 +5,13 @@ import { useId, useMemo } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
 import { sigmaAtPrice, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { ScenarioGreeksLine } from "@/components/shared/greeks/DeltaText";
+import { scenarioGreeks, type GreeksModel } from "@/lib/strategy-builder/greeks";
 import { formatIndianMoneyCompact } from "@/lib/format-money-in";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
   payoffChartSpotDomain,
-  portfolioGreeks,
   scanMarkToModelCurve,
   scanPayoffCurve,
   summarizePayoffExact,
@@ -126,6 +127,8 @@ export function BasketPayoffPanel({
   spot,
   atmIv,
   sigmaSmiles = null,
+  greeksModel,
+  greeksLegs,
   expiryDate,
   lotSize,
   ivShockPct,
@@ -141,6 +144,9 @@ export function BasketPayoffPanel({
   atmIv: number | null;
   /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
   sigmaSmiles?: SigmaSmiles | null;
+  /** Same model and legs as the legs table's Net Δ, so the two agree with no IV shock. */
+  greeksModel: GreeksModel | null;
+  greeksLegs: StrategyLeg[];
   expiryDate: string;
   lotSize: number;
   ivShockPct: number;
@@ -200,18 +206,10 @@ export function BasketPayoffPanel({
     return estimateProbabilityOfProfit(spot, T, sigma, legs, lotSize);
   }, [spot, T, baseSigma, sigmaSmiles, ivShockPct, legs, lotSize]);
 
-  const greeks = useMemo(() => {
-    if (spot == null || T <= 0 || !legs.length) {
-      return { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
-    }
-    return portfolioGreeks(
-      spot,
-      legs,
-      lotSize,
-      T,
-      (leg) => sigmaForLeg(sigmaSmiles, leg, spot, baseSigma) * (1 + ivShockPct / 100),
-    );
-  }, [spot, T, baseSigma, sigmaSmiles, ivShockPct, legs, lotSize]);
+  const greeks = useMemo(
+    () => scenarioGreeks(greeksModel, greeksLegs, lotSize, { ivShockPct }),
+    [greeksModel, greeksLegs, lotSize, ivShockPct],
+  );
 
   const payoffTitleId = useId();
   const payoffDescId = useId();
@@ -341,32 +339,11 @@ export function BasketPayoffPanel({
         ) : null}
 
         {showGreeks && hasStrategyLegs ? (
-          <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-border-soft pt-3 text-xs">
-            <span className="text-muted">
-              Delta{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.delta.toFixed(4)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Gamma{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.gamma.toFixed(6)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Vega{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.vega.toFixed(4)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Theta / day{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.thetaPerDay.toFixed(4)}
-              </span>
-            </span>
-          </div>
+          <ScenarioGreeksLine
+            greeks={greeks}
+            lotSize={lotSize}
+            className="border-t border-border-soft pt-3"
+          />
         ) : null}
       </div>
     </div>

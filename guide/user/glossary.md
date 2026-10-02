@@ -26,6 +26,11 @@ One of the separate orders a large quantity is split into, to stay within the ex
 ### Credit spread, debit spread
 Two options of the same type and expiry. A **credit spread** sells the nearer strike and buys a further one, collecting premium. A **debit spread** buys the nearer strike and sells a further one, paying premium.
 
+### Delta
+How much an option's price moves for a 1-point move in the underlying: between 0 and +1 for a call, between −1 and 0 for a put. A position's delta is that times the quantity, negative when you sold, and reads as **units of the underlying** the position behaves like: −40 means it gains about ₹40 for each point the underlying falls. Deltas of legs on the same underlying add up exactly, so a Strategy Group's or basket's **Net Δ** is the sum of its legs.
+
+Breeze Modern works delta out from the option chain on your screen: the forward price the chain implies (from calls and puts at the strikes nearest the money), each strike's own implied volatility (from its bid and offer, or the strikes around it when its own quote is thin) and the time left to the 15:30 close on expiry day. Other platforms use slightly different inputs, so their figures can differ in the second decimal. It changes as the market moves, fastest close to expiry. Hover a delta to see how it was worked out.
+
 ### Drawdown
 The largest fall in running P&L from a peak to a later trough.
 

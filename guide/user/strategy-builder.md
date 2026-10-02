@@ -91,18 +91,19 @@ This expandable panel explains the search:
 
 ## 4. Legs
 
-The selected trade's legs, which you can adjust before executing. The table works like [Basket Order's](basket-order.md#2-legs): strike, type, position, quantity, price (with the **lightning bolt** for [aggressive orders](place-order.md#aggressive-orders)), premium and per-leg margin. **Add leg** adds another leg. A **⚠** beside a quantity is a [liquidity warning](place-order.md#liquidity-warnings).
+The selected trade's legs, which you can adjust before executing. The table works like [Basket Order's](basket-order.md#2-legs): strike, type, position, quantity, price (with the **lightning bolt** for [aggressive orders](place-order.md#aggressive-orders)), premium, [delta](glossary.md#delta) (**Δ**) and per-leg margin. **Add leg** adds another leg. A **⚠** beside a quantity is a [liquidity warning](place-order.md#liquidity-warnings).
 
 | Item | What it shows or does |
 |---|---|
 | **Net premium** | Premium received (+) or paid (−) across the legs. A leg with no market price shows **No quote** and is left out, with a note saying so. |
+| **Net Δ** | The legs' deltas added up: the units of the underlying the whole strategy behaves like. |
 | **Net SPAN margin** | Margin for all the legs as one position. |
 | **Margin benefit** | The saving from hedging, compared with the legs on their own. |
 | **Basket ELM** | The extreme loss margin buffer on top. |
 | **Calculate Margins** | Recalculates the figures after you change legs. |
 | **Execute strategy · N legs** | Opens the [order confirmation](place-order.md#confirming-an-order) for all legs with a quantity above zero. |
 
-Under the legs, the payoff chart shows the strategy's P&L at expiry and today, with **Greeks** (delta, gamma, vega, theta) available on demand. Max profit, max loss, breakevens and probability of profit are summarised beneath it.
+Under the legs, the payoff chart shows the strategy's P&L at expiry and today, with **Greeks** (delta, gamma, vega, theta) available on demand. They follow the what-if controls; with those reset, the delta equals **Net Δ** under the legs. Max profit, max loss, breakevens and probability of profit are summarised beneath it.
 
 ## Margins shown here
 

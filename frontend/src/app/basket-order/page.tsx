@@ -49,6 +49,7 @@ import {
 } from "@/lib/strategy-builder/chain-quote";
 import { atmSigmaFromChain, buildSigmaSmiles } from "@/lib/strategy-builder/chainIv";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { buildGreeksModel, netDelta, strategyLegDeltas } from "@/lib/strategy-builder/greeks";
 import {
   fetchBasketMarginOnly,
   useOnDemandBasketMargin,
@@ -192,6 +193,22 @@ export default function BasketOrderPage() {
     const T = expiryDisplayToYears(expiryDate || "01-Jan-2099");
     return buildSigmaSmiles(chainSuccess, T);
   }, [chainSuccess, expiryDate]);
+
+  const greeksModel = useMemo(
+    () => buildGreeksModel(chainSuccess, expiryDate),
+    [chainSuccess, expiryDate],
+  );
+  // A leg whose strike hasn't been picked yet has no delta to show or add.
+  const greeksLegs = useMemo(
+    () => legs.filter((l) => !strikePendingIds.has(l.id)),
+    [legs, strikePendingIds],
+  );
+  const legDeltas = useMemo(
+    () =>
+      strategyLegDeltas(greeksModel, greeksLegs, lotSize),
+    [greeksModel, greeksLegs, lotSize],
+  );
+  const basketNetDelta = useMemo(() => netDelta(Object.values(legDeltas)), [legDeltas]);
 
   const section1Complete = Boolean(stockCode.trim() && expiryDate.trim());
   const chainInitiallyLoaded = !chainQ.isPending && chainQ.data != null;
@@ -664,6 +681,8 @@ export default function BasketOrderPage() {
                   onPriceChange={onPriceChange}
                   onAggressiveChange={onAggressiveChange}
                   legMargins={marginCalc.legMargins}
+                  legDeltas={legDeltas}
+                  netDelta={basketNetDelta}
                   legBuySellRatios={legBuySellRatios}
                   totalsNetPremium={totalsNetPremium}
                   totalsMargin={marginCalc.totalsMargin}
@@ -705,6 +724,8 @@ export default function BasketOrderPage() {
                 spot={spot}
                 atmIv={atmIv}
                 sigmaSmiles={sigmaSmiles}
+                greeksModel={greeksModel}
+                greeksLegs={greeksLegs}
                 expiryDate={expiryDate}
                 lotSize={lotSize}
                 ivShockPct={ivShockPct}

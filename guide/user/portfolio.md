@@ -40,6 +40,7 @@ The app remembers your choice.
 | **MTM** | Mark-to-market P&L. |
 | **Carry** | P&L if held to expiry, with its annualised return on margin underneath (group rows). |
 | **Span + ELM** | The group's margin: SPAN on top, the ELM buffer beneath. Shown for groups only, netted across the group's legs. |
+| **Δ** | [Delta](glossary.md#delta) in units of the underlying. On a leg: the option's delta × quantity, negative when sold. On the group row: the sum over the group's open legs, so −40 means the group gains about ₹40 for each point the underlying falls. It updates with the live prices. Hover a value for its breakdown. |
 | **PoP** | Probability of profit at expiry, from the option chain's implied volatility. For a group that collected premium it is the chance every option you sold expires out of the money, the same convention ICICI uses. See [PoP in the glossary](glossary.md#pop-probability-of-profit). |
 | **See actions →** | A reminder that expanding the group shows its actions. |
 

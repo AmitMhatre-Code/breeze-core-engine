@@ -52,6 +52,7 @@ import {
 import { useWsSubscriptionHolder } from "@/lib/use-ws-subscription-holder";
 import { premiumFromChainRow, strikesFromChain } from "@/lib/strategy-builder/chain-quote";
 import { expiryDisplayToYears, sortExpiryDatesAsc } from "@/lib/strategy-builder/expiry";
+import { buildGreeksModel, netDelta, strategyLegDeltas } from "@/lib/strategy-builder/greeks";
 import {
   computeMarginsCalcKey,
   useOnDemandBasketMargin,
@@ -331,6 +332,16 @@ export default function StrategyBuilderPage() {
     () => (chainSuccess ? buildSigmaSmiles(chainSuccess, expiryDisplayToYears(expiryDate)) : null),
     [chainSuccess, expiryDate],
   );
+
+  const greeksModel = useMemo(
+    () => buildGreeksModel(chainSuccess, expiryDate),
+    [chainSuccess, expiryDate],
+  );
+  const legDeltas = useMemo(
+    () => strategyLegDeltas(greeksModel, legs, lotSize),
+    [greeksModel, legs, lotSize],
+  );
+  const strategyNetDelta = useMemo(() => netDelta(Object.values(legDeltas)), [legDeltas]);
 
   const marginCalc = useOnDemandBasketMargin({
     legs,
@@ -1262,6 +1273,8 @@ export default function StrategyBuilderPage() {
               onPriceChange={onPriceChange}
               onAggressiveChange={onAggressiveChange}
               legMargins={marginCalc.legMargins}
+              legDeltas={legDeltas}
+              netDelta={strategyNetDelta}
               totalsNetPremium={totalsNetPremium}
               totalsMargin={marginCalc.totalsMargin}
               onExecute={() => setExecutePreviewOpen(true)}
@@ -1289,6 +1302,7 @@ export default function StrategyBuilderPage() {
               spot={spot}
               atmIv={atmIv}
               sigmaSmiles={sigmaSmiles}
+              greeksModel={greeksModel}
               expiryDate={expiryDate}
               lotSize={lotSize}
             />

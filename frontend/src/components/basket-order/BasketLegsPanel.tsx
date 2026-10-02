@@ -4,6 +4,7 @@ import { isUnpricedLeg, unpricedNote } from "@/lib/strategy-builder/leg-quote";
 import { useMemo, useState, type ReactNode } from "react";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { InfoPopover } from "@/components/ui/InfoPopover";
+import { DeltaHelp, NetDeltaText, PositionDeltaText } from "@/components/shared/greeks/DeltaText";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
 import { LiquidityWarningIcon } from "@/components/shared/legs/LiquidityWarningIcon";
 import type { LiquidityWarning } from "@/lib/liquidity";
@@ -20,6 +21,7 @@ import {
 } from "@/lib/strategy-builder/leg-ui-helpers";
 import { sb } from "@/lib/strategy-builder/ui";
 import type { ScaleMode } from "@/lib/strategy-builder/basket-scale";
+import type { PositionDelta } from "@/lib/strategy-builder/greeks";
 import type {
   BasketLegMarginEntry,
   OptionRight,
@@ -67,6 +69,8 @@ export function BasketLegsPanel({
   onPriceChange,
   onAggressiveChange,
   legMargins,
+  legDeltas,
+  netDelta,
   legBuySellRatios,
   totalsNetPremium,
   totalsMargin,
@@ -97,6 +101,9 @@ export function BasketLegsPanel({
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
   onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
+  /** Position delta per leg id; absent for a leg with no lots or no strike yet. */
+  legDeltas: Record<string, PositionDelta | null>;
+  netDelta: number | null;
   legBuySellRatios: Record<string, number | string | null>;
   totalsNetPremium: number;
   totalsMargin: {
@@ -203,6 +210,14 @@ export function BasketLegsPanel({
                     <th className={thClsEnd}>Premium</th>
                     <th className={thClsEnd}>
                       <span className="inline-flex items-center justify-end gap-1">
+                        Δ
+                        <InfoPopover title="Delta" ariaLabel="Delta help">
+                          <DeltaHelp />
+                        </InfoPopover>
+                      </span>
+                    </th>
+                    <th className={thClsEnd}>
+                      <span className="inline-flex items-center justify-end gap-1">
                         Margin
                         <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
                           Approximate margin from the exchange SPAN file for the quantity
@@ -289,6 +304,9 @@ export function BasketLegsPanel({
                         >
                           {!aggressive && isUnpricedLeg(l) ? "No quote" : formatSignedLegPremium(premTotal, l.side).text}
                         </td>
+                        <td className="px-2.5 py-2 text-right font-mono tabular-nums">
+                          <PositionDeltaText delta={legDeltas[l.id]} lotSize={lotSize} />
+                        </td>
                         <td className="px-2.5 py-2 text-right font-mono tabular-nums text-muted">
                           {formatLegMargin(l, legEntry, false)}
                         </td>
@@ -332,6 +350,10 @@ export function BasketLegsPanel({
               {unpricedNote(legs)}
             </span>
           ) : null}
+          <TotalStat
+            label="Net Δ"
+            value={<NetDeltaText net={netDelta} lotSize={lotSize} />}
+          />
           <TotalStat
             label="Net SPAN margin"
             value={
@@ -542,7 +564,7 @@ function TotalStat({
   tone = "foreground",
 }: {
   label: ReactNode;
-  value: string;
+  value: ReactNode;
   tone?: "foreground" | "up" | "down" | "accent";
 }) {
   const toneClass =

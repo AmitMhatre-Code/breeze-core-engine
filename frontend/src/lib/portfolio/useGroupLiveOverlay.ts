@@ -126,5 +126,6 @@ export function useGroupLiveOverlay(
     });
   }, [group.rows, chainSuccess]);
 
-  return { rows, isLive };
+  // The chain itself is returned too, so the group's deltas price off this same poll.
+  return { rows, isLive, chainSuccess };
 }

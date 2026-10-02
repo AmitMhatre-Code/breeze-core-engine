@@ -1,7 +1,7 @@
-import { impliedVolatility } from "@/lib/strategy-builder/blackScholes";
+import { DEFAULT_Q, DEFAULT_R, impliedVolatility } from "@/lib/strategy-builder/blackScholes";
 import type { ChainSuccess, StrategyLeg } from "@/lib/strategy-builder/types";
 
-function parseChainNumber(v: unknown): number {
+export function parseChainNumber(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
     const n = parseFloat(v.replace(/,/g, ""));
@@ -49,35 +49,42 @@ function isTrustedQuote(bid: number, ask: number): boolean {
   return mid > 0 && (ask - bid) / mid <= MAX_TRUSTED_REL_SPREAD;
 }
 
+/** Mid of a chain cell whose book is two-sided with a trusted spread, else null. */
+export function trustedMid(cell: Record<string, unknown> | null | undefined): number | null {
+  if (!cell) return null;
+  const buyQty = parseChainNumber(cell.total_buy_qty);
+  const sellQty = parseChainNumber(cell.total_sell_qty);
+  if (!(buyQty > 0) || !(sellQty > 0)) return null;
+  const bid = parseChainNumber(cell.best_bid_price);
+  const ask = parseChainNumber(cell.best_offer_price);
+  return isTrustedQuote(bid, ask) ? (bid + ask) / 2 : null;
+}
+
 /** Per-side IV smile from trust-gated chain quotes, in log-moneyness space. Reuses data
  * already present in `chain_rows` (best_bid_price/best_offer_price/total_buy_qty/
- * total_sell_qty) — no new fetch. */
+ * total_sell_qty) — no new fetch. `q` is the carry the Greeks pass from put-call parity;
+ * PoP and the payoff curves keep the default. */
 export function buildSigmaSmile(
   chain: ChainSuccess,
   T: number,
   right: "call" | "put",
+  q: number = DEFAULT_Q,
 ): SigmaSmile {
   const spot = chain.spot_price;
   if (spot == null || spot <= 0) return [];
   const points: SmilePoint[] = [];
   for (const row of chain.chain_rows) {
-    const leg = right === "call" ? row.call : row.put;
-    if (!leg) continue;
-    const buyQty = parseChainNumber(leg.total_buy_qty);
-    const sellQty = parseChainNumber(leg.total_sell_qty);
-    if (!(buyQty > 0) || !(sellQty > 0)) continue;
-    const bid = parseChainNumber(leg.best_bid_price);
-    const ask = parseChainNumber(leg.best_offer_price);
-    if (!isTrustedQuote(bid, ask)) continue;
-    const iv = impliedVolatility(right, (bid + ask) / 2, spot, row.strike_price, T);
+    const mid = trustedMid(right === "call" ? row.call : row.put);
+    if (mid == null) continue;
+    const iv = impliedVolatility(right, mid, spot, row.strike_price, T, DEFAULT_R, q);
     if (iv == null || iv <= 0) continue;
     points.push({ x: Math.log(row.strike_price / spot), iv });
   }
   return points.sort((a, b) => a.x - b.x);
 }
 
-export function buildSigmaSmiles(chain: ChainSuccess, T: number): SigmaSmiles {
-  return { call: buildSigmaSmile(chain, T, "call"), put: buildSigmaSmile(chain, T, "put") };
+export function buildSigmaSmiles(chain: ChainSuccess, T: number, q: number = DEFAULT_Q): SigmaSmiles {
+  return { call: buildSigmaSmile(chain, T, "call", q), put: buildSigmaSmile(chain, T, "put", q) };
 }
 
 /** Linear interpolation in log-moneyness space; flat-clamp beyond the outermost anchor;

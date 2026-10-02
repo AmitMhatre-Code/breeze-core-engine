@@ -36,6 +36,7 @@ Each leg is a row in the table:
 | **Price ₹** | The limit price, filled in from the market. The **lightning bolt** makes the leg an [aggressive order](place-order.md#aggressive-orders). |
 | **B:S** | Buy-to-sell ratio of the quantity waiting in the whole order book for this contract. It counts orders far from the current price too, so the ⚠ beside **Quantity** is the better guide to whether your size will fill. |
 | **Premium** | Premium received (+) or paid (−) for the leg. **No quote** means the contract has no market price yet: type a price, or pick another strike. |
+| **Δ** | The leg's [delta](glossary.md#delta) in units of the underlying: option delta × quantity, negative when sold. Blank until the leg has a strike and a quantity. Hover a value for its breakdown. |
 | **Margin** | The leg's margin on its own, once calculated. The **i** icon explains that it is approximate. |
 | Copy and delete icons | Duplicate the leg, or remove it. |
 
@@ -44,6 +45,7 @@ Beneath the table:
 | Item | What it shows or does |
 |---|---|
 | **Net premium** | Premium across all legs: received (+) or paid (−). A leg showing **No quote** is left out, and a note beside the total says how many legs were. The payoff figures below leave it out too, with the same note, and **Execute** stays disabled until the leg has a price (or is made aggressive). |
+| **Net Δ** | The legs' deltas added up: the units of the underlying the whole basket behaves like. |
 | **Net SPAN margin** | Margin for the whole basket calculated as one position. |
 | **Margin benefit** | How much less the basket needs than the legs would separately: the saving from hedging. |
 | **Basket ELM** | The extreme loss margin buffer on top. For stock options it is an estimate at a flat 5% (5.25% if deep out of the money); the **i** icon explains. |
@@ -75,7 +77,7 @@ Margin does not grow in a straight line with quantity, so the app checks the sca
 |---|---|
 | Chart | The basket's P&L **At expiry** across underlying prices, and optionally **Today (mark-to-model)**. |
 | **Show today's curve** | Adds today's curve: P&L if the underlying moved there right now. |
-| **Show Greeks** | Shows the basket's **Delta**, **Gamma**, **Vega** and **Theta / day**. |
+| **Show Greeks** | Shows the basket's **Delta**, **Gamma**, **Vega** and **Theta / day**. They follow the **IV shock**; at zero shock, **Delta** equals **Net Δ** under the legs. |
 | **IV shock** | Raises or lowers implied volatility, to see how today's curve reacts to a volatility change. |
 | **Max profit**, **Max loss**, **Breakevens**, **Probability of profit** | Summary of the payoff. See [PoP in the glossary](glossary.md#pop-probability-of-profit). |
 

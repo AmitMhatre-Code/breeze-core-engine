@@ -28,6 +28,23 @@ export function expiryDisplayToYears(expiryDisplay: string): number {
   return Math.max(1 / 365, years);
 }
 
+/** F&O contracts expire at the 15:30 IST close, which is 10:00 UTC. */
+const EXPIRY_CLOSE_UTC_HOUR = 10;
+const MS_PER_YEAR = 365 * 24 * 3600 * 1000;
+/** One minute: past the close the Greeks collapse to intrinsic instead of dividing by zero. */
+const MIN_YEARS_TO_CLOSE = 60_000 / MS_PER_YEAR;
+
+/** Year fraction until 15:30 IST on the expiry date, independent of the browser's time zone.
+ * Used by the Greeks; PoP and the payoff curves still use `expiryDisplayToYears`. Invalid → null. */
+export function yearsToExpiryClose(expiryDisplay: string, nowMs: number = Date.now()): number | null {
+  const m = expiryDisplay.trim().match(/^(\d{2})-([A-Za-z]{3})-(\d{4})$/);
+  if (!m) return null;
+  const mon = MONTHS[m[2]];
+  if (mon === undefined) return null;
+  const closeMs = Date.UTC(parseInt(m[3], 10), mon, parseInt(m[1], 10), EXPIRY_CLOSE_UTC_HOUR);
+  return Math.max(MIN_YEARS_TO_CLOSE, (closeMs - nowMs) / MS_PER_YEAR);
+}
+
 /** Parse DD-Mon-YYYY to UTC ms at local midnight (for sorting). Invalid → 0. */
 export function expiryDisplayToTimestamp(expiryDisplay: string): number {
   const m = expiryDisplay.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})$/);

@@ -3,6 +3,7 @@
 import { isUnpricedLeg, unpricedNote } from "@/lib/strategy-builder/leg-quote";
 import type { ReactNode } from "react";
 import { InfoPopover } from "@/components/ui/InfoPopover";
+import { DeltaHelp, NetDeltaText, PositionDeltaText } from "@/components/shared/greeks/DeltaText";
 import { LegAggressivePriceInput } from "@/components/shared/legs/LegAggressivePriceInput";
 import { LiquidityWarningIcon } from "@/components/shared/legs/LiquidityWarningIcon";
 import type { LiquidityWarning } from "@/lib/liquidity";
@@ -17,6 +18,7 @@ import {
   formatLegMargin,
   formatSignedLegPremium,
 } from "@/lib/strategy-builder/leg-ui-helpers";
+import type { PositionDelta } from "@/lib/strategy-builder/greeks";
 import { sb } from "@/lib/strategy-builder/ui";
 import type {
   BasketLegMarginEntry,
@@ -39,6 +41,8 @@ export function StrategyLegsPanel({
   onPriceChange,
   onAggressiveChange,
   legMargins,
+  legDeltas,
+  netDelta,
   totalsNetPremium,
   totalsMargin,
   onExecute,
@@ -62,6 +66,9 @@ export function StrategyLegsPanel({
   onPriceChange: (legId: string, premiumPerUnit: number | undefined) => void;
   onAggressiveChange: (legId: string, checked: boolean) => void;
   legMargins: Record<string, BasketLegMarginEntry>;
+  /** Position delta per leg id; absent for a leg with no lots. */
+  legDeltas: Record<string, PositionDelta | null>;
+  netDelta: number | null;
   totalsNetPremium: number;
   totalsMargin: {
     hasPositiveLots: boolean;
@@ -114,6 +121,14 @@ export function StrategyLegsPanel({
                   <th className="px-2 py-1.5 font-medium">Price</th>
                   <th className="px-2 py-1.5 font-medium">B:S</th>
                   <th className="px-2 py-1.5 font-medium">Premium</th>
+                  <th className="px-2 py-1.5 font-medium">
+                    <span className="inline-flex items-center gap-1">
+                      Δ
+                      <InfoPopover title="Delta" ariaLabel="Delta help">
+                        <DeltaHelp />
+                      </InfoPopover>
+                    </span>
+                  </th>
                   <th className="px-2 py-1.5 font-medium">
                     <span className="inline-flex items-center gap-1">
                       Margin
@@ -199,6 +214,9 @@ export function StrategyLegsPanel({
                       >
                         {!aggressive && isUnpricedLeg(l) ? "No quote" : formatSignedLegPremium(premTotal, l.side).text}
                       </td>
+                      <td className="px-2 py-1.5 tabular-nums">
+                        <PositionDeltaText delta={legDeltas[l.id]} lotSize={lotSize} />
+                      </td>
                       <td className="px-2 py-1.5 tabular-nums text-muted">
                         {formatLegMargin(l, legEntry, false)}
                       </td>
@@ -233,6 +251,10 @@ export function StrategyLegsPanel({
                   {unpricedNote(legs)}
                 </span>
               ) : null}
+              <TotalStat
+                label="Net Δ"
+                value={<NetDeltaText net={netDelta} lotSize={lotSize} />}
+              />
               <TotalStat
                 label="Net SPAN margin"
                 value={
@@ -317,7 +339,7 @@ function TotalStat({
   tone = "foreground",
 }: {
   label: ReactNode;
-  value: string;
+  value: ReactNode;
   tone?: "foreground" | "up" | "down";
 }) {
   const toneClass =

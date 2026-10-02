@@ -67,7 +67,7 @@ def generate_strategy_level_hedges(
 
     net_legs = _aggregate_legs(positions)
     strategy_delta, strategy_gamma, net_premium = _aggregate_greeks(
-        net_legs, spot_price, t_years, fallback_sigma, lot_size
+        net_legs, spot_price, t_years, fallback_sigma
     )
     risk_profile, exposures = _detect_risk_profile(net_legs, spot_price)
 
@@ -235,7 +235,6 @@ def _aggregate_greeks(
     spot: float,
     t_years: float,
     fallback_sigma: float,
-    lot_size: int,
 ) -> tuple[float, float, float]:
     total_delta = 0.0
     total_gamma = 0.0
@@ -252,11 +251,11 @@ def _aggregate_greeks(
         sigma = iv if iv and iv > 0 else fallback_sigma
         delta = bs_delta(spot, strike, t_years, sigma, right)
         gamma = bs_gamma(spot, strike, t_years, sigma)
-        contracts = qty * lot_size
-        total_delta += delta * contracts
-        total_gamma += gamma * contracts
+        # Position quantity is already in units (ICICI reports 1 NIFTY lot as 75), never lots.
+        total_delta += delta * qty
+        total_gamma += gamma * qty
         # Buy = cash out (negative), Sell = cash in (positive)
-        net_premium += -qty * ltp * lot_size
+        net_premium += -qty * ltp
     return total_delta, total_gamma, net_premium
 
 
@@ -376,7 +375,7 @@ def _generate_wing_candidates(
         max_loss_per_unit = width - credit_per_unit
         if max_loss_per_unit <= 0:
             continue
-        max_loss = max_loss_per_unit * hedge_qty * lot_size
+        max_loss = max_loss_per_unit * hedge_qty
         if max_loss > user_max_loss:
             continue
         net_premium = wing_ask * hedge_qty

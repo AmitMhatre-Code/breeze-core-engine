@@ -51,6 +51,8 @@ import { useGroupLiveOverlay } from "@/lib/portfolio/useGroupLiveOverlay";
 import { useGroupSubscriptionHolders } from "@/lib/portfolio/useGroupSubscriptionHolders";
 import { useGroupPoP } from "@/lib/portfolio/useGroupPoP";
 import { useLegPoP } from "@/lib/portfolio/useLegPoP";
+import { useGroupDeltas, useLegDelta } from "@/lib/portfolio/positionDeltas";
+import { NetDeltaText, PositionDeltaText } from "@/components/shared/greeks/DeltaText";
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { SPOT_STAND_IN_TITLE, spotSourceNote } from "@/lib/quote-source";
@@ -336,8 +338,8 @@ const tdSummaryShell =
   "whitespace-nowrap px-2 py-3 align-middle text-xs 2xl:px-3 2xl:py-3.5 2xl:text-sm";
 const tdSummaryBase = `${tdSummaryShell} ${tdInk}`;
 
-/** Table column count: Select, Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, PoP, Actions. */
-const TABLE_COL_COUNT = 14;
+/** Table column count: Select, Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, Δ, PoP, Actions. */
+const TABLE_COL_COUNT = 15;
 
 /** Small pulsing dot — same convention as AppShell's session indicator. */
 function LiveDot({ title }: { title: string }) {
@@ -436,8 +438,8 @@ function legToExitRuleTarget(row: PortfolioPositionRecord): LegExitRuleTarget {
   };
 }
 
-/** Individual-legs table column count: Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, PoP, Actions. */
-const LEG_TABLE_COL_COUNT = 13;
+/** Individual-legs table column count: Row, Option, Type, Position, Qty, Avg, LTP, Spot, MTM, Carry, Span+ELM, Δ, PoP, Actions. */
+const LEG_TABLE_COL_COUNT = 14;
 
 /**
  * Compact status chip for a Strategy Group's PB/SL rule — shown next to the group title
@@ -861,7 +863,8 @@ function PortfolioGroupTableBlock({
   onToggleGroupAll,
   onSquareOffSelectedClick,
 }: GroupBlockProps) {
-  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
+  const { rows: liveRows, isLive, chainSuccess } = useGroupLiveOverlay(g, holderId);
+  const deltas = useGroupDeltas(chainSuccess, g.rows, g.expiryDate);
   const pop = useGroupPoP(g);
   useEffect(() => {
     onLiveChange(g.key, isLive);
@@ -954,6 +957,9 @@ function PortfolioGroupTableBlock({
         <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
           <SpanElmCell span={gSpan} elm={gElm} />
         </td>
+        <td className={`${tdSummaryShell} text-right font-mono tabular-nums font-medium`}>
+          <NetDeltaText net={deltas.net} lotSize={deltas.lotSize} />
+        </td>
         <td className={`${tdSummaryBase} text-right font-mono tabular-nums`}>
           {formatPoP(pop)}
         </td>
@@ -1013,6 +1019,9 @@ function PortfolioGroupTableBlock({
                 <td className={`${tdBase} text-right font-mono tabular-nums app-text-muted`}>
                   —
                 </td>
+                <td className={`${tdShell} text-right font-mono tabular-nums`}>
+                  <PositionDeltaText delta={deltas.rows[localIdx]} lotSize={deltas.lotSize} />
+                </td>
                 <td className={`${tdBase} text-right font-mono tabular-nums app-text-muted`}>
                   —
                 </td>
@@ -1065,7 +1074,8 @@ function PortfolioGroupCardBlock({
   onToggleGroupAll,
   onSquareOffSelectedClick,
 }: GroupBlockProps) {
-  const { rows: liveRows, isLive } = useGroupLiveOverlay(g, holderId);
+  const { rows: liveRows, isLive, chainSuccess } = useGroupLiveOverlay(g, holderId);
+  const deltas = useGroupDeltas(chainSuccess, g.rows, g.expiryDate);
   const pop = useGroupPoP(g);
   useEffect(() => {
     onLiveChange(g.key, isLive);
@@ -1163,6 +1173,14 @@ function PortfolioGroupCardBlock({
             </span>
           </p>
           <p>
+            <span className="app-text-muted">Net Δ:</span>{" "}
+            <NetDeltaText
+              net={deltas.net}
+              lotSize={deltas.lotSize}
+              className="font-mono tabular-nums font-medium"
+            />
+          </p>
+          <p>
             <span className="app-text-muted">PoP:</span>{" "}
             <span className="font-mono tabular-nums">{formatPoP(pop)}</span>
           </p>
@@ -1239,6 +1257,14 @@ function PortfolioGroupCardBlock({
                       {carryTitle.text}
                     </span>
                   </p>
+                  <p>
+                    <span className="app-text-muted">Δ:</span>{" "}
+                    <PositionDeltaText
+                      delta={deltas.rows[localIdx]}
+                      lotSize={deltas.lotSize}
+                      className="font-mono tabular-nums font-medium"
+                    />
+                  </p>
                 </div>
               );
             })}
@@ -1284,6 +1310,7 @@ function PortfolioLegTableBlock({
   const expiryDate = String(row.expiry_date ?? "");
   const exchangeCode = String(row.exchange_code ?? "NFO");
   const pop = useLegPoP(row, stockCode, expiryDate, exchangeCode);
+  const legDelta = useLegDelta(row, stockCode, expiryDate, exchangeCode);
   const mtm = formatMtmCarry(row.current_profit);
   const carry = formatMtmCarry(row.carry_profit);
   const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
@@ -1349,6 +1376,9 @@ function PortfolioLegTableBlock({
           {/* SPAN is netted at group/portfolio level — never attributable to one leg. */}
           —
         </td>
+        <td className={`${tdShell} text-right font-mono tabular-nums`}>
+          <PositionDeltaText delta={legDelta.delta} lotSize={legDelta.lotSize} />
+        </td>
         <td className={`${tdBase} text-right font-mono tabular-nums`}>
           {formatPoP(pop)}
         </td>
@@ -1382,6 +1412,7 @@ function PortfolioLegCardBlock({
   const expiryDate = String(row.expiry_date ?? "");
   const exchangeCode = String(row.exchange_code ?? "NFO");
   const pop = useLegPoP(row, stockCode, expiryDate, exchangeCode);
+  const legDelta = useLegDelta(row, stockCode, expiryDate, exchangeCode);
   const mtm = formatMtmCarry(row.current_profit);
   const carry = formatMtmCarry(row.carry_profit);
   const cr = formatCarryRet(coerceNum(row.carry_margin_returns));
@@ -1462,6 +1493,14 @@ function PortfolioLegCardBlock({
             {/* SPAN is netted at group/portfolio level — never attributable to one leg. */}
             <span className="app-text-muted">Span + ELM:</span>{" "}
             <span className="font-mono tabular-nums app-text-muted">—</span>
+          </p>
+          <p>
+            <span className="app-text-muted">Δ:</span>{" "}
+            <PositionDeltaText
+              delta={legDelta.delta}
+              lotSize={legDelta.lotSize}
+              className="font-mono tabular-nums font-medium"
+            />
           </p>
           <p>
             <span className="app-text-muted">PoP:</span>{" "}
@@ -1724,6 +1763,12 @@ export function OpenPositionsTable({
                   </th>
                   <th
                     className={`${thBase} text-right`}
+                    title="Delta in units of the underlying: per leg, option delta × quantity (negative when sold); on the group row, the exact sum over its open legs. Hover a value for its breakdown."
+                  >
+                    Δ
+                  </th>
+                  <th
+                    className={`${thBase} text-right`}
                     title="Probability of profit at expiry — group level only"
                   >
                     PoP
@@ -1798,6 +1843,12 @@ export function OpenPositionsTable({
                         + ELM
                       </span>
                     </span>
+                  </th>
+                  <th
+                    className={`${thBase} text-right`}
+                    title="Delta in units of the underlying: option delta × quantity, negative when sold. Hover a value for its breakdown."
+                  >
+                    Δ
                   </th>
                   <th
                     className={`${thBase} text-right`}

@@ -4,13 +4,14 @@ import { useId, useMemo, useState } from "react";
 import { InfinitySymbol } from "@/components/shared/payoff/InfinitySymbol";
 import { PayoffChart } from "@/components/shared/payoff/PayoffChart";
 import { PayoffScenarioControls } from "@/components/shared/payoff/PayoffScenarioControls";
+import { ScenarioGreeksLine } from "@/components/shared/greeks/DeltaText";
 import { sigmaAtPrice, sigmaForLeg, type SigmaSmiles } from "@/lib/strategy-builder/chainIv";
+import { scenarioGreeks, type GreeksModel } from "@/lib/strategy-builder/greeks";
 import { expiryDisplayToYears } from "@/lib/strategy-builder/expiry";
 import {
   estimateProbabilityOfProfit,
   PAYOFF_CHART_SPOT_HALFBAND,
   payoffChartSpotDomain,
-  portfolioGreeks,
   scanMarkToModelCurve,
   scanPayoffCurve,
   summarizePayoffExact,
@@ -36,6 +37,7 @@ export function StrategyPayoffPanel({
   spot,
   atmIv,
   sigmaSmiles = null,
+  greeksModel,
   expiryDate,
   lotSize,
 }: {
@@ -45,6 +47,8 @@ export function StrategyPayoffPanel({
   atmIv: number | null;
   /** Per-strike IV smile (skew-aware); falls back to flat `atmIv` where a strike lacks trusted anchors. */
   sigmaSmiles?: SigmaSmiles | null;
+  /** Same model as the legs table's Net Δ, so the two agree with the what-if controls reset. */
+  greeksModel: GreeksModel | null;
   expiryDate: string;
   lotSize: number;
 }) {
@@ -129,18 +133,16 @@ export function StrategyPayoffPanel({
     );
   }, [spot, T, sigma, sigmaSmiles, legs, lotSize]);
 
-  const greeks = useMemo(() => {
-    if (spot == null || tEffective <= 0 || !legs.length) {
-      return { delta: 0, gamma: 0, vega: 0, thetaPerDay: 0 };
-    }
-    return portfolioGreeks(
-      spot,
-      legs,
-      lotSize,
-      tEffective,
-      (leg) => sigmaForLeg(sigmaSmiles, leg, spot, sigma) * (1 + ivShockPct / 100),
-    );
-  }, [spot, tEffective, sigma, sigmaSmiles, ivShockPct, legs, lotSize]);
+  // Live time to the 15:30 close unless the DTE what-if is moved.
+  const greeks = useMemo(
+    () =>
+      scenarioGreeks(greeksModel, legs, lotSize, {
+        // 0 DTE reads as the last minute before the close, where deltas are near intrinsic.
+        tYears: dteOverrideDays != null ? Math.max(dteOverrideDays / 365, 1 / (365 * 24 * 60)) : null,
+        ivShockPct,
+      }),
+    [greeksModel, legs, lotSize, dteOverrideDays, ivShockPct],
+  );
 
   const payoffTitleId = useId();
   const payoffDescId = useId();
@@ -272,32 +274,7 @@ export function StrategyPayoffPanel({
           </button>
         </div>
         {showGreeks && hasStrategyLegs ? (
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
-            <span className="text-muted">
-              Delta{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.delta.toFixed(4)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Gamma{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.gamma.toFixed(6)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Vega{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.vega.toFixed(4)}
-              </span>
-            </span>
-            <span className="text-muted">
-              Theta / day{" "}
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {greeks.thetaPerDay.toFixed(4)}
-              </span>
-            </span>
-          </div>
+          <ScenarioGreeksLine greeks={greeks} lotSize={lotSize} />
         ) : null}
       </div>
     </div>
