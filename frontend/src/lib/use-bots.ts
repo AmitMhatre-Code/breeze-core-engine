@@ -22,13 +22,15 @@ export const BOT_EXPIRY_INDEX_WRITER = "expiry_index_writer" as const;
 export const BOT_MOMENTUM_LONG_SCALPER = "momentum_long_scalper" as const;
 export const BOT_IRON_FLY_SCALPER = "iron_fly_scalper" as const;
 export const BOT_CAS_BINGO = "cas_bingo" as const;
+export const BOT_DYNAMIC_CONDOR = "dynamic_condor" as const;
 
 export type BotType =
   | typeof BOT_HOLDINGS_WRITER
   | typeof BOT_EXPIRY_INDEX_WRITER
   | typeof BOT_MOMENTUM_LONG_SCALPER
   | typeof BOT_IRON_FLY_SCALPER
-  | typeof BOT_CAS_BINGO;
+  | typeof BOT_CAS_BINGO
+  | typeof BOT_DYNAMIC_CONDOR;
 
 // --- CAS Bingo (docs/bots-cas-bingo-plan.md) ------------------------------------------
 
@@ -493,6 +495,10 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
   [BOT_CAS_BINGO]: {
     title: "CAS Bingo",
     blurb: "Expiry-day spreads or a strangle around the closing auction, buy leg first.",
+  },
+  [BOT_DYNAMIC_CONDOR]: {
+    title: "Dynamic Iron Condor",
+    blurb: "Runs a NIFTY condor campaign at two daily checks: tranches, rolls, exits.",
   },
 };
 

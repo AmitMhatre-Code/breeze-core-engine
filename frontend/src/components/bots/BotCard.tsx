@@ -8,6 +8,7 @@ import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotRunSheet } from "@/components/bots/BotRunSheet";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { CasBingoCard } from "@/components/bots/CasBingoCard";
+import { CondorBotCard } from "@/components/bots/CondorBotCard";
 import { PriorityPill } from "@/components/bots/PriorityPill";
 import { ScalperCard } from "@/components/bots/ScalperCard";
 import {
@@ -260,6 +261,9 @@ export function BotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) {
   }
   // CAS Bingo is its own shape too: Manual / Simulation / Autonomous, no Telegram approval,
   // and a manual sheet that prices five structures rather than approving one proposal.
+  if (bot.bot_type === "dynamic_condor") {
+    return <CondorBotCard bot={bot} readOnly={readOnly} />;
+  }
   if (bot.bot_type === "cas_bingo") {
     return <CasBingoCard bot={bot} readOnly={readOnly} />;
   }

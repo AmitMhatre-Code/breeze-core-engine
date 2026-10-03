@@ -66,6 +66,11 @@ const nextConfig = {
         destination: `${backendUpstream}/api/signals/:path*`,
       },
       {
+        // Dynamic Iron Condors: campaigns and their backtests (docs/dynamic-iron-condor-plan.md).
+        source: "/api/condor/:path*",
+        destination: `${backendUpstream}/api/condor/:path*`,
+      },
+      {
         source: "/api/outlook/:path*",
         destination: `${backendUpstream}/api/outlook/:path*`,
       },

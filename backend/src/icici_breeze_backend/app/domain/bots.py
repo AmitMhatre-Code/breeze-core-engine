@@ -19,6 +19,7 @@ BotType = Literal[
     "momentum_long_scalper",
     "iron_fly_scalper",
     "cas_bingo",
+    "dynamic_condor",
 ]
 
 # How a run was started. `schedule` is the bot's own timer, `manual` a user-pressed scan,

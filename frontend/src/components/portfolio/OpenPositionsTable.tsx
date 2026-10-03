@@ -56,6 +56,9 @@ import { NetDeltaText, PositionDeltaText } from "@/components/shared/greeks/Delt
 import type { PortfolioPositionRecord } from "@/lib/portfolio";
 import { formatOptionSymbolLabel } from "@/lib/strategy-builder/leg-ui-helpers";
 import { SPOT_STAND_IN_TITLE, spotSourceNote } from "@/lib/quote-source";
+import { CondorCampaignPanel } from "@/components/condor/CondorCampaignPanel";
+import type { TicketRequest } from "@/components/condor/AdjustTicket";
+import { campaignForGroup, useCondorCampaigns } from "@/lib/condor";
 
 export type PortfolioPositionsViewMode = "grouped" | "individual";
 
@@ -450,6 +453,20 @@ const LEG_TABLE_COL_COUNT = 14;
  * A Reset chip is tiered by hazard (see `lib/portfolio/reset-warning`) rather than being
  * one uniform red — a benign Reset shouldn't shout, and a contra-risk one must.
  */
+/** Marks a group a Dynamic Iron Condor campaign manages (docs/dynamic-iron-condor-plan.md). */
+function CondorBadge({ stockCode, expiryDate }: { stockCode: string; expiryDate: string }) {
+  const campaigns = useCondorCampaigns();
+  if (!campaignForGroup(campaigns.data?.campaigns, stockCode, expiryDate)) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-accent-strong px-2 py-0.5 text-[11px] font-semibold text-accent-ink"
+      title="Managed by a Dynamic Iron Condor campaign — expand the group for its card"
+    >
+      Condor
+    </span>
+  );
+}
+
 function ExitRuleBadge({ rule }: { rule: SquareOffRuleRecord }) {
   if (rule.status === "reset") {
     return (
@@ -747,8 +764,26 @@ function GroupExpandedExtras({
     openLegs.length > 0 && openLegs.every((idx) => selectedLegs.has(idx));
   const pbslGated = !squareOffRule && !allOpenSelected;
   const legWord = openLegs.length === 1 ? "leg" : "legs";
-  const pbslHint =
-    openLegs.length === 0
+  // A Dynamic Iron Condor campaign owns this group: it has its own max-loss, and every roll
+  // would reset a PB/SL rule, so the backend refuses to arm one here (plan section 2).
+  const condor = campaignForGroup(useCondorCampaigns().data?.campaigns, g.stockCode, g.expiryDate);
+  // On a campaign's group, Square Off goes through the campaign as "Close selected", so the
+  // fills land in its ledger and the buy-backs go before the wings (plan section 6a).
+  const [condorRequest, setCondorRequest] = useState<TicketRequest | null>(null);
+  const squareOff = (e: MouseEvent) => {
+    if (!condor) {
+      onSquareOffSelectedClick(e);
+      return;
+    }
+    const legs = [...selectedLegs]
+      .map((i) => g.rows[i])
+      .filter(Boolean)
+      .map((row) => ({ strike: Number(row.strike_price), right: String(row.right ?? "") }));
+    setCondorRequest({ kind: "close_selected", params: { legs } });
+  };
+  const pbslHint = condor
+    ? "Managed by an Iron Condor campaign, which has its own max-loss"
+    : openLegs.length === 0
       ? "No open legs in this group"
       : pbslGated
         ? `Select all ${openLegs.length} ${legWord} to apply`
@@ -774,17 +809,24 @@ function GroupExpandedExtras({
               }
               hint={pbslHint}
               onClick={onOpenExitRuleModal}
-              disabled={pbslGated || openLegs.length === 0}
+              disabled={Boolean(condor && !squareOffRule) || pbslGated || openLegs.length === 0}
             />
             <GroupPillButton
               variant="table"
               label="Square Off Selected"
-              onClick={onSquareOffSelectedClick}
+              hint={condor ? "Through the campaign: shorts first, booked to its ledger" : undefined}
+              onClick={squareOff}
               disabled={selectedCount === 0}
             />
           </div>
         </div>
       </div>
+      <CondorCampaignPanel
+        stockCode={g.stockCode}
+        expiryDate={g.expiryDate}
+        request={condorRequest}
+        onRequestHandled={() => setCondorRequest(null)}
+      />
     </div>
   );
 }
@@ -926,6 +968,7 @@ function PortfolioGroupTableBlock({
               {squareOffRule ? (
                 <ExitRuleBadge rule={squareOffRule} />
               ) : null}
+              <CondorBadge stockCode={g.stockCode} expiryDate={g.expiryDate} />
             </span>
             <ExitRuleSummaryLine
               rule={squareOffRule}
@@ -1140,6 +1183,7 @@ function PortfolioGroupCardBlock({
             {squareOffRule ? (
               <ExitRuleBadge rule={squareOffRule} />
             ) : null}
+            <CondorBadge stockCode={g.stockCode} expiryDate={g.expiryDate} />
           </h3>
           <ExitRuleSummaryLine
             rule={squareOffRule}

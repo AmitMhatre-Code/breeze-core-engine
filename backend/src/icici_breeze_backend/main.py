@@ -262,6 +262,14 @@ def _ensure_app_database() -> None:
             from icici_breeze_backend.app.db.bots_migrate import ensure_bots_tables
 
             ensure_bots_tables(db_path)
+            from icici_breeze_backend.app.db.condor_migrate import ensure_condor_tables
+
+            ensure_condor_tables(db_path)
+            from icici_breeze_backend.app.repositories.condor import fail_interrupted_executions
+
+            # A ticket cut off by a restart is marked, never resumed: what it reached is on its
+            # row, and the card's ledger/broker comparison shows anything left to assign.
+            fail_interrupted_executions()
             from icici_breeze_backend.app.db.signals_migrate import ensure_signal_tables
 
             # Creates the signal grid's tables and drops the retired signal's (decision 14).
@@ -502,6 +510,12 @@ def start_application():
 
         start_bot_scheduler()
 
+        # Dynamic Iron Condor campaign checks, at each campaign's start- and end-of-day times
+        # (docs/dynamic-iron-condor-plan.md section 6). Suggests and alerts; never trades.
+        from icici_breeze_backend.app.services.condor.scheduler import start_condor_scheduler
+
+        start_condor_scheduler()
+
         # Arms a bot position's stop once its entry orders finish, off the WS order feed.
         # Started with the scheduler, and resumes any stop still waiting from before a
         # restart -- that gap is exactly where a position would otherwise sit unprotected.
@@ -612,12 +626,14 @@ def start_application():
 
         yield
         from icici_breeze_backend.app.services.bots.scheduler import stop_bot_scheduler
+        from icici_breeze_backend.app.services.condor.scheduler import stop_condor_scheduler
         from icici_breeze_backend.app.services.bots.scalping.runtime import stop_scalper_loop
         from icici_breeze_backend.app.services.bots.cas_bingo.runtime import stop_cas_bingo_loop
 
         from icici_breeze_backend.app.services.bots.exit_arming import stop_exit_arming
 
         stop_bot_scheduler()
+        stop_condor_scheduler()
         stop_exit_arming()
         stop_scalper_loop()
         stop_cas_bingo_loop()

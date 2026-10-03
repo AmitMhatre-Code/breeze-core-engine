@@ -53,6 +53,7 @@ def test_list_returns_both_bots_disabled(client):
         BOT_MOMENTUM_LONG_SCALPER,
         BOT_IRON_FLY_SCALPER,
         "cas_bingo",
+        "dynamic_condor",
     }
     assert all(b["enabled"] is False for b in body)
 

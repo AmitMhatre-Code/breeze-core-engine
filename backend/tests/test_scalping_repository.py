@@ -13,6 +13,7 @@ import pytest
 
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_IRON_FLY_SCALPER,
@@ -86,6 +87,7 @@ def test_all_four_bots_are_listed(db_path):
         BOT_MOMENTUM_LONG_SCALPER,
         BOT_IRON_FLY_SCALPER,
         BOT_CAS_BINGO,
+        BOT_DYNAMIC_CONDOR,
     }
     scalpers = [b for b in repo.list_bots(USER) if b.bot_type in
                 (BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER)]

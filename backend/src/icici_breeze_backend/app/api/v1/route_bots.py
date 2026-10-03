@@ -28,6 +28,7 @@ from icici_breeze_backend.app.db.bots_migrate import (
     BOT_CAS_BINGO,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
+    BOT_DYNAMIC_CONDOR,
     BOT_TYPES,
     SCALPER_BOT_TYPES,
 )
@@ -355,6 +356,13 @@ def update_bot(
 
     before = repo.get_or_create_bot(ctx.user_id, bot_type)
     armed = payload.enabled if payload.enabled is not None else before.enabled
+    if bot_type == BOT_DYNAMIC_CONDOR:
+        from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+        try:
+            condor_bot.guard(ctx.user_id, after_enabled=armed, after_config={**before.config, **(payload.config or {})})
+        except condor_bot.Refused as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
     if armed and (payload.config is not None or (payload.enabled and not before.enabled)):
         from icici_breeze_backend.app.repositories.bots import _CONFIG_MODEL
 
@@ -367,6 +375,10 @@ def update_bot(
         priority=payload.priority,
         config=payload.config,
     )
+    if bot_type == BOT_DYNAMIC_CONDOR:
+        from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+        condor_bot.on_config_change(ctx.user_id, before=before.config, after=updated.config, after_enabled=updated.enabled)
     if payload.enabled is not None and payload.enabled != before.enabled:
         AuditLogger(None).log_operation(
             ctx.user_id,

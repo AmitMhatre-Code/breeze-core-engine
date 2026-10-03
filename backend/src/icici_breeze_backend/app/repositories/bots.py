@@ -19,11 +19,13 @@ from typing import Any, Optional
 from icici_breeze_backend.app.core.timezone import ist_timestamp, now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_IRON_FLY_SCALPER,
     BOT_MOMENTUM_LONG_SCALPER,
 )
+from icici_breeze_backend.app.domain.condor import DynamicCondorBotConfig
 from icici_breeze_backend.app.domain.bots import (
     BotCycleRecord,
     BotRecord,
@@ -45,6 +47,7 @@ _CONFIG_MODEL = {
     BOT_MOMENTUM_LONG_SCALPER: MomentumLongScalperConfig,
     BOT_IRON_FLY_SCALPER: IronFlyScalperConfig,
     BOT_CAS_BINGO: CasBingoConfig,
+    BOT_DYNAMIC_CONDOR: DynamicCondorBotConfig,
 }
 
 # Cross-bot ordering seeded so no two bots are ever tied on creation. Bot 1 leads because it
@@ -58,6 +61,7 @@ _DEFAULT_PRIORITY = {
     BOT_MOMENTUM_LONG_SCALPER: 3,
     BOT_IRON_FLY_SCALPER: 4,
     BOT_CAS_BINGO: 5,
+    BOT_DYNAMIC_CONDOR: 6,
 }
 
 
@@ -164,6 +168,7 @@ _LISTED_BOT_TYPES = (
     BOT_MOMENTUM_LONG_SCALPER,
     BOT_IRON_FLY_SCALPER,
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
 )
 
 

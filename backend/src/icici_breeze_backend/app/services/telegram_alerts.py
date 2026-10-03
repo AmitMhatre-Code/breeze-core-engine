@@ -511,6 +511,7 @@ _BOT_LABEL = {
     "momentum_long_scalper": "Long Scalper",
     "iron_fly_scalper": "Intraday Iron Fly",
     "cas_bingo": "CAS Bingo",
+    "dynamic_condor": "Dynamic Iron Condor",
 }
 
 

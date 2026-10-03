@@ -5,6 +5,7 @@ import pytest
 
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
     BOT_IRON_FLY_SCALPER,
@@ -51,6 +52,7 @@ def test_bots_are_created_lazily_disabled_with_policy_defaults(db_path):
         BOT_MOMENTUM_LONG_SCALPER,
         BOT_IRON_FLY_SCALPER,
         BOT_CAS_BINGO,
+        BOT_DYNAMIC_CONDOR,
     }
     assert all(b.enabled is False for b in bots), "a new bot must never start armed"
 
@@ -136,7 +138,7 @@ def _priorities(user_id):
 
 
 def test_new_bots_get_distinct_priorities(db_path):
-    assert sorted(_priorities("u1").values()) == [1, 2, 3, 4, 5]
+    assert sorted(_priorities("u1").values()) == [1, 2, 3, 4, 5, 6]
 
 
 def test_taking_a_held_priority_swaps_with_its_holder(db_path):
@@ -145,7 +147,7 @@ def test_taking_a_held_priority_swaps_with_its_holder(db_path):
     after = _priorities("u1")
     assert after[BOT_CAS_BINGO] == 1
     assert after[BOT_HOLDINGS_WRITER] == before[BOT_CAS_BINGO]
-    assert sorted(after.values()) == [1, 2, 3, 4, 5]
+    assert sorted(after.values()) == [1, 2, 3, 4, 5, 6]
 
 
 def test_priority_swap_never_reaches_another_user(db_path):
@@ -172,6 +174,7 @@ def test_migration_separates_priorities_the_alter_default_tied(db_path):
         BOT_MOMENTUM_LONG_SCALPER: 3,
         BOT_IRON_FLY_SCALPER: 4,
         BOT_CAS_BINGO: 5,
+        BOT_DYNAMIC_CONDOR: 6,
     }
 
 

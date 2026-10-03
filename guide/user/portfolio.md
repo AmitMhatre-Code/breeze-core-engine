@@ -83,8 +83,57 @@ Underneath, **Max profit**, **Max loss**, **Breakevens** and **PoP** summarise t
 
 | Button | What it does |
 |---|---|
-| **Profit Booking / Stop Loss** | Opens the automated-exit dialog for the whole group (below). It is enabled only when **every** open leg of the group is ticked, so that what you have selected matches what the rule will close. The line under the label says so: **Select all N legs to apply**, or **Applies to all N legs**. It reads **Edit Profit Booking / Stop Loss** once a rule is armed. |
+| **Profit Booking / Stop Loss** | Opens the automated-exit dialog for the whole group (below). It is enabled only when **every** open leg of the group is ticked, so that what you have selected matches what the rule will close. The line under the label says so: **Select all N legs to apply**, or **Applies to all N legs**. It reads **Edit Profit Booking / Stop Loss** once a rule is armed. On a group an [Iron Condor campaign](#iron-condor-campaigns) manages it is disabled, and says why. |
 | **Square Off Selected** | Closes the legs you have ticked. See [Squaring off](#squaring-off). |
+
+### Iron Condor campaigns
+
+Below the actions of every NIFTY group is its **Dynamic Iron Condor** section. On a group no campaign manages, **Adopt as a campaign…** opens the campaign settings and turns the group into one (see [Iron Condors](iron-condors.md#starting-a-campaign)). The group's row then carries a **Condor** badge.
+
+![A campaign's card on its Portfolio group](images/dark/portfolio-condor-card.png)
+
+The campaign's card shows:
+
+| Item | What it is |
+|---|---|
+| **Campaign P&L** | The ledger's cash plus what closing every leg now would fetch (longs at the bid, shorts bought back at the ask), net of charges. This is what the max loss is checked against. |
+| **Max loss** | The campaign's stop, in rupees. |
+| **Total net credit** | Every rupee in and out over the campaign's life, net of charges. |
+| **Worst loss at wings** | The lowest the campaign can finish at expiry with the current legs. A dash means it could not be worked out, for example while a short has no wing. |
+| **Break-evens** | Where expiry would leave the campaign flat, including every past roll. |
+| **Short \|Δ\| PE · CE**, **Net Δ per lot**, **Untested decay** | What the roll rules read, beside the thresholds they are compared with. |
+| **Evaluated now** | The rules run on today's prices, refreshed every 20 seconds. **Indicative** means some prices were stand-ins (outside market hours, closing prices are used): it is a reading, never a decision. When it suggests an action, **Execute this suggestion…** opens it as a ticket. |
+| **Last scheduled check** | What the last 10:30 or 15:31 check suggested. |
+| **Ledger**, **Executions**, **Check history**, **Settings** | Every fill, every ticket and how it went (including any warnings you overrode), every check, and the campaign's settings. **Stop managing…** ends the campaign and keeps its ledger. Nothing is traded and the legs stay open. |
+
+#### Adjusting a campaign
+
+**Adjust…** opens a ticket for the campaign. Start from a template, or a blank ticket, then edit any row (action, strike, right, quantity, and the expiry for a time roll's second half):
+
+![The Adjust ticket](images/dark/portfolio-condor-ticket.png)
+
+| Template | Fills in |
+|---|---|
+| **Suggested action** | What the rules suggest now. A due tranche is sized at the **Lots** you enter. |
+| **Roll selected legs** | The legs ticked in the ticket, moved to **Roll to strike** or **\|Δ\|**. With **Wing follows at the same width** ticked, a rolled short's wing moves with it. |
+| **Convert to iron fly** | The untested short moved to the tested strike, its wing at the tested side's width. |
+| **Add tranche** | A new condor at the entry deltas, at **Lots**. |
+| **Close a side** / **Close selected** / **Close all** | Shorts bought back, then wings sold. |
+| **Time roll** | Closes this cycle and opens the next expiry at **Lots**, in one ticket. |
+| **Blank** | Rows you add yourself. |
+
+**Preview** prices the ticket and shows the orders in the order they will go out, the cash it brings in or costs after charges, and the position after: net delta per lot, worst loss, break-evens, total credit and margin before and after. Any edit needs a fresh preview.
+
+The campaign's rules come back as **warnings** you may override: moving the tested side, inverting the strangle, a roll below the minimum credit, wings at unequal widths, margin above the ceiling, and thin liquidity on any order. The button then reads **Execute anyway**, and the warnings are kept with the execution. The one thing a ticket cannot do is leave a short with no long to cap it: that is shown in red and the ticket is **Blocked**.
+
+**Executing.** Orders go out one at a time: new wings first, then buy-backs, then new shorts, then old wings, so no short is ever without its wing. Each order waits for its fill before the next is sent, and each fill goes into the ledger as it lands. If an order does not fill, nothing after it is sent and the ticket stops, saying so. If an order's outcome cannot be confirmed, the ticket stops and alerts you to check the Order Book. A position is never opened on a stand-in price; a close may use ICICI's own quote. In [read-only mode](read-only-mode.md) a ticket that only closes still runs; one that opens anything is refused.
+
+**Square Off Selected** on a campaign's group opens this ticket on **Close selected**, so the close is booked to the campaign.
+
+**When the broker and the ledger differ.** If the group's legs change outside the campaign (an order from another page or from ICICI's app), the card lists each difference and the rules decide nothing until each is settled:
+
+- **Assign to campaign** books the difference into the ledger at the price you enter. The broker's average price is filled in where there is one.
+- **Leave out** keeps extra exposure outside the campaign. It stays visible as *outside the ledger*, and the rules ignore it. Legs the campaign held that are no longer at the broker cannot be left out; assign the price they were closed at.
 
 ## Profit Booking / Stop Loss
 

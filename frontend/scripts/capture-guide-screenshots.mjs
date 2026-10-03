@@ -306,6 +306,7 @@ const SHOTS = [
   // Pages
   { name: "performance", auth: true, run: async (p, t) => { await go(p, "/performance", { waitFor: "P&L statement", wait: 3000 }); await shoot(p, t, "performance", "full"); } },
   { name: "signals", auth: true, run: async (p, t) => { await go(p, "/signals", { waitFor: "Backtest every signal" }); await shoot(p, t, "signals", "full"); } },
+  { name: "iron-condors", auth: true, run: async (p, t) => { await go(p, "/iron-condors", { waitFor: "Lots per tranche" }); await shoot(p, t, "iron-condors", "full"); } },
   {
     name: "bots",
     auth: true,
@@ -424,6 +425,37 @@ const SHOTS = [
       await go(p, "/portfolio", { waitFor: "Open positions", wait: 6000 });
       await shoot(p, t, "portfolio-overview", "full");
       await shoot(p, t, "portfolio-group-expanded", p.locator("tr.app-table-row:has-text('What-if')").first());
+    },
+  },
+  {
+    // A campaign's card on its NIFTY group. Adopts the mock NIFTY group as a campaign the first
+    // time (mock data only), then shoots the section.
+    name: "portfolio-condor-card",
+    auth: true,
+    run: async (p, t) => {
+      await go(p, "/portfolio", { waitFor: "Open positions", wait: 4000 });
+      const row = p.locator("tr[role=button]", { hasText: "NIFTY" }).first();
+      if ((await row.getAttribute("aria-expanded")) !== "true") await row.click();
+      const section = p.locator("section[aria-label='Dynamic Iron Condor']").first();
+      await section.waitFor({ timeout: 20_000 });
+      const adopt = section.getByRole("button", { name: "Adopt as a campaign…" });
+      if (await adopt.isVisible().catch(() => false)) {
+        await adopt.click();
+        await section.getByRole("button", { name: /^Adopt NIFTY/ }).click();
+      }
+      await section.getByText("Evaluated now").waitFor({ timeout: 30_000 });
+      await p.waitForTimeout(1500);
+      await shoot(p, t, "portfolio-condor-card", section);
+      // The Adjust ticket, previewed on Close all (nothing is executed).
+      await section.getByRole("button", { name: "Adjust…" }).click();
+      const ticket = dialog(p);
+      await ticket.getByRole("button", { name: "Close all", exact: true }).click();
+      await ticket.locator("input[type=number]").first().waitFor({ timeout: 20_000 });
+      await ticket.getByRole("button", { name: "Preview" }).click();
+      await ticket.getByText("Total credit after").waitFor({ timeout: 30_000 });
+      await p.waitForTimeout(800);
+      await shoot(p, t, "portfolio-condor-ticket", ticket);
+      await ticket.getByRole("button", { name: "Close", exact: true }).click();
     },
   },
   {

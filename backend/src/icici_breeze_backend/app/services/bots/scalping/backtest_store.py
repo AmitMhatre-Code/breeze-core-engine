@@ -32,6 +32,10 @@ BACKTEST_DB = "backtest.sqlite3"
 
 INTERVAL_MINUTE = "1minute"
 INTERVAL_SECOND = "1second"
+# The Dynamic Iron Condor replay decides only at two checks a day, so it reads 5-minute bars:
+# 1,000 rows then cover about thirteen sessions instead of under three, which is what makes a
+# multi-week position affordable in calls (docs/dynamic-iron-condor-plan.md section 5).
+INTERVAL_5MIN = "5minute"
 
 # A complete NSE session is 09:15-15:29, 375 one-minute bars. A day short of this is either a
 # half day or a truncated fetch, and `coverage` lists it so the reader can tell which. Futures

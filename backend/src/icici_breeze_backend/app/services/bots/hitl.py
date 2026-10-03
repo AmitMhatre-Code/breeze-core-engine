@@ -25,6 +25,7 @@ import re
 from typing import Any, Optional
 
 from icici_breeze_backend.app.db.bots_migrate import (
+    BOT_DYNAMIC_CONDOR,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_HOLDINGS_WRITER,
 )
@@ -377,6 +378,14 @@ def handle_callback(event: dict[str, Any]) -> None:
     bot_type = str(claim["bot_type"])
     ask = repo.open_approval_message(token)
     stamp = now_ist().strftime("%H:%M")
+
+    if bot_type == BOT_DYNAMIC_CONDOR:
+        # The condor bot's proposals are campaign tickets, not Bot 1/2 legs: same token, same
+        # buttons, its own executor (services/condor/bot.py).
+        from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+        condor_bot.handle_approval(user_id, str(claim["proposal_id"]), action, ask, stamp)
+        return
 
     if action == "r":
         _retire(ask, f"❌ *Rejected at {stamp}* — nothing was placed.")

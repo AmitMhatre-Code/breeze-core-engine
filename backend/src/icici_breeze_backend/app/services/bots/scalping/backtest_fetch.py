@@ -334,7 +334,7 @@ class Fetcher:
 
     def fetch_need(self, need: Need) -> tuple[int, Optional[str]]:
         """Fetch one needed window and record that it was asked for. (rows stored, error)."""
-        if need.interval == store.INTERVAL_MINUTE:
+        if need.interval in (store.INTERVAL_MINUTE, store.INTERVAL_5MIN):
             frm, to = _day_window(need.start.date(), need.end.date())
         else:
             frm, to = self.stamp(need.start), self.stamp(need.end)

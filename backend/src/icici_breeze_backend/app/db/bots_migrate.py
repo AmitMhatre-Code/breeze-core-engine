@@ -40,12 +40,16 @@ SCALPER_BOT_TYPES = (BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER)
 # `bot_cycles` rows like the scalpers, but runs its own loop and is NOT a scalper: it has no
 # paper-evidence gate and none of the scalpers' session/cooldown machinery.
 BOT_CAS_BINGO = "cas_bingo"
+# Dynamic Iron Condor (docs/dynamic-iron-condor-plan.md section 7). Runs a condor campaign
+# at the campaign's two daily checks; its state lives in the condor_* tables, not bot_cycles.
+BOT_DYNAMIC_CONDOR = "dynamic_condor"
 BOT_TYPES = (
     BOT_HOLDINGS_WRITER,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_MOMENTUM_LONG_SCALPER,
     BOT_IRON_FLY_SCALPER,
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
 )
 
 

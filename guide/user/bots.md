@@ -1,6 +1,6 @@
 # Bots
 
-Bots are automated strategies that scan, size and place trades on your behalf, within limits you set. There are five. Each can be run by hand, can ask your approval, or can trade on its own, and every decision it makes, including every decision not to trade, is logged.
+Bots are automated strategies that scan, size and place trades on your behalf, within limits you set. There are six. Each can ask your approval or trade on its own, all but the Dynamic Iron Condor can also be run by hand, and every decision it makes, including every decision not to trade, is logged.
 
 ![The Bots page](images/dark/bots.png)
 
@@ -11,6 +11,7 @@ Bots are automated strategies that scan, size and place trades on your behalf, w
 | **Long Scalper** | Buys one at-the-money NIFTY option when a signal fires, and manages it with a tight stop and a trailing ladder. |
 | **Intraday Iron Fly** | Sells a hedged at-the-money NIFTY iron fly during a quiet part of the day, and books it as premium decays. |
 | **CAS Bingo** | On expiry days, trades spreads or a strangle around the exchange's closing auction. |
+| **Dynamic Iron Condor** | Runs a NIFTY [iron condor campaign](iron-condors.md) on its own: tranches, rolls and exits at two checks a day. |
 
 The Long Scalper, CAS Bingo's spreads and (optionally) the Iron Fly read a [signal](signals.md). The two writers never look at direction.
 
@@ -172,6 +173,31 @@ Every structure needs a **live index level**; without one it plans nothing that 
 
 > [!WARNING]
 > ICICI may square off your positions at an extreme loss if mark-to-market or margin requirements spike during the closing auction.
+
+### Dynamic Iron Condor
+
+Runs an [Iron Condor campaign](iron-condors.md) for you. It uses the same rules, checks and executor as a campaign you manage by hand; the difference is that it acts on each check's suggestion instead of waiting for you. Its card has four modes, and each unlocks only once the one before it has earned it:
+
+| Mode | What it does | Unlocks when |
+|---|---|---|
+| **Off** | Decides nothing. A live campaign it was running is handed back to you, legs open, and its card on Portfolio becomes yours. | Always |
+| **Paper** | Acts at every check on a **paper campaign**, filling at the live bid or ask plus the paper slippage, with charges. Nothing is placed. A paper campaign's card is on the [Iron Condors](iron-condors.md) page. | A **completed** Iron Condor backtest of exactly these settings and exit action exists. **Backtest these settings** on the card starts one. |
+| **Telegram** | Sends each action to Telegram with **Approve all** / **Reject**. A tap places it, wings first; nothing is placed if you do not answer within the approval window. | One paper cycle has finished on these settings. |
+| **Auto** | Places each action itself, wings first. | A paper cycle has finished **and** at least one Telegram-approved ticket has executed, both on these settings. |
+
+**What counts as evidence.** A backtest, a paper cycle or an approval counts only for the exact settings and exit action it was earned on, **under the rules of the app version that earned it**. Changing back to settings you used before brings their old evidence back, however long ago it was earned. But a release that changes how the rules behave starts every bot over from a fresh backtest; its release notes will say so.
+
+The settings (gear icon) are the [campaign settings](iron-condors.md#settings), plus:
+
+| Setting | What it does |
+|---|---|
+| **At exit DTE** | **Time-roll** closes the cycle and opens the next in one ticket; **Close** ends the campaign and the bot starts a new one when the next cycle's tranche is due. |
+| **Lots per tranche** | Blank sizes each tranche from today's margin (the ceiling over the number of tranches, divided by one lot's margin). Entries then shrink to what the order book can take, or are skipped. |
+| **Approval window** | How long a Telegram proposal stays valid (default 15 minutes). |
+
+Changing any setting needs a new backtest before the bot can be switched on again, and hands its current campaign back to you (a paper one simply ends).
+
+**You always win.** If you execute a ticket on the bot's campaign, or stop managing it, the bot **pauses**: it decides nothing until you press **Resume** on its card, so it never undoes your change at its next check. In [read-only mode](read-only-mode.md) it still closes, but opens nothing.
 
 ## Running a bot by hand
 

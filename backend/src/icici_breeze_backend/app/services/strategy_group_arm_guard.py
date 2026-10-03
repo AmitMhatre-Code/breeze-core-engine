@@ -129,7 +129,19 @@ def assert_can_arm(
     Scoped to ANY non-terminal order for the scrip+expiry, not just ones tied to
     currently-open legs: a stray unfilled order still changes what the group will be, and
     a previous rule's orphan still risks the duplicate-fire above.
+
+    A group a Dynamic Iron Condor campaign manages is refused outright: every roll changes its
+    legs, which would reset the rule, and the campaign carries its own max-loss
+    (docs/dynamic-iron-condor-plan.md section 2).
     """
+    from icici_breeze_backend.app.repositories import condor as condor_repo
+
+    if condor_repo.active_owner(user_id, stock_code.strip().upper(), expiry_display.strip()):
+        raise ArmPreconditionError(
+            f"A Dynamic Iron Condor campaign manages {stock_code} {expiry_display}. It has its own "
+            f"max-loss, and every roll would reset a Profit Booking / Stop Loss rule. Close the "
+            f"campaign first to arm one here."
+        )
     live = live_orders_for_group(breeze, user_id, stock_code, expiry_display, exchange_code)
     if not live:
         return
