@@ -20,6 +20,16 @@ export type ChangelogRelease = {
 /** Newest first. Prepend a new entry when you ship; keep `version` in line with `package.json` when you bump it. */
 export const changelogReleases: ChangelogRelease[] = [
   {
+    version: "2.10.1-d",
+    date: "3-Oct-2026",
+    releaseKind: "prerelease",
+    summary:
+      "Dynamic Iron Condors and a few bug fixes",
+    changes: [
+      "Dynamic Iron Condors: a new strategy type in Strategy Builder that lets you set a target premium and a max loss, and the app finds the best strikes to meet those targets. The legs are priced against the live chain, so you can see how the structure would look right now.",
+    ],
+  },
+  {
     version: "2.10.1-c",
     date: "1-Oct-2026",
     releaseKind: "prerelease",
