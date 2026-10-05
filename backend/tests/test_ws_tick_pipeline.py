@@ -11,6 +11,8 @@ import pytest
 
 from icici_breeze_backend.app.services import ws_tick_pipeline as pipeline
 
+pytestmark = pytest.mark.usefixtures("empty_ws_token_index")
+
 
 def _raw_nifty_call_25000() -> dict:
     path = Path(__file__).resolve().parent / "fixtures" / "icici_ticks" / "nifty_call_25000_raw.json"

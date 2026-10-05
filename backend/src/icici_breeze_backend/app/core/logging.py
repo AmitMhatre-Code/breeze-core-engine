@@ -202,12 +202,12 @@ def configure_logging(
         root.handlers.remove(buffer_handler)
         root.handlers.insert(0, buffer_handler)
 
+    # A sink from an earlier call goes either way: replaced when the sink is on, and left
+    # writing to disk after LOG_SINK=off if it were only cleared on the "on" path.
+    for stale_sink in [h for h in root.handlers if isinstance(h, RotatingFileHandler)]:
+        root.removeHandler(stale_sink)
+        stale_sink.close()
     if sink_enabled():
-        for stale_sink in [
-            h for h in root.handlers if isinstance(h, RotatingFileHandler)
-        ]:
-            root.removeHandler(stale_sink)
-            stale_sink.close()
         sink_handler = build_sink_handler(process_name)
         if sink_handler is not None:
             capture_floors.append(sink_handler.level)

@@ -8,6 +8,14 @@ from __future__ import annotations
 # See tests/breeze_mock_env.py for details.
 import tests.breeze_mock_env  # noqa: E402,F401
 
+# The developer's root .env configures the running app, not the suite. `main` and the OS workers
+# copy it into os.environ (override=True) as they are imported -- for `main` that is during
+# collection, before any fixture can undo it -- and the next `importlib.reload` of the config
+# bakes in whatever it holds. LICENSE_STATUS_OVERRIDE alone turned every license test "active".
+import dotenv  # noqa: E402
+
+dotenv.load_dotenv = lambda *args, **kwargs: False
+
 import pytest
 
 from tests.fixtures.portal_heartbeat_drm_keys import TEST_PUBLIC_KEY_PEM
@@ -79,6 +87,49 @@ def _clear_symbol_registry_cache():
     _reset()
     yield
     _reset()
+
+
+@pytest.fixture
+def memory_redis(monkeypatch):
+    """Run on a fresh in-memory store even when the machine has a Redis.
+
+    On a dev machine that Redis is the running app's: keys one test leaves behind -- a cell
+    with seconds to live, a published scrip index -- are read back by the next test, and the
+    test's writes land in the app's view. `close_redis()` is safe inside such a test: the next
+    `get_redis()` fails to connect and starts another empty store. No reconnect probe runs, so
+    nothing a test wrote is copied across to the real Redis."""
+    from icici_breeze_backend.app.db import redis_client as rc
+
+    def _refused():
+        raise ConnectionError("tests run on the in-memory store")
+
+    for name in ("_memory", "_memory_hashes", "_memory_hash_expires", "_memory_sets"):
+        monkeypatch.setattr(rc, name, {})
+    monkeypatch.setattr(rc, "_connect_real", _refused)
+    monkeypatch.setattr(rc, "_redis", None)
+    monkeypatch.setattr(rc, "_use_memory", False)
+    monkeypatch.setattr(rc, "_probe_state", {"last": 0.0, "running": False})
+
+
+@pytest.fixture
+def empty_ws_token_index(tmp_path, monkeypatch):
+    """Start the WS token index empty: no in-memory map, none loaded from Redis, nothing cached,
+    and `DATA_PATH` on a temp dir instead of the real backend/data/scrips.sqlite3.
+
+    The ticks under tests/fixtures/icici_ticks carry real WS tokens that ICICI has since handed to
+    other contracts -- the NIFTY 25000 put's 4.1!71475 is an ADAENT call in today's scrip master --
+    and the token path runs before a tick's own fields. A test that seeds a temp ws_token_index
+    (pointing `DATA_PATH` at it) still resolves through those rows."""
+    import icici_breeze_backend.app.core.config as app_cfg
+    from icici_breeze_backend.app.services.reference_data import ws_token_index
+
+    monkeypatch.setattr(app_cfg, "DATA_PATH", str(tmp_path) + "/")
+    monkeypatch.setattr(ws_token_index, "_token_by_contract", {})
+    monkeypatch.setattr(ws_token_index, "_token_rows", {})
+    monkeypatch.setattr(ws_token_index, "ensure_token_map_ready", lambda: False)
+    ws_token_index.clear_token_lookup_cache()
+    yield
+    ws_token_index.clear_token_lookup_cache()
 
 
 @pytest.fixture(autouse=True)

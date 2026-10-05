@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from icici_breeze_backend.app.services.bots.scalping import spreads
 from icici_breeze_backend.app.services.index_signal import breakeven as be
 from icici_breeze_backend.app.services.index_signal import settings as signal_settings
 
@@ -17,9 +18,13 @@ LEVEL = 23_448.0
 
 
 @pytest.fixture(autouse=True)
-def _priced(monkeypatch):
+def _priced(monkeypatch, tmp_path):
     monkeypatch.setattr(be, "lot_size", lambda label, today=None: 65)
     monkeypatch.setattr(be, "atm_premium", lambda label, today=None: 90.3)
+    # No spread samples, so the uncalibrated default prices the spread. The real users.sqlite3
+    # holds whatever this deployment has observed, and a wide enough median outweighs the
+    # brokerage that amortises.
+    monkeypatch.setattr(spreads, "_db_path", lambda: str(tmp_path / "users.sqlite3"))
 
 
 def test_the_bar_falls_steeply_with_size():

@@ -4,11 +4,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.services.ws_tick_normalize import (
     normalize_icici_tick,
     parse_icici_tick,
 )
+
+pytestmark = pytest.mark.usefixtures("empty_ws_token_index")
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "icici_ticks"
 

@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.db.redis_client import cache_get_json, close_redis
 from icici_breeze_backend.app.services.chain_build_service import (
@@ -21,6 +23,8 @@ from icici_breeze_backend.app.services.reference_data.keys import (
 from icici_breeze_backend.app.db.redis_client import cache_set_json
 from icici_breeze_backend.app.services.reference_data.scrip_index import publish_scrip_index_from_db
 from icici_breeze_backend.app.services.reference_data.ws_token_index import publish_ws_token_map_from_db
+
+pytestmark = pytest.mark.usefixtures("memory_redis")
 
 
 def _raw_nifty_call_25000() -> dict:

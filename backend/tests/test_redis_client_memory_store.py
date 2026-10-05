@@ -155,6 +155,9 @@ def test_a_process_on_the_fallback_moves_to_redis_when_it_returns(monkeypatch):
 
     real = _FakeRedis(existing={"refdata:current_version": "8"})
     monkeypatch.setattr(rc, "_connect_real", lambda: real)
+    # Probed just now, so the fixtures' teardown, which reads the store, starts no probe of its
+    # own: one would find `_connect_real` still patched and move the process onto the fake.
+    monkeypatch.setattr(rc, "_probe_state", {"last": time.monotonic(), "running": False})
     rc._probe_and_switch()
 
     assert rc._redis is real and rc._use_memory is False
