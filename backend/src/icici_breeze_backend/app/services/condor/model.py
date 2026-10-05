@@ -68,6 +68,10 @@ class MarketSnapshot:
     # False when a feed the decision needs is down (#52).
     feeds_ok: bool
     chain: tuple[ChainRow, ...]
+    # Strikes a new leg may use; None means every chain row. A replay sets it to the range ICICI
+    # lists today (#69), so it never trades a strike live trading could not, while every quoted
+    # row still feeds the smile and prices the held legs.
+    listed: Optional[tuple[float, ...]] = None
 
     def quote(self, strike: float, right: Right) -> Optional[Quote]:
         for row in self.chain:
@@ -77,7 +81,11 @@ class MarketSnapshot:
 
     @property
     def strikes(self) -> list[float]:
-        return sorted(row.strike for row in self.chain)
+        rows = (row.strike for row in self.chain)
+        if self.listed is None:
+            return sorted(rows)
+        allowed = set(self.listed)
+        return sorted(k for k in rows if k in allowed)
 
 
 Action = Literal[

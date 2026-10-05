@@ -219,8 +219,8 @@ export function CondorSettings({
   const set = (patch: Partial<Campaign>) => onConfig({ campaign: { ...c, ...patch } });
   const evidence = (
     <p className="text-hint text-faint">
-      Any change here needs a new backtest before the bot can run, and hands a campaign it is running back to
-      you. Manual campaigns started from Basket Orders also use these campaign settings.
+      Any change here needs a new Simulation cycle before Semi-auto or Auto unlock again, and hands a campaign
+      it is running back to you. Manual campaigns started from Basket Orders also use these campaign settings.
     </p>
   );
 
@@ -251,7 +251,7 @@ export function CondorSettings({
       <div className="space-y-4">
         {evidence}
         <Num label="Short Δ" step={0.01} min={0.01} max={0.49} value={c.short_delta} disabled={disabled} onChange={(v) => set({ short_delta: v })} hint="|Δ| of the shorts at entry (0.20 = 20 delta)." />
-        <Num label="Wing Δ" step={0.01} min={0.01} max={0.49} value={c.wing_delta} disabled={disabled} onChange={(v) => set({ wing_delta: v })} hint="|Δ| of the wings, snapped outward, beyond the shorts." />
+        <Num label="Wing width" suffix="% of spot" step={0.1} min={0.1} max={25} value={c.wing_width_pct} disabled={disabled} onChange={(v) => set({ wing_width_pct: v })} hint="Each wing this far beyond its short, the same on both sides, snapped outward to a listed strike. When the listed strikes end first, the furthest one is used and the suggestion says so. 4.5% is about 1,000 NIFTY points at 22,400." />
       </div>
     );
   }
@@ -283,9 +283,9 @@ export function CondorSettings({
   if (tab === "bot") {
     return (
       <div className="space-y-4">
-        <Choice id="condor-exit-action" label="At the exit DTE" value={config.exit_action} options={EXIT_ACTIONS} disabled={disabled} onChange={(v) => onConfig({ exit_action: v })} hint="Part of what a backtest is matched on, like the campaign settings." />
+        <Choice id="condor-exit-action" label="At the exit DTE" value={config.exit_action} options={EXIT_ACTIONS} disabled={disabled} onChange={(v) => onConfig({ exit_action: v })} hint="Part of what the bot's evidence is matched on, like the campaign settings." />
         <OptionalNum label="Lots per tranche" step={1} min={1} max={500} blank="from margin" value={config.lots_per_tranche} disabled={disabled} onChange={(v) => onConfig({ lots_per_tranche: v == null ? null : Math.round(v) })} hint="Blank sizes each tranche from today's margin: the ceiling over the tranches. Also what the play button pre-fills." />
-        <Num label="Approval window" suffix="min" min={2} max={60} value={config.proposal_ttl_minutes} disabled={disabled} onChange={(v) => onConfig({ proposal_ttl_minutes: v })} hint="In Telegram mode, how long a proposal waits for your tap before it lapses." />
+        <Num label="Approval window" suffix="min" min={2} max={60} value={config.proposal_ttl_minutes} disabled={disabled} onChange={(v) => onConfig({ proposal_ttl_minutes: v })} hint="In Semi-auto, how long a proposal waits for your tap on Telegram before it lapses." />
       </div>
     );
   }

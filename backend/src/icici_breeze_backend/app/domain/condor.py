@@ -29,9 +29,12 @@ class CondorSettings(BaseModel):
     tranche_cutoff_dte: int = Field(30, ge=0, le=120)
     exit_dte: int = Field(21, ge=0, le=120)
 
-    # Strikes are chosen by |delta|, so one rule works at any DTE (plan section 1).
+    # Shorts are chosen by |delta|, so one rule works at any DTE (plan section 1). Wings sit the
+    # same distance beyond each short, as a % of spot (#69): equal widths keep the max loss and
+    # the margin the same on both sides, where equal-delta wings put the widest spread, and the
+    # biggest loss, on the put side, often beyond the strikes ICICI lists.
     short_delta: float = Field(0.20, gt=0, lt=0.5)
-    wing_delta: float = Field(0.05, gt=0, lt=0.5)
+    wing_width_pct: float = Field(4.5, gt=0, le=25)
 
     tranches: int = Field(3, ge=1, le=10)
     entry_check: CondorCheckKind = "sod"
@@ -68,12 +71,6 @@ class CondorSettings(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _wings_outside_shorts(self) -> "CondorSettings":
-        if self.wing_delta >= self.short_delta:
-            raise ValueError("The wing delta must be smaller than the short delta.")
-        return self
-
-    @model_validator(mode="after")
     def _has_a_stop(self) -> "CondorSettings":
         if self.max_loss_inr is None and self.max_loss_pct_of_ceiling is None:
             raise ValueError("Set a max-loss in rupees, as a % of the margin ceiling, or both.")
@@ -99,8 +96,9 @@ def _default_bot_campaign() -> "CondorSettings":
 class DynamicCondorBotConfig(BaseModel):
     """The Dynamic Iron Condor bot (plan section 7): a campaign's settings plus how it acts.
 
-    `paper` simulates every action at live quotes and places nothing; `telegram` asks before
-    each action; `auto` acts. The modes unlock in that order (`services/condor/bot.py`).
+    `paper` (Simulation on the card) simulates every action at live quotes and places nothing;
+    `telegram` (Semi-auto) asks on Telegram before each action; `auto` acts. Simulation is open
+    from day 1 and the other two unlock in that order (`services/condor/bot.py`, #70).
     """
 
     mode: CondorBotMode = "paper"

@@ -28,7 +28,7 @@ const GROUPS: Group[] = [
     title: "Strikes",
     fields: [
       { key: "short_delta", label: "Short Δ", hint: "|Δ| of the shorts at entry (0.20 = 20 delta).", step: 0.01 },
-      { key: "wing_delta", label: "Wing Δ", hint: "|Δ| of the wings, snapped outward.", step: 0.01 },
+      { key: "wing_width_pct", label: "Wing width % of spot", hint: "Each wing this far beyond its short, the same on both sides, snapped outward to a listed strike (the furthest listed one when the list ends first).", step: 0.1 },
     ],
   },
   {

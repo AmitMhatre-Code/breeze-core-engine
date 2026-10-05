@@ -111,7 +111,7 @@ def start(
     run: Callable[[Callable[[], None]], None] = lambda fn: threading.Thread(target=fn, name="condor-exec", daemon=True).start(),
 ) -> dict[str, Any]:
     if campaign.mode == "paper":
-        raise Refused("This is a paper campaign: its actions are simulated by the bot, never placed.")
+        raise Refused("This is a Simulation campaign: the bot simulates its actions and never places them.")
     sequenced, ctx = plan(proc, campaign, raw)
     with _lock:
         if campaign.id in _running or repo.running_execution(campaign.id):

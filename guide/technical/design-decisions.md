@@ -1088,7 +1088,7 @@ The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short 
 
 - **Rolls near the exit** (added 2026-10-03). In a flat market both shorts decay past 80% together, the "untested" side is whichever has marginally less delta, and the leg rule rolled it at 22 DTE, a day before the exit closed everything (found in the replay). The new short is held one day, so such a roll is mostly friction. `no_roll_within_days_of_exit` (default **0**, so the agreed rules are unchanged) reports a due roll inside that window as `roll_near_exit` instead of placing it. The backtest counts these, so N=0 and N=3 can be compared on real prices. A new setting changes the bot's settings hash (#66), so backtests made before it no longer unlock the bot.
 
-**What it does not cover.** Sizing (ICICI's margin calculator), freeze slicing, the next cycle's expiry chain on a time roll, and placing anything: the caller does those. Settlement charges at expiry are not in the break-evens. The defaults (net-Δ band 0.15, minimum roll credit 20 points, max-loss 5% of the ceiling) are starting points until the backtest calibrates them. With a put skew, 5Δ put wings sit much further out than 5Δ call wings, so "same width as the tested side" can carry a very wide put width onto the call side; the backtest will show whether that costs anything.
+**What it does not cover.** Sizing (ICICI's margin calculator), freeze slicing, the next cycle's expiry chain on a time roll, and placing anything: the caller does those. Settlement charges at expiry are not in the break-evens. The defaults (net-Δ band 0.15, minimum roll credit 20 points, max-loss 5% of the ceiling) are starting points until the backtest calibrates them. With a put skew, 5Δ put wings sit much further out than 5Δ call wings, so "same width as the tested side" can carry a very wide put width onto the call side; the backtest will show whether that costs anything. *Superseded by #69: wings are now an equal width beyond each short.*
 
 ## 64. A condor backtest replays only the two checks, resumes after each fetch, and a campaign decides nothing while its ledger and the broker disagree
 
@@ -1122,7 +1122,7 @@ The summary adds error and median implied rate ((ICICI − SPAN) ÷ gross short 
 **Decision** (2026-10-03; `docs/dynamic-iron-condor-plan.md` section 7, step 5). `bot_type = "dynamic_condor"` (`domain/condor.DynamicCondorBotConfig`: campaign settings, `mode` paper/telegram/auto, `exit_action`, `lots_per_tranche`, `proposal_ttl_minutes`, `paused`). Its state is a campaign with `origin = "bot"`, not `bot_cycles`. The scheduled check (#64) records the engine's decision and hands an actionable one to `condor/bot.act`, which builds the ticket from the same templates a user has (#65) and paper-fills, proposes, or executes it.
 
 - **Gates, enforced in `PATCH /bots/config`** (`bot.guard`) and mirrored on the card, which shows a mode as locked until its evidence has loaded:
-  - switching on needs a **completed** condor backtest whose fingerprint matches the saved settings;
+  - switching on needs a **completed** condor backtest whose fingerprint matches the saved settings; *superseded by #70: Simulation is open from day 1 and a backtest gates nothing*;
   - `telegram` needs one finished paper cycle on that fingerprint;
   - `auto` needs a paper cycle **and** a Telegram-approved ticket executed, both on that fingerprint.
 - **The fingerprint** (`bot.settings_hash`) is the campaign settings, the exit action and `engine.ENGINE_VERSION`. Every backtest records the version it ran under; one recorded before versions existed reads as 0 and matches nothing. Two consequences, both chosen by the user (2026-10-03):
@@ -1169,4 +1169,31 @@ Paper campaigns own no expiry and are never refused. Margin stays per campaign: 
 - Telegram approvals executed on a handed-over campaign count toward Auto, because the campaign carries the fingerprint. That is intended: they were approved on exactly those settings.
 
 **What it does not cover.** Basket Orders has no "hand to the bot once filled" option yet; hand it over from Portfolio after the fills land. A handed-over campaign keeps the tranche count it had, so the bot never re-enters a tranche the user already entered.
+
+## 69. Condor wings are an equal width beyond each short, a % of spot, and the backtest trades only strikes ICICI lists
+
+**Decision** (2026-10-05, the user's call; supersedes the wing rule of #63). `CondorSettings.wing_delta` is replaced by `wing_width_pct` (default 4.5): each wing sits `spot × pct / 100` points beyond its short on both sides, snapped outward to a listed strike (`strikes.wing_at_width`, `engine.wing_width_points`). Shorts stay at `short_delta`. `ENGINE_VERSION` is 2, so all bot evidence earned under 1 stops counting (#66).
+
+**Why equal width, not equal delta.** Puts are dearer than calls the same distance out, so a 5Δ put wing sits much further out than a 5Δ call wing: on the NIFTY 23-Nov-2026 chain at spot 22,422 the call wing was 1,250 points beyond its short, while the put wing would have needed more than 1,100 points and lay past ICICI's last listed put (20,500, still Δ 0.072). Equal-delta wings therefore:
+
+- made the put spread the wider one, putting the largest loss on the side where NIFTY gaps;
+- set the margin by that wider side, so the narrower call spread bought nothing;
+- contradicted the rest of the engine, which rolls a wing to the tested side's point width (#63) and warns on unequal widths in tickets (#65);
+- found no put wing at all on that chain, so the bot could not enter.
+
+**Fallback.** When a wing's target lies past the listed strikes, the wing is the furthest listed strike beyond the short, not none: a narrower wing still caps the side. This also applies to rolls and the Adjust templates, which share `wing_at_width`. The tranche suggestion says so ("Furthest listed strike used: put wing 300 points, narrower than the 1,089 set"). Only a short with nothing listed beyond it refuses.
+
+**The backtest trades only listed strikes.** `MarketSnapshot.listed` restricts which strikes a new leg may use; every quoted row still feeds the smile and prices held legs. `backtest_job.tradeable_band` reads today's tradeable NIFTY strikes (`MarginPercentage > 0`, via the scrip index, never the broker client) on the expiry nearest the entry DTE, turns them into a band below and above spot, and `CondorReplay._listed` applies it at every check, plus whatever the campaign holds. Past days' lists are not kept, so today's band stands in for the whole period; the run's notes say which band was used, or that none could be read and the replay ran unlimited. Before this, the replay chose from ±15% of spot and could earn bot evidence on wings live trading could not place.
+
+**What it does not cover.** The default 4.5% is a starting point, not a finding: backtest it. A band that changes with DTE (ICICI may list fewer strikes on far expiries) is approximated by one expiry's band. Settings saved with `wing_delta` load with the key dropped and the default width.
+
+## 70. The condor bot's modes carry every bot's names, and Simulation needs no backtest
+
+**Decision** (2026-10-05, the user's call; amends #66). The card's modes read **Off · Simulation · Semi-auto · Auto**, the words the other bots use (scalpers and CAS Bingo say Simulation; Bots 1 and 2 say Semi-auto and Auto). Only what the user reads changed: card segments, badges and lock reasons, `bot.guard`'s refusals, the hand-over blockers, Telegram texts (`bot.MODE_LABEL`, `campaign_mode_label`) and the user guide. The stored values stay `paper` and `telegram`, as the scalpers keep `paper` behind Simulation, so no migration and no change to the fingerprint (#66).
+
+- **No mode needs a backtest.** No other bot requires one for any mode: the scalpers show their last backtest beside the Simulation record and never consult it, and the 30-day signal gate (#39) applies only to bots that read a signal, which the condor does not. `Eligibility.backtest` is still reported for the card, and `may_enable` is gone.
+- **The rest of the ladder stays the condor's own.** Semi-auto needs one finished Simulation cycle on the fingerprint, and Auto that plus a ticket approved in Semi-auto and executed. The user chose this over the scalpers' one Simulation day: a condor cycle runs for weeks, so one day would prove almost nothing about its rolls and exits.
+- **Semi-auto needs a linked Telegram chat on the card**, the same block and tooltip as Bots 1 and 2. Like theirs it is a card check, not a server one. Without a chat, a proposal would be recorded as `approval_unreachable` at every check.
+
+**Why not keep the backtest gate for Semi-auto and Auto only.** It would be a gate no other bot has, and real orders are already behind a Simulation cycle on the same fingerprint, which tests the same rules at live prices.
 

@@ -14,11 +14,14 @@ import { CampaignCard } from "@/components/condor/CondorCampaignPanel";
 import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
 import type { CondorCampaign } from "@/lib/condor";
+import { fetchTelegramStatus, TELEGRAM_STATUS_QUERY_KEY } from "@/lib/telegram/telegram-alerts";
 import { BOT_META, useUpdateBot, type Bot } from "@/lib/use-bots";
 
-/** The Dynamic Iron Condor bot (docs/dynamic-iron-condor-plan.md section 7). Its modes unlock
- *  in order -- a completed backtest of these exact settings, then a paper cycle, then a ticket
- *  approved on Telegram -- and the server refuses whatever the evidence does not yet allow.
+/** The Dynamic Iron Condor bot (docs/dynamic-iron-condor-plan.md section 7). Its modes carry the
+ *  same names as every bot's (#70): Simulation is open from day 1, like the others; Semi-auto
+ *  unlocks after a Simulation cycle on these settings and Auto after a ticket approved in
+ *  Semi-auto. The server refuses whatever the evidence does not yet allow. The stored values
+ *  stay `paper` and `telegram`.
  *
  *  The header is every bot's (#67): play opens Basket Orders on a first tranche at these
  *  settings, the clock backtests them into Activity, the gear opens the settings drawer. */
@@ -29,7 +32,6 @@ type Overview = {
     backtest: { run_id: string; created_at: string; from: string; to: string } | null;
     paper_cycles: number;
     approved_executions: number;
-    may_enable: boolean;
     may_telegram: boolean;
     may_auto: boolean;
   };
@@ -40,10 +42,10 @@ type Overview = {
 
 type Segment = "off" | "paper" | "telegram" | "auto";
 const SEGMENTS: Segment[] = ["off", "paper", "telegram", "auto"];
-const LABEL: Record<Segment, string> = { off: "Off", paper: "Paper", telegram: "Telegram", auto: "Auto" };
+const LABEL: Record<Segment, string> = { off: "Off", paper: "Simulation", telegram: "Semi-auto", auto: "Auto" };
 const BLURB: Record<Segment, string> = {
   off: "Decides nothing. A live campaign it ran is handed back to you.",
-  paper: "Acts at the two daily checks on paper, at live prices. Places nothing.",
+  paper: "Acts at the two daily checks at live prices, simulated. Places nothing.",
   telegram: "Asks on Telegram before each action; a tap places it, wings first.",
   auto: "Acts at the two daily checks on its own, wings first.",
 };
@@ -74,7 +76,7 @@ function nextLine(bot: Bot, config: CondorBotConfig, camp: CondorCampaign | null
   const checks = `checks ${c.sod_check_ist} and ${c.eod_check_ist} IST`;
   if (!bot.enabled) return `Off. ${c.tranches} tranche(s) from ${c.entry_dte} DTE, exit at ${c.exit_dte} DTE.`;
   if (config.paused) return `Paused: decides nothing at its ${checks} until you resume it.`;
-  if (camp?.cycle) return `Running NIFTY ${camp.cycle.expiry} (${camp.mode}) · ${checks}.`;
+  if (camp?.cycle) return `Running NIFTY ${camp.cycle.expiry} (${camp.mode === "paper" ? "simulation" : camp.mode}) · ${checks}.`;
   if (waiting) return `Waiting: ${waiting}`;
   return `Opens a campaign at the next check once a cycle's expiry is in range · ${checks}.`;
 }
@@ -87,6 +89,10 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paperOpen, setPaperOpen] = useState(false);
+  // The same query Bots 1 and 2 read: Semi-auto asks on Telegram, so without a linked chat it
+  // could only propose into the void.
+  const telegram = useQuery({ queryKey: TELEGRAM_STATUS_QUERY_KEY, queryFn: fetchTelegramStatus });
+  const telegramConnected = Boolean(telegram.data?.connected && telegram.data?.alerts_enabled);
   const overview = useQuery({
     queryKey: ["bots", "condor-overview", bot.updated_at],
     queryFn: ({ signal }) => apiClient.get<Overview>("/api/condor/bot", signal),
@@ -96,12 +102,14 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
   const segment: Segment = bot.enabled ? config.mode : "off";
 
   const locked = (s: Segment): string | null => {
-    if (s === "off") return null;
+    // Simulation needs no evidence, like every bot's (#70).
+    if (s === "off" || s === "paper") return null;
+    if (s === "telegram" && !telegramConnected)
+      return "Link a Telegram chat in Settings › Telegram Alerts — semi-auto has no way to ask you without one.";
     // Locked until the evidence has loaded: an unknown is never an unlock.
     if (!e) return "Checking what these settings have earned…";
-    if (!e.may_enable) return "Needs a completed backtest of these settings: the clock above.";
-    if (s === "telegram" && !e.may_telegram) return "Unlocks after one paper cycle.";
-    if (s === "auto" && !e.may_auto) return "Unlocks after a paper cycle and a Telegram-approved ticket on these settings.";
+    if (s === "telegram" && !e.may_telegram) return "Unlocks after one Simulation cycle on these settings.";
+    if (s === "auto" && !e.may_auto) return "Unlocks after a Simulation cycle and a ticket approved in Semi-auto, on these settings.";
     return null;
   };
 
@@ -164,7 +172,7 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
           <BotStatusRow
             tone={!bot.enabled ? "idle" : config.paused ? "guarded" : config.mode === "auto" ? "live" : "guarded"}
             label={!bot.enabled ? "Idle" : config.paused ? "Paused" : "Armed"}
-            badge={bot.enabled && config.paused ? "Paused" : bot.enabled && config.mode !== "auto" ? (config.mode === "paper" ? "Paper" : "Asks first") : undefined}
+            badge={bot.enabled && config.paused ? "Paused" : bot.enabled && config.mode !== "auto" ? (config.mode === "paper" ? "Simulation" : "Asks first") : undefined}
           />
           <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">{nextLine(bot, config, camp, overview.data?.waiting ?? null)}</p>
           {config.paused ? (
@@ -182,9 +190,9 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
                 {!camp ? (
                   "—"
                 ) : camp.mode === "paper" ? (
-                  // A paper campaign owns no Portfolio row, so its card opens here.
+                  // A Simulation campaign owns no Portfolio row, so its card opens here.
                   <button type="button" className="app-link" onClick={() => setPaperOpen(true)}>
-                    paper · {camp.cycle?.expiry ?? "—"}
+                    simulation · {camp.cycle?.expiry ?? "—"}
                   </button>
                 ) : (
                   <Link className="app-link" href="/portfolio">
@@ -194,7 +202,7 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
               </dd>
             </div>
             <div className="flex items-baseline justify-between gap-3 text-hint">
-              <dt className="text-faint">Paper cycles · approved</dt>
+              <dt className="text-faint">Simulation cycles · approved</dt>
               <dd className="m-0 font-mono tabular-nums text-text">
                 {e?.paper_cycles ?? 0} · {e?.approved_executions ?? 0}
               </dd>
@@ -235,7 +243,7 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
             })}
           </div>
         </div>
-        <p className="mt-1.5 line-clamp-2 min-h-[2lh] text-hint text-faint">{locked(segment === "off" ? "paper" : segment) ?? BLURB[segment]}</p>
+        <p className="mt-1.5 line-clamp-2 min-h-[2lh] text-hint text-faint">{locked(segment) ?? BLURB[segment]}</p>
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
       <BotSettingsDrawer bot={bot} open={settingsOpen} readOnly={readOnly} onClose={() => setSettingsOpen(false)} />
@@ -246,7 +254,7 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
   );
 }
 
-/** The bot's paper campaign: the same card a live one shows on its Portfolio group. */
+/** The bot's Simulation campaign: the same card a live one shows on its Portfolio group. */
 function PaperCampaignDrawer({ campaign, open, onClose }: { campaign: CondorCampaign; open: boolean; onClose: () => void }) {
   const titleId = useId();
   return (
@@ -254,14 +262,14 @@ function PaperCampaignDrawer({ campaign, open, onClose }: { campaign: CondorCamp
       <div className="flex items-start justify-between gap-3 border-b border-border p-4">
         <div>
           <h2 id={titleId} className="text-subtitle font-bold">
-            Paper campaign · NIFTY {campaign.cycle?.expiry ?? "—"}
+            Simulation campaign · NIFTY {campaign.cycle?.expiry ?? "—"}
           </h2>
-          <p className="app-text-muted mt-1 text-hint">Filled at live prices on paper. Nothing here is placed.</p>
+          <p className="app-text-muted mt-1 text-hint">Filled at live prices in Simulation. Nothing here is placed.</p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close paper campaign"
+          aria-label="Close simulation campaign"
           className="rounded p-1 text-faint transition hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4">

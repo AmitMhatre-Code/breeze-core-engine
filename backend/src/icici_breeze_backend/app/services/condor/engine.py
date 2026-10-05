@@ -50,7 +50,9 @@ _IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 #: order or ledger helpers it uses) would do for the same inputs** -- a bug fix included. Every
 #: condor backtest records it, and it is part of the bot's settings fingerprint, so a backtest,
 #: a paper cycle or an approval earned under older rules stops unlocking the bot (#66).
-ENGINE_VERSION = 1
+#: 2 (2026-10-05, #69): wings at a % of spot beyond each short instead of at a delta, and a wing
+#: whose target lies past the listed strikes goes to the furthest listed one instead of none.
+ENGINE_VERSION = 2
 _OTHER: dict[Right, Right] = {"Call": "Put", "Put": "Call"}
 
 
@@ -295,12 +297,8 @@ def _roll(
         return None
 
     qty = sum(l.quantity for l in untested_shorts) or sum(l.quantity for l in _shorts(legs, tested))
-    width = _wing_width(tested, legs)
-    if width is not None:
-        new_wing = wing_at_width(market.strikes, untested, new_short, width)
-    else:
-        beyond = [s for s in market.strikes if (s > new_short if untested == "Call" else s < new_short)]
-        new_wing = strike_for_delta(model, beyond, untested, settings.wing_delta, outward=True)
+    width = _wing_width(tested, legs) or wing_width_points(settings, market.spot or model.spot)
+    new_wing = wing_at_width(market.strikes, untested, new_short, width)
     if new_wing is None:
         return _decision("no_action", "roll_no_wing", "No listed strike for the rolled wing.", metrics)
 
@@ -359,27 +357,52 @@ def _tranche(
         return None
     strikes = entry_strikes(model, market.strikes, settings)
     if strikes is None:
-        return _decision("no_action", "tranche_unpriced", "Tranche due but its strikes cannot be priced.", metrics)
+        return _decision(
+            "no_action", "tranche_unpriced",
+            "Tranche due, but the chain has no short at the set delta or no listed strike beyond it for a wing.",
+            metrics,
+        )
     n = state.tranches_entered + 1
     return _decision(
         "enter_tranche", "tranche_due",
         f"Tranche {n} of {settings.tranches} due at {dte} DTE: "
-        f"{int(strikes['long_put'])}/{int(strikes['short_put'])} PE · {int(strikes['short_call'])}/{int(strikes['long_call'])} CE.",
+        f"{int(strikes['long_put'])}/{int(strikes['short_put'])} PE · {int(strikes['short_call'])}/{int(strikes['long_call'])} CE."
+        + narrowed_wings_note(strikes, wing_width_points(settings, model.spot)),
         metrics, tranche_strikes=strikes,
     )
 
 
+def wing_width_points(settings: CondorSettings, spot: float) -> float:
+    """How far beyond each short a wing goes, in index points."""
+    return float(spot) * settings.wing_width_pct / 100.0
+
+
 def entry_strikes(model: GreeksModel, strikes: list[float], settings: CondorSettings) -> Optional[dict[str, float]]:
-    """Shorts at the short delta, wings at the wing delta snapped outward, beyond the shorts."""
+    """Shorts at the short delta; each wing the same distance beyond its short (a % of spot),
+    snapped outward, or at the furthest listed strike when the target is past it (#69)."""
     short_call = strike_for_delta(model, strikes, "Call", settings.short_delta)
     short_put = strike_for_delta(model, strikes, "Put", settings.short_delta)
     if short_call is None or short_put is None:
         return None
-    long_call = strike_for_delta(model, [s for s in strikes if s > short_call], "Call", settings.wing_delta, outward=True)
-    long_put = strike_for_delta(model, [s for s in strikes if s < short_put], "Put", settings.wing_delta, outward=True)
+    width = wing_width_points(settings, model.spot)
+    long_call = wing_at_width(strikes, "Call", short_call, width)
+    long_put = wing_at_width(strikes, "Put", short_put, width)
     if long_call is None or long_put is None:
         return None
     return {"short_call": short_call, "long_call": long_call, "short_put": short_put, "long_put": long_put}
+
+
+def narrowed_wings_note(strikes: dict[str, float], width: float) -> str:
+    """Say so when a wing sits nearer than the set width because the list ends first."""
+    # Snapping outward only ever widens a wing, so a narrower one is the furthest-listed fallback.
+    short = {
+        "put": strikes["short_put"] - strikes["long_put"],
+        "call": strikes["long_call"] - strikes["short_call"],
+    }
+    narrow = [f"{side} wing {int(w)} points" for side, w in short.items() if w + 1e-6 < width]
+    if not narrow:
+        return ""
+    return f" Furthest listed strike used: {', '.join(narrow)}, narrower than the {int(round(width))} set."
 
 
 def entry_orders(strikes: dict[str, float], quantity: int, market: MarketSnapshot) -> Optional[list[OrderLeg]]:

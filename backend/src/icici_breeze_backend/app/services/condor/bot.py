@@ -4,18 +4,21 @@ The bot is a campaign with `origin = "bot"` that acts on its own scheduled check
 only suggesting. Everything it decides is the engine's (#63); everything it places goes through
 the campaign executor (#65); this module only decides *whether and how* to act.
 
+The card names the modes as every bot does (#70): `paper` is **Simulation** and `telegram` is
+**Semi-auto**. The stored values keep their old names, as the scalpers keep `paper`.
+
 **Modes unlock in order, enforced here and asked by the route before every save:**
 
-* switching the bot on at all needs a **completed** condor backtest of exactly the saved
-  settings (and exit action). Any change to them needs a new one;
-* `telegram` needs one finished **paper** cycle on those settings;
-* `auto` needs at least one ticket **approved on Telegram** and executed.
+* Simulation is open from day 1. A completed backtest of the saved settings is shown beside
+  the evidence but gates nothing, as with every other bot (#70);
+* `telegram` (Semi-auto) needs one finished Simulation cycle on those settings;
+* `auto` needs at least one ticket **approved on Telegram** and executed, on those settings.
 
-**Paper** simulates each action at the live touch plus the paper slippage (`charges`), books
-it to a paper campaign's ledger, and places nothing. A paper campaign holds nothing at the
-broker, so it owns no Portfolio group. **Telegram** sends the ticket with Approve/Reject on the
-bots' approval tokens; a tap executes it through the executor, or refuses if it went stale.
-**Auto** executes.
+**Simulation** fills each action at the live touch plus the simulation slippage (`charges`),
+books it to a paper campaign's ledger, and places nothing. A paper campaign holds nothing at
+the broker, so it owns no Portfolio group. **Semi-auto** sends the ticket on Telegram with
+Approve/Reject on the bots' approval tokens; a tap executes it through the executor, or refuses
+if it went stale. **Auto** executes.
 
 **The user always wins.** A manual ticket on the bot's campaign pauses the bot until resumed.
 Switching the bot off, changing its settings, or moving between paper and live hands its live
@@ -46,6 +49,12 @@ AUTO_NOTE = "bot-auto"
 ACTIONABLE = {"roll_untested", "enter_tranche", "exit_or_roll", "close_all"}
 _PAPER_CYCLE_ENDS = {"exit_dte", "beyond_breakeven", "max_loss", "time_roll", "close_all", "suggested_close"}
 _FMT = "%d-%b-%Y"
+# What the user reads for each stored mode (#70): the same words as every other bot's card.
+MODE_LABEL = {"paper": "Simulation", "telegram": "Semi-auto", "auto": "Auto"}
+
+
+def campaign_mode_label(mode: str) -> str:
+    return "simulation" if mode == "paper" else mode
 
 
 class Refused(ValueError):
@@ -98,11 +107,11 @@ class Eligibility:
     approved_executions: int
 
     def as_dict(self) -> dict[str, Any]:
+        # `backtest` travels for the card to show; it unlocks nothing (#70).
         return {
             **dataclasses.asdict(self),
-            "may_enable": self.backtest is not None,
-            "may_telegram": self.backtest is not None and self.paper_cycles >= 1,
-            "may_auto": self.backtest is not None and self.paper_cycles >= 1 and self.approved_executions >= 1,
+            "may_telegram": self.paper_cycles >= 1,
+            "may_auto": self.paper_cycles >= 1 and self.approved_executions >= 1,
         }
 
 
@@ -144,18 +153,14 @@ def guard(user_id: str, *, after_enabled: bool, after_config: dict[str, Any]) ->
     if not after_enabled:
         return
     cfg = config_of(after_config)
+    if cfg.mode == "paper":
+        return
     e = eligibility(user_id, cfg)
-    if e.backtest is None:
-        raise Refused(
-            "These settings have no completed backtest. With the bot off, save them, run a backtest with the "
-            "clock on the bot's card and let it complete, then switch the bot on. Changing any setting needs a "
-            "new backtest."
-        )
     if cfg.mode == "telegram" and e.paper_cycles < 1:
-        raise Refused("Telegram approval unlocks after one full paper cycle on these settings.")
+        raise Refused("Semi-auto unlocks after one full Simulation cycle on these settings.")
     if cfg.mode == "auto" and (e.paper_cycles < 1 or e.approved_executions < 1):
         raise Refused(
-            "Autonomous unlocks after a paper cycle and then a Telegram-approved ticket, both on these settings."
+            "Auto unlocks after a Simulation cycle and then a ticket approved in Semi-auto, both on these settings."
         )
 
 
@@ -211,7 +216,7 @@ def handover_preview(proc: Any, campaign: repo.Campaign) -> dict[str, Any]:
         blockers.append("Only an active campaign of your own, on real positions, can be handed to the bot.")
     if not record.enabled or cfg.mode == "paper":
         blockers.append(
-            "Switch the bot on in Telegram or Auto mode first. In Paper mode it only simulates, so it cannot "
+            "Switch the bot on in Semi-auto or Auto first. In Simulation it places nothing, so it cannot "
             "manage real positions."
         )
     elif cfg.paused:
@@ -219,7 +224,7 @@ def handover_preview(proc: Any, campaign: repo.Campaign) -> dict[str, Any]:
     own = repo.bot_campaign(campaign.user_id)
     if own is not None and own.id != campaign.id:
         expiry = own.cycle.expiry if own.cycle else "—"
-        blockers.append(f"The bot already runs a campaign (NIFTY {expiry}, {own.mode}); it runs one at a time.")
+        blockers.append(f"The bot already runs a campaign (NIFTY {expiry}, {campaign_mode_label(own.mode)}); it runs one at a time.")
     if repo.running_execution(campaign.id):
         blockers.append("A ticket is executing on this campaign. Wait for it to finish.")
     as_bot = dataclasses.replace(campaign, settings=cfg.campaign)
@@ -255,7 +260,7 @@ def hand_over(proc: Any, campaign: repo.Campaign) -> repo.Campaign:
     if not repo.hand_to_bot(campaign.id, campaign.user_id, cfg.campaign, f"bot:{hash_of(cfg)}"):
         raise Refused("The campaign changed while it was being handed over. Reload and try again.")
     expiry = campaign.cycle.expiry if campaign.cycle else "—"
-    _notify(campaign.user_id, f"You handed the NIFTY {expiry} campaign to the bot. It manages it from the next check, in {cfg.mode} mode.")
+    _notify(campaign.user_id, f"You handed the NIFTY {expiry} campaign to the bot. It manages it from the next check, in {MODE_LABEL[cfg.mode]}.")
     return repo.get_campaign(campaign.id, campaign.user_id)
 
 
@@ -460,7 +465,7 @@ def simulate(proc: Any, campaign: repo.Campaign, raw: list[dict[str, Any]], kind
         bid = q.bid if q and q.bid and q.bid > 0 else None
         ask = q.ask if q and q.ask and q.ask > 0 else None
         if bid is None or ask is None:
-            msg = f"Paper fill stopped at step {filled + 1}: no two-sided quote for {int(o.strike)} {o.right}."
+            msg = f"Simulation: fill stopped at step {filled + 1}: no two-sided quote for {int(o.strike)} {o.right}."
             repo.add_decision(campaign.id, check_kind="manual", action=kind, reason="stopped", text=msg, outcome="paper")
             _notify(campaign.user_id, msg)
             break
@@ -478,7 +483,7 @@ def simulate(proc: Any, campaign: repo.Campaign, raw: list[dict[str, Any]], kind
     if decision_id is not None:
         repo.update_decision(decision_id, outcome=f"paper_{status}")
     if status == "completed":
-        _notify(campaign.user_id, f"Paper: {kind.replace('_', ' ')} filled on paper, {filled} order(s). Nothing was placed.")
+        _notify(campaign.user_id, f"Simulation: {kind.replace('_', ' ')} filled at live prices, {filled} order(s). Nothing was placed.")
     return f"paper_{status}"
 
 

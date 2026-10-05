@@ -37,16 +37,30 @@ def _delta(m, right, strike):
 # ---- entry -------------------------------------------------------------------------------
 
 
-def test_entry_picks_shorts_and_wings_by_delta():
+def test_entry_picks_shorts_by_delta_and_wings_at_equal_width():
     m = market(24200, at(45))
     d = decide(_empty(), m, SETTINGS, "sod", CHARGES)
     s = d.tranche_strikes
     assert abs(_delta(m, "Call", s["short_call"])) == pytest.approx(0.20, abs=0.02)
     assert abs(_delta(m, "Put", s["short_put"])) == pytest.approx(0.20, abs=0.02)
-    # Wings snap outward: never more delta than configured.
-    assert abs(_delta(m, "Call", s["long_call"])) <= 0.05
-    assert abs(_delta(m, "Put", s["long_put"])) <= 0.05
+    # Each wing the set % of spot beyond its short, snapped outward to the next listed strike (#69).
+    width = 24200 * SETTINGS.wing_width_pct / 100
+    for w in (s["short_put"] - s["long_put"], s["long_call"] - s["short_call"]):
+        assert width <= w < width + 50
     assert s["long_put"] < s["short_put"] < 24200 < s["short_call"] < s["long_call"]
+    assert "Furthest listed" not in d.text
+
+
+def test_a_wing_past_the_listed_strikes_goes_to_the_furthest_one_and_says_so():
+    import dataclasses
+
+    full = market(24200, at(45))
+    short_put = decide(_empty(), full, SETTINGS, "sod", CHARGES).tranche_strikes["short_put"]
+    lowest = short_put - 300  # well inside the ~1,089-point width
+    m = dataclasses.replace(full, chain=tuple(r for r in full.chain if r.strike >= lowest))
+    d = decide(_empty(), m, SETTINGS, "sod", CHARGES)
+    assert d.action == "enter_tranche" and d.tranche_strikes["long_put"] == lowest
+    assert "Furthest listed strike used: put wing 300 points" in d.text
 
 
 def test_entry_orders_buy_wings_before_selling():

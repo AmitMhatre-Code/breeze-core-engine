@@ -120,7 +120,7 @@ def test_settings_defaults_and_stop():
     [
         {"entry_dte": 20, "tranche_cutoff_dte": 30},
         {"exit_dte": 31},
-        {"wing_delta": 0.25},
+        {"wing_width_pct": 0},
         {"max_loss_pct_of_ceiling": None},
         {"tranche_cutoff_dte": 21, "tranches": 3},
     ],

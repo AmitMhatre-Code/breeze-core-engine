@@ -75,11 +75,13 @@ def size_from_margin(settings: CondorSettings, user_id: str, *, today: Optional[
         k = strike_for_abs_delta(spot, t, sigma, right, delta)
         return regime.strike_beyond(k, "NIFTY", up=right == "Call")
 
+    short_call, short_put = strike("Call", settings.short_delta), strike("Put", settings.short_delta)
+    width = spot * settings.wing_width_pct / 100.0
     legs = [
-        ("call", strike("Call", settings.wing_delta), lot_size, cfg.BUY),
-        ("put", strike("Put", settings.wing_delta), lot_size, cfg.BUY),
-        ("call", strike("Call", settings.short_delta), lot_size, cfg.SELL),
-        ("put", strike("Put", settings.short_delta), lot_size, cfg.SELL),
+        ("call", regime.strike_beyond(short_call + width, "NIFTY", up=True), lot_size, cfg.BUY),
+        ("put", regime.strike_beyond(short_put - width, "NIFTY", up=False), lot_size, cfg.BUY),
+        ("call", short_call, lot_size, cfg.SELL),
+        ("put", short_put, lot_size, cfg.SELL),
     ]
     per_lot = margin_for_mixed_legs(
         proc, user_id, exchange_code=cfg.NFO, stock_code="NIFTY",
@@ -120,6 +122,46 @@ def _listed_expiry_near(proc: Any, today: datetime.date, dte: int) -> Optional[d
             if d >= today and (best is None or abs((d - today).days - dte) < abs((best - today).days - dte)):
                 best = d
     return best
+
+
+class _ScripIndex:
+    """`_listed_expiry_near` reads expiries off a processor; the scrip index has the same list
+    without importing the broker client."""
+
+    @staticmethod
+    def fetch_stock_codes(exchange_code: str) -> list[dict[str, Any]]:
+        from icici_breeze_backend.app.services.reference_data.scrip_index import get_underlyings
+
+        return get_underlyings(exchange_code) or []
+
+
+def tradeable_band(settings: CondorSettings, today: datetime.date) -> tuple[Optional[tuple[float, float]], str]:
+    """How far below and above spot ICICI lists tradeable NIFTY strikes today, as fractions of
+    spot, on the expiry nearest the entry DTE -- and the note that says so (#69).
+
+    A replay may only open legs inside this band, so the backtest never trades a strike live
+    trading could not. History's own lists are not kept, so today's band stands in for every
+    past day; the note says that too. None when the list cannot be read: the replay then runs
+    unlimited and says so."""
+    try:
+        from icici_breeze_backend.app.services.reference_data.tradable_contracts import list_tradeable_strikes
+
+        expiry = _listed_expiry_near(_ScripIndex(), today, settings.entry_dte)
+        spot = store.latest_close("NIFTY", path=None)
+        strikes = [float(k) for k in list_tradeable_strikes("NIFTY", expiry.strftime("%d-%b-%Y"))] if expiry else []
+    except Exception:  # noqa: BLE001 -- a missing scrip master only loosens the replay
+        _logger.debug("condor backtest: tradeable strikes unreadable", exc_info=True)
+        expiry, spot, strikes = None, None, []
+    if not (expiry and spot and strikes):
+        return None, (
+            "ICICI's list of tradeable NIFTY strikes could not be read, so the replay was not limited to it "
+            "and may use strikes live trading cannot."
+        )
+    below, above = max(0.0, (spot - min(strikes)) / spot), max(0.0, (max(strikes) - spot) / spot)
+    return (below, above), (
+        f"Strikes limited to what ICICI lists today for NIFTY {expiry:%d-%b-%Y}: {below:.1%} below to "
+        f"{above:.1%} above spot, applied to every check of the period."
+    )
 
 
 def five_minute_verdict(path: Optional[str] = None) -> Optional[str]:
@@ -225,10 +267,12 @@ def start(
                 jobs._log(sizing_text)  # noqa: SLF001
                 notes.append(sizing_text)
 
+                band, band_note = tradeable_band(settings, now.date())
+                notes.append(band_note)
                 source = StoreSource(service.holidays(), from_date, end, data_until=last_session)
                 replay = CondorReplay(
                     settings, from_date, end,
-                    lots_per_tranche=lots, exit_action=exit_action, source=source,
+                    lots_per_tranche=lots, exit_action=exit_action, source=source, listed_band=band,
                     charges=load_charges(), spread=spread_stats(), holidays=service.holidays(),
                     on_day=lambda d: jobs._update(phase="replaying", day=d.isoformat()),  # noqa: SLF001
                 )

@@ -211,9 +211,9 @@ def test_the_card_backtest_is_an_activity_row_sharing_the_stored_runs_id(bt):
     assert stored["bot"] == "condor" and stored["status"] == "partial"
     assert stored["params"]["period"] == "custom" and stored["params"]["lots_per_tranche"] == 2
     assert "net_pnl" in stored["summary"] and isinstance(stored["trades"], list)
-    # A partial run is no evidence: the bot stays locked.
+    # A partial run is not shown as the settings' backtest.
     cfg = condor_bot.config_of(bots_repo.get_or_create_bot("u1", BOT_DYNAMIC_CONDOR).config)
-    assert condor_bot.eligibility("u1", cfg).as_dict()["may_enable"] is False
+    assert condor_bot.eligibility("u1", cfg).backtest is None
 
 
 def test_a_period_before_the_history_is_cut_at_its_start_and_says_so(bt):
@@ -287,17 +287,47 @@ def test_a_live_bot_waits_and_says_why_when_its_expiry_is_taken(env):
     assert condor_bot.waiting_reason(FakeProc(), "u1", DynamicCondorBotConfig(mode="paper"), at(45).date())[1] is None
 
 
-def test_entry_proposal_names_the_wing_the_chain_cannot_reach(env, monkeypatch):
+def test_entry_proposal_says_when_nothing_is_listed_beyond_a_short(env, monkeypatch):
     import dataclasses
 
-    def short_chain(proc, user_id, expiry, held=(), *, now=None):
-        m = market(24650.0, at(45, "10:30"))
-        m = dataclasses.replace(m, chain=tuple(r for r in m.chain if r.strike >= 23000))
+    from icici_breeze_backend.app.services.condor.pricing import build_greeks_model
+    from icici_breeze_backend.app.services.condor.strikes import strike_for_delta
+
+    full = market(24650.0, at(45, "10:30"))
+    model = build_greeks_model(full.chain, full.spot, EXPIRY, full.now)
+    short_put = strike_for_delta(model, full.strikes, "Put", SETTINGS.short_delta)
+
+    def cut_chain(proc, user_id, expiry, held=(), *, now=None):
+        m = dataclasses.replace(full, chain=tuple(r for r in full.chain if r.strike >= short_put))
         return live.LiveSnapshot(m, True, (), "live", True)
 
-    monkeypatch.setattr(live, "snapshot", short_chain)
-    with pytest.raises(campaigns.Refused, match="No listed NIFTY .* put is as far out as the 0.05 Δ wing"):
+    monkeypatch.setattr(live, "snapshot", cut_chain)
+    with pytest.raises(campaigns.Refused, match="put is listed beyond the"):
         campaigns.entry_proposal(FakeProc(), "u1", SETTINGS, today=at(45).date())
+
+
+def test_a_replay_only_opens_legs_inside_todays_tradeable_band():
+    from icici_breeze_backend.app.services.condor.backtest import CondorReplay
+
+    m = market(24000.0, at(45))
+    replay = CondorReplay.__new__(CondorReplay)
+    replay.listed_band = (0.05, 0.10)
+    held = {(EXPIRY, 21000.0, "Put")}
+    listed = replay._listed(m.chain, 24000.0, held)
+    inside = [k for k in listed if k != 21000.0]
+    assert min(inside) >= 24000 * 0.95 and max(inside) <= 24000 * 1.10
+    assert 21000.0 in listed  # a held leg stays closable
+    import dataclasses
+
+    assert dataclasses.replace(m, listed=listed).strikes == sorted(k for k in m.strikes if k in set(listed))
+    replay.listed_band = None
+    assert replay._listed(m.chain, 24000.0, held) is None
+
+
+def test_an_unreadable_strike_list_leaves_the_replay_unlimited_and_says_so(monkeypatch):
+    monkeypatch.setattr(backtest_job, "_listed_expiry_near", lambda *a, **k: None)
+    band, note = backtest_job.tradeable_band(SETTINGS, at(45).date())
+    assert band is None and "not limited" in note
 
 
 # ---- handing a manual campaign to the bot (#68) -----------------------------------------
@@ -332,7 +362,7 @@ def _arm_bot(**config):
 def test_a_bot_that_is_off_or_on_paper_cannot_take_a_campaign(env, bots):
     c = _manual_campaign()
     p = condor_bot.handover_preview(FakeProc(HELD), c)
-    assert not p["allowed"] and any("Telegram or Auto" in b for b in p["blockers"])
+    assert not p["allowed"] and any("Semi-auto or Auto" in b for b in p["blockers"])
     bots_repo.update_bot("u1", BOT_DYNAMIC_CONDOR, enabled=True, config={"mode": "paper"})
     assert not condor_bot.handover_preview(FakeProc(HELD), c)["allowed"]
     with pytest.raises(condor_bot.Refused):

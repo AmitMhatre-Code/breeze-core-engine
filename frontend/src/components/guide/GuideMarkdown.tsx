@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { guideImageSize } from "@/lib/guide/content";
 import { headingSlug } from "@/lib/guide/slug";
 
 /**
@@ -9,7 +10,8 @@ import { headingSlug } from "@/lib/guide/slug";
  * GitHub too, so this maps GitHub conventions onto the app:
  * - `[text](other-section.md#anchor)` → `/guide/other-section#anchor`
  * - `![alt](images/dark/name.png "caption")` → the dark and light captures of `name.png`, swapped by
- *   the app theme (copied into /guide-assets by scripts/sync-guide-assets.mjs)
+ *   the app theme (copied into /guide-assets by scripts/sync-guide-assets.mjs), each shown at its
+ *   own pixel size and only scaled down when wider than the column
  * - `> [!NOTE]` / `[!TIP]` / `[!IMPORTANT]` / `[!WARNING]` / `[!CAUTION]` → callout boxes
  * - heading ids use GitHub's slug rule, so the same fragment works in both places
  */
@@ -57,9 +59,41 @@ function guideHref(href: string): string {
   return m ? `/guide/${m[1]}${m[2] ?? ""}` : href;
 }
 
-function screenshotPair(src: string): { light: string; dark: string } | null {
+function screenshotPair(src: string): { light: string; dark: string; name: string } | null {
   const m = /^(?:\.\/)?images\/(?:dark|light)\/(.+)$/.exec(src);
-  return m ? { light: `/guide-assets/light/${m[1]}`, dark: `/guide-assets/dark/${m[1]}` } : null;
+  return m ? { light: `/guide-assets/light/${m[1]}`, dark: `/guide-assets/dark/${m[1]}`, name: m[1] } : null;
+}
+
+// Text width of the guide column: max-w-[860px] less sm:px-8 in app/guide/[slug]/page.tsx.
+const COLUMN_WIDTH = 796;
+
+function Screenshot({ src, alt, theme, name, className }: {
+  src: string;
+  alt: string;
+  theme: "dark" | "light";
+  name: string;
+  className: string;
+}) {
+  const size = guideImageSize(theme, name);
+  // Real size, capped to the column: a small capture is never blown up past how it looked on screen.
+  const img = (
+    // eslint-disable-next-line @next/next/no-img-element -- static screenshots, sizes vary
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      width={size?.width}
+      height={size?.height}
+      className="mx-auto block h-auto max-w-full rounded-lg border border-border"
+    />
+  );
+  // Only a capture the column scales down is worth opening full size.
+  if (size && size.width <= COLUMN_WIDTH) return <span className={className}>{img}</span>;
+  return (
+    <a href={src} target="_blank" rel="noopener" className={className} title="Open full size">
+      {img}
+    </a>
+  );
 }
 
 const CALLOUT_STYLE: Record<CalloutKind, { label: string; box: string; title: string }> = {
@@ -135,24 +169,21 @@ const components: Components = {
   },
   img: ({ src, alt, title }) => {
     const pair = typeof src === "string" ? screenshotPair(src) : null;
-    const shot = "block h-auto w-full rounded-lg border border-border";
     return (
       <span className="block">
         {pair ? (
           <>
-            {/* Click opens the full-size capture: wide screenshots are scaled down to the column. */}
-            <a href={pair.light} target="_blank" rel="noopener" className="block dark:hidden" title="Open full size">
-              {/* eslint-disable-next-line @next/next/no-img-element -- static screenshots, sizes vary */}
-              <img src={pair.light} alt={alt ?? ""} loading="lazy" className={shot} />
-            </a>
-            <a href={pair.dark} target="_blank" rel="noopener" className="hidden dark:block" title="Open full size">
-              {/* eslint-disable-next-line @next/next/no-img-element -- static screenshots, sizes vary */}
-              <img src={pair.dark} alt={alt ?? ""} loading="lazy" className={shot} />
-            </a>
+            <Screenshot src={pair.light} alt={alt ?? ""} theme="light" name={pair.name} className="block dark:hidden" />
+            <Screenshot src={pair.dark} alt={alt ?? ""} theme="dark" name={pair.name} className="hidden dark:block" />
           </>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element -- static guide images
-          <img src={typeof src === "string" ? src : ""} alt={alt ?? ""} loading="lazy" className={shot} />
+          <img
+            src={typeof src === "string" ? src : ""}
+            alt={alt ?? ""}
+            loading="lazy"
+            className="mx-auto block h-auto max-w-full rounded-lg border border-border"
+          />
         )}
         {title ? <span className="mt-2 block text-center text-[0.8rem] text-muted">{title}</span> : null}
       </span>

@@ -87,9 +87,9 @@ def test_mock_instance_needs_lots_entered(client):
 
 
 def test_incoherent_settings_are_refused(client):
-    r = client.post("/api/condor/backtest/start", json=_body(settings={"margin_ceiling_inr": 1, "wing_delta": 0.3}))
+    r = client.post("/api/condor/backtest/start", json=_body(settings={"margin_ceiling_inr": 1, "exit_dte": 31}))
     assert r.status_code == 400
-    assert "wing delta" in r.json()["detail"].lower()
+    assert "entry dte" in r.json()["detail"].lower()
 
 
 def test_before_history_is_refused(client):

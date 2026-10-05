@@ -48,13 +48,24 @@ def strike_for_delta(
 
 
 def wing_at_width(strikes: Iterable[float], right: Right, short_strike: float, width: float) -> Optional[float]:
-    """A wing `width` points beyond the short, snapped outward to the grid."""
+    """A wing `width` points beyond the short, snapped outward to the listed strikes.
+
+    When the target lies past the furthest listed strike, the wing is that furthest strike: a
+    narrower wing still caps the side, and no wing at all would leave the entry or roll undone
+    (#69). None only when no strike lies beyond the short."""
     target = short_strike + width if right == "Call" else short_strike - width
+    pool = list(strikes)
     if right == "Call":
-        beyond = [s for s in strikes if s >= target]
-        return min(beyond) if beyond else None
-    beyond = [s for s in strikes if s <= target]
-    return max(beyond) if beyond else None
+        beyond = [s for s in pool if s >= target]
+        if beyond:
+            return min(beyond)
+        past_short = [s for s in pool if s > short_strike]
+        return max(past_short) if past_short else None
+    beyond = [s for s in pool if s <= target]
+    if beyond:
+        return max(beyond)
+    past_short = [s for s in pool if s < short_strike]
+    return min(past_short) if past_short else None
 
 
 def monthly_expiries(expiries: Iterable[datetime.date]) -> list[datetime.date]:

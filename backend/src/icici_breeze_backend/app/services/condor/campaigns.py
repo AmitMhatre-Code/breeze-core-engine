@@ -255,7 +255,7 @@ def entry_proposal(proc: Any, user_id: str, settings: CondorSettings, *, today: 
 
     Priced on stand-ins outside market hours, like an on-demand evaluation: it is a starting
     point the user edits and the executor re-prices, never an order."""
-    from icici_breeze_backend.app.services.condor.engine import entry_strikes
+    from icici_breeze_backend.app.services.condor.engine import entry_strikes, narrowed_wings_note, wing_width_points
     from icici_breeze_backend.app.services.condor.pricing import build_greeks_model
 
     today = today or datetime.datetime.now(live.IST).date()
@@ -285,28 +285,22 @@ def entry_proposal(proc: Any, user_id: str, settings: CondorSettings, *, today: 
         ],
         "tranches": settings.tranches,
         "indicative": not snap.live,
+        "wing_note": narrowed_wings_note(strikes, wing_width_points(settings, model.spot)).strip() or None,
     }
 
 
 def _why_no_entry(model: Any, strikes: list[float], settings: CondorSettings, display: str) -> str:
-    """Which strike the chain cannot supply. The usual case is a wing: only strikes ICICI lists
-    as tradeable are in the chain, and a far-dated 5-delta wing can lie beyond the furthest one.
-    Wings never snap inward (#63), so that is a refusal, not a narrower wing."""
+    """Which strike the chain cannot supply. A wing past the list falls back to the furthest
+    listed strike (#69), so what is left is a short the chain cannot price, or a short with
+    nothing listed beyond it."""
     from icici_breeze_backend.app.services.condor.strikes import strike_for_delta
 
     for right in ("Put", "Call"):
         short = strike_for_delta(model, strikes, right, settings.short_delta)
         if short is None:
             return f"The NIFTY {display} chain cannot price a {settings.short_delta:g} Δ {right.lower()} short yet. Try again shortly."
-        beyond = [k for k in strikes if (k < short if right == "Put" else k > short)]
-        if strike_for_delta(model, beyond, right, settings.wing_delta, outward=True) is None:
-            far = min(beyond) if right == "Put" else max(beyond) if beyond else None
-            d = model.delta(right, far) if far else None
-            where = f" The furthest listed {right.lower()}, {far:g}, is Δ {abs(d):.2f}." if far and d is not None else ""
-            return (
-                f"No listed NIFTY {display} {right.lower()} is as far out as the {settings.wing_delta:g} Δ wing.{where} "
-                "Choose a nearer expiry, or a larger Wing Δ in the bot's settings."
-            )
+        if not [k for k in strikes if (k < short if right == "Put" else k > short)]:
+            return f"No NIFTY {display} {right.lower()} is listed beyond the {int(short)} short, so it cannot have a wing."
     return f"The NIFTY {display} chain cannot place the entry strikes right now. Try again shortly."
 
 

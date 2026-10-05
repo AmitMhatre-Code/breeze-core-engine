@@ -42,7 +42,7 @@ builds. These parts of the conversation must not leak into the build:
 | Underlying | **NIFTY only** in v1. Code takes the underlying as a parameter so SENSEX can follow once liquidity checks show its monthlies can take the size |
 | Expiry cycle | **Configurable**, weeklies included: expiry kind (monthly / any), entry DTE, tranche cut-off DTE, exit DTE are settings. Monthly 45 / 30 / 21 is the first preset |
 | Identity | An **explicit campaign** the user creates or adopts. It owns a ledger that survives rolls and expiry changes |
-| Strike selection | **Delta shorts, delta wings** (defaults 20Δ / 5Δ), so one rule works at any DTE. Credit ÷ width is shown, never enforced |
+| Strike selection | **Delta shorts, delta wings** (defaults 20Δ / 5Δ), so one rule works at any DTE. Credit ÷ width is shown, never enforced. *Wings changed 2026-10-05 to an equal width beyond each short, a % of spot (#69).* |
 | Roll target | The untested short goes to the **tested side's \|Δ\|**, **capped at the tested strike** (iron fly). **Never invert** |
 | Wing on roll | **Same point width** as the tested side's wing |
 | Tested side | **Never moved** by an adjustment. It closes only through max-loss, exit DTE, break-even exit or a time roll |
@@ -58,7 +58,7 @@ builds. These parts of the conversation must not leak into the build:
 | Sizing | A ₹ **margin ceiling** per campaign; the rest of capital is the buffer. **N tranches** spread evenly between entry DTE and cut-off DTE, same expiry, managed as one block |
 | Entry check | Which check (10:30 or 15:31) enters tranches is a **setting** |
 | Coexistence | **Exclusive + flag.** A campaign owns its NIFTY+expiry group: arming PB/SL there is refused. Fills not placed by the campaign are flagged for the user to assign or leave out |
-| Bot rollout | **Backtest → paper → Telegram approval → auto.** Armable only after a backtest of its saved settings |
+| Bot rollout | **Backtest → paper → Telegram approval → auto.** Armable only after a backtest of its saved settings. *Revised 2026-10-05 (#70): Simulation (paper) → Semi-auto (Telegram) → Auto; Simulation needs no backtest, like every bot* |
 | Manual adjustments | An **Adjust ticket** on the campaign card: templates or blank, every leg editable, before/after preview, executed through the campaign executor (§6a) |
 | Manual vs engine rules | **Warn, overridable.** The only hard block is a final position with a short that has no wing |
 | Manual on a bot campaign | Executing a manual ticket **pauses the bot** for that campaign until the user resumes it |
@@ -265,6 +265,7 @@ attribution, and orders.
 action (time roll / close), the entry check. One active campaign per bot.
 
 - **Arm gate:** a completed backtest of the exact saved settings, newer than the last settings change.
+  *Dropped 2026-10-05 (#70): Simulation is open from day 1; the backtest is shown, not required.*
 - **Modes, in order:** paper (simulated fills at live quotes, `scalping/paper.py` pattern) →
   Telegram approval (`bots/hitl.py`: re-price and refuse on approve; silence places nothing) →
   auto. Each mode is a switch the user turns on.

@@ -50,6 +50,28 @@ export function readGuideIndexMarkdown(): string {
   return fs.readFileSync(path.join(GUIDE_USER_DIR, "index.md"), "utf8");
 }
 
+/**
+ * Pixel size of one screenshot (`images/<theme>/<name>`), read from the PNG header. Captures are
+ * taken at deviceScaleFactor 1, so this is also the size it had on screen. Null for anything that
+ * is not a readable PNG.
+ */
+export function guideImageSize(theme: "dark" | "light", name: string): { width: number; height: number } | null {
+  if (!/^[\w.-]+\.png$/i.test(name)) return null;
+  try {
+    const fd = fs.openSync(path.join(GUIDE_USER_DIR, "images", theme, name), "r");
+    try {
+      const head = Buffer.alloc(24);
+      fs.readSync(fd, head, 0, 24, 0);
+      if (head.toString("latin1", 12, 16) !== "IHDR") return null;
+      return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Second-level headings, for the "On this page" list. */
 export function sectionOutline(markdown: string): { text: string; slug: string }[] {
   return markdownHeadings(markdown)

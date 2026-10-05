@@ -257,7 +257,7 @@ def test_campaign_routes_end_to_end(client):
     detail = http.get(f"/api/condor/campaigns/{cid}").json()
     assert len(detail["fills"]) == 4 and detail["decisions"] == []
 
-    bad = http.put(f"/api/condor/campaigns/{cid}/settings", json={"margin_ceiling_inr": 1, "wing_delta": 0.4})
+    bad = http.put(f"/api/condor/campaigns/{cid}/settings", json={"margin_ceiling_inr": 1, "wing_width_pct": 0})
     assert bad.status_code == 400
     ok = http.put(f"/api/condor/campaigns/{cid}/settings", json={"margin_ceiling_inr": 5_00_000, "tranches": 2})
     assert ok.json()["settings"]["tranches"] == 2

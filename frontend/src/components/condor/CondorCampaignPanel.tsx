@@ -332,7 +332,7 @@ export function CampaignCard({
         <p className="text-xs text-muted">No scheduled check has run yet.</p>
       )}
       {campaign.mode === "paper" ? (
-        <p className="text-xs text-muted">Paper campaign: the bot simulates every action at live prices. Nothing is placed.</p>
+        <p className="text-xs text-muted">Simulation campaign: the bot simulates every action at live prices. Nothing is placed.</p>
       ) : (
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="app-btn-secondary" onClick={() => openTicket({ kind: "blank" })}>
@@ -436,7 +436,7 @@ const SETTING_LABEL: Partial<Record<keyof CondorSettings, string>> = {
   sod_check_ist: "Start-of-day check",
   eod_check_ist: "End-of-day check",
   short_delta: "Short Δ",
-  wing_delta: "Wing Δ",
+  wing_width_pct: "Wing width % of spot",
   leg_rule_delta_floor: "Untested side below Δ",
   leg_rule_decay_pct: "…or decayed %",
   net_delta_band_per_lot: "Net Δ band per lot",
@@ -479,7 +479,7 @@ function HandOverButton({ campaign }: { campaign: CondorCampaign }) {
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-muted">
           Nothing is traded now. From its next check the Dynamic Iron Condor bot manages this campaign on its own
-          settings{p && p.mode !== "off" && p.mode !== "paper" ? `, in ${p.mode === "auto" ? "Auto" : "Telegram"} mode` : ""}.
+          settings{p && p.mode !== "off" && p.mode !== "paper" ? `, in ${p.mode === "auto" ? "Auto" : "Semi-auto"}` : ""}.
           A ticket you execute on it pauses the bot; switching the bot off or changing this campaign&rsquo;s settings
           hands it back to you.
         </p>

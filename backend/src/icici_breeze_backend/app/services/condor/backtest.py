@@ -295,8 +295,11 @@ class CondorReplay:
         spread: SpreadStats,
         holidays: set[datetime.date],
         on_day: Optional[Callable[[datetime.date], None]] = None,
+        listed_band: Optional[tuple[float, float]] = None,
     ) -> None:
         self.settings = settings
+        # (below, above) as fractions of spot: new legs only inside it (#69). None = unlimited.
+        self.listed_band = listed_band
         self.start, self.end = start, end
         self.qty = int(lots_per_tranche) * regime.lot_size_for(UNDERLYING, start)
         self.lot_size = regime.lot_size_for(UNDERLYING, start)
@@ -424,7 +427,8 @@ class CondorReplay:
                 if needs:
                     return needs
             market = MarketSnapshot(
-                now=ts.replace(tzinfo=IST), spot=spot, spot_live=True, feeds_ok=True, chain=rows
+                now=ts.replace(tzinfo=IST), spot=spot, spot_live=True, feeds_ok=True, chain=rows,
+                listed=self._listed(rows, spot, held),
             )
             decision, wanted = chooser(market)
             wanted = set(wanted or ()) | self._contracts_of(expiry, decision)
@@ -433,6 +437,16 @@ class CondorReplay:
                 break
             quoted |= new
         return decision, market
+
+    def _listed(self, rows, spot: float, held: set[Contract]) -> Optional[tuple[float, ...]]:
+        """The strikes a new leg may use at this check: inside today's tradeable band, plus
+        whatever the campaign already holds (it has to be able to close it)."""
+        if self.listed_band is None:
+            return None
+        below, above = self.listed_band
+        lo, hi = spot * (1 - below), spot * (1 + above)
+        kept = {c[1] for c in held}
+        return tuple(r.strike for r in rows if lo <= r.strike <= hi or r.strike in kept)
 
     def _anchors(self, expiry: datetime.date, spot: float) -> set[Contract]:
         lo, hi = spot * (1 - GRID_SPAN), spot * (1 + GRID_SPAN)

@@ -129,32 +129,26 @@ def _campaign(cfg, mode):
 # ---- gates -------------------------------------------------------------------------------
 
 
-def test_switching_on_needs_a_completed_backtest_of_these_exact_settings(env):
+def test_simulation_is_open_from_day_one_without_a_backtest(env):
+    # Like every other bot (#70): a backtest is shown beside the evidence, never required.
     cfg = _configure()
-    with pytest.raises(bot.Refused, match="backtest"):
-        bot.guard(U, after_enabled=True, after_config=cfg.model_dump(mode="json"))
-    _backtest(cfg, status="partial")
-    with pytest.raises(bot.Refused, match="backtest"):
-        bot.guard(U, after_enabled=True, after_config=cfg.model_dump(mode="json"))
-    _backtest(cfg)
+    assert bot.eligibility(U, cfg).backtest is None
     bot.guard(U, after_enabled=True, after_config=cfg.model_dump(mode="json"))
     changed = cfg.model_copy(update={"exit_action": "close"})
-    with pytest.raises(bot.Refused, match="new backtest"):
-        bot.guard(U, after_enabled=True, after_config=changed.model_dump(mode="json"))
-    # Saving while switched off is always allowed.
-    bot.guard(U, after_enabled=False, after_config=changed.model_dump(mode="json"))
+    bot.guard(U, after_enabled=True, after_config=changed.model_dump(mode="json"))
+    # Saving while switched off is always allowed, whatever the mode.
+    bot.guard(U, after_enabled=False, after_config={**changed.model_dump(mode="json"), "mode": "auto"})
 
 
-def test_telegram_needs_a_paper_cycle_and_auto_an_approved_ticket(env):
-    cfg = _configure()
-    _backtest(cfg)
-    with pytest.raises(bot.Refused, match="paper cycle"):
+def test_semi_auto_needs_a_simulation_cycle_and_auto_an_approved_ticket(env):
+    cfg = _configure()  # no backtest: the ladder alone gates Semi-auto and Auto
+    with pytest.raises(bot.Refused, match="Simulation cycle"):
         bot.guard(U, after_enabled=True, after_config={**cfg.model_dump(mode="json"), "mode": "telegram"})
     paper = _campaign(cfg, "paper")
     repo.bump_tranches(paper.cycle.id)
     repo.close_cycle(paper.cycle.id, "exit_dte")
     bot.guard(U, after_enabled=True, after_config={**cfg.model_dump(mode="json"), "mode": "telegram"})
-    with pytest.raises(bot.Refused, match="Telegram-approved"):
+    with pytest.raises(bot.Refused, match="approved in Semi-auto"):
         bot.guard(U, after_enabled=True, after_config={**cfg.model_dump(mode="json"), "mode": "auto"})
     assert bot.eligibility(U, cfg).as_dict()["may_telegram"] is True
 
@@ -309,13 +303,12 @@ def client(env, monkeypatch):
 
 
 def test_the_bot_routes_enforce_the_gate_and_report_eligibility(client, env):
-    cfg = _configure()
-    r = client.patch(f"/bots/config?bot_type={BOT_DYNAMIC_CONDOR}", json={"enabled": True})
-    assert r.status_code == 409 and "backtest" in r.json()["detail"]
-    _backtest(cfg)
+    _configure()
+    r = client.patch(f"/bots/config?bot_type={BOT_DYNAMIC_CONDOR}", json={"enabled": True, "config": {"mode": "telegram"}})
+    assert r.status_code == 409 and "Simulation cycle" in r.json()["detail"]
     assert client.patch(f"/bots/config?bot_type={BOT_DYNAMIC_CONDOR}", json={"enabled": True}).status_code == 200
     overview = client.get("/api/condor/bot").json()
-    assert overview["eligibility"]["may_enable"] is True and overview["eligibility"]["may_telegram"] is False
+    assert overview["eligibility"]["backtest"] is None and overview["eligibility"]["may_telegram"] is False
 
 
 def test_a_manual_ticket_on_the_bots_campaign_pauses_it(client, env):
@@ -333,7 +326,7 @@ def test_a_paper_campaign_never_places_real_orders(env):
     cfg = _configure()
     c = _campaign(cfg, "paper")
     t = tickets.template(env["proc"], c, "add_tranche", {"lots": 1})
-    with pytest.raises(executor.Refused, match="paper campaign"):
+    with pytest.raises(executor.Refused, match="Simulation campaign"):
         executor.start(env["proc"], c, t["orders"], kind="add_tranche")
     assert env["sent"] == []
 
@@ -373,11 +366,11 @@ def test_auto_needs_a_paper_cycle_and_an_approval_on_these_settings(env):
     repo.update_execution(eid, status="completed")
     assert bot.eligibility(U, cfg).approved_executions == 0
     repo.close_campaign(elsewhere.id, U, "settings_changed")
-    # An approval on these settings, but no paper cycle: still locked.
+    # An approval on these settings, but no Simulation cycle: still locked.
     here = _campaign(cfg, "live")
     eid = repo.create_execution(here.id, "suggested_roll", [], note=bot.APPROVED_NOTE)
     repo.update_execution(eid, status="completed")
-    with pytest.raises(bot.Refused, match="paper cycle and then"):
+    with pytest.raises(bot.Refused, match="Simulation cycle and then"):
         bot.guard(U, after_enabled=True, after_config={**cfg.model_dump(mode="json"), "mode": "auto"})
     paper = _campaign(cfg, "paper")
     repo.bump_tranches(paper.cycle.id)

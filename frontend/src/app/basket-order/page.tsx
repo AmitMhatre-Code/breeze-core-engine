@@ -623,6 +623,7 @@ export default function BasketOrderPage() {
     setCondorNote(
       `Tranche 1 of ${condorEntry.tranches} at the Dynamic Iron Condor bot's settings: ${condorEntry.lots} lot(s), ${condorEntry.sizing}.` +
         (condorEntry.indicative ? " Strikes were picked on last-traded prices, not a live book." : "") +
+        (condorEntry.wing_note ? ` ${condorEntry.wing_note}` : "") +
         " Edit anything before you execute.",
     );
     setCondorEntry(null);

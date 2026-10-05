@@ -41,6 +41,7 @@ The Long Scalper, CAS Bingo's spreads and (optionally) the Iron Fly read a [sign
 | Holdings Writer, Expiry Writer | **Manual** · **Semi-auto** · **Auto** | **Manual**: runs only when you start a run. **Semi-auto**: sizes the trade on its schedule and asks you on Telegram; nothing is placed until you approve. **Auto**: sizes and places the trade on its schedule without asking. Semi-auto needs a linked Telegram chat ([Telegram Alerts](settings-automation.md#telegram-alerts)). |
 | Long Scalper, Iron Fly | **Off** · **Simulation** · **Live** | **Off**: nothing is evaluated or recorded. **Simulation**: runs on live prices but places no orders; fills are simulated at the quoted price, with slippage and charges. **Live**: places real orders, unattended. |
 | CAS Bingo | **Off** · **Simulation** · **Autonomous** | **Off**: never fires on its own; you start runs yourself. **Simulation**: runs the full logic on expiry days, places no orders. **Autonomous**: places real orders on expiry days when its trigger fires. |
+| Dynamic Iron Condor | **Off** · **Simulation** · **Semi-auto** · **Auto** | **Off**: decides nothing. **Simulation**: acts at every check at live prices, places no orders. **Semi-auto**: asks you on Telegram before each action. **Auto**: places each action itself. Semi-auto and Auto unlock in turn; see [Dynamic Iron Condor](#dynamic-iron-condor). |
 
 Switching a scalper to **Live** opens **Enable live trading?**, which shows its daily loss cap (and the combined cap if the other scalper is live too), its simulation record on these exact settings, and its last backtest. A scalper can only go live after at least **one completed Simulation day on the exact settings** it will trade with; change a setting that affects money and that evidence no longer counts. **Enable Autonomous?** does the same job for CAS Bingo.
 
@@ -176,18 +177,18 @@ Every structure needs a **live index level**; without one it plans nothing that 
 
 ### Dynamic Iron Condor
 
-Runs an [Iron Condor campaign](iron-condors.md) for you. It uses the same rules, checks and executor as a campaign you manage by hand; the difference is that it acts on each check's suggestion instead of waiting for you. Its card has four modes, and each unlocks only once the one before it has earned it:
+Runs an [Iron Condor campaign](iron-condors.md) for you. It uses the same rules, checks and executor as a campaign you manage by hand; the difference is that it acts on each check's suggestion instead of waiting for you. Its card has four modes. **Simulation** is open from the start, like every bot's; **Semi-auto** and **Auto** each unlock only once the mode before them has earned it:
 
 | Mode | What it does | Unlocks when |
 |---|---|---|
 | **Off** | Decides nothing. A live campaign it was running is handed back to you, legs open, and its card on Portfolio becomes yours. | Always |
-| **Paper** | Acts at every check on a **paper campaign**, filling at the live bid or ask plus the paper slippage, with charges. Nothing is placed. Click the card's **Campaign** figure to open the paper campaign's card. | A **completed** backtest of exactly these settings and exit action exists. The history icon on the card starts one. |
-| **Telegram** | Sends each action to Telegram with **Approve all** / **Reject**. A tap places it, wings first; nothing is placed if you do not answer within the approval window. | One paper cycle has finished on these settings. |
-| **Auto** | Places each action itself, wings first. | A paper cycle has finished **and** at least one Telegram-approved ticket has executed, both on these settings. |
+| **Simulation** | Acts at every check on a **Simulation campaign**, filling at the live bid or ask plus the simulation slippage, with charges. Nothing is placed. Click the card's **Campaign** figure to open the Simulation campaign's card. | Always. A backtest is not required, but run one (the history icon) before trusting the settings. |
+| **Semi-auto** | Sends each action to Telegram with **Approve all** / **Reject**. A tap places it, wings first; nothing is placed if you do not answer within the approval window. Needs a linked Telegram chat ([Telegram Alerts](settings-automation.md#telegram-alerts)). | One Simulation cycle has finished on these settings. |
+| **Auto** | Places each action itself, wings first. | A Simulation cycle has finished **and** at least one ticket approved in Semi-auto has executed, both on these settings. |
 
-**What counts as evidence.** A backtest, a paper cycle or an approval counts only for the exact settings and exit action it was earned on, **under the rules of the app version that earned it**. Changing back to settings you used before brings their old evidence back, however long ago it was earned. But a release that changes how the rules behave starts every bot over from a fresh backtest; its release notes will say so.
+**What counts as evidence.** A Simulation cycle or an approval counts only for the exact settings and exit action it was earned on, **under the rules of the app version that earned it**. Changing back to settings you used before brings their old evidence back, however long ago it was earned. But a release that changes how the rules behave starts every bot over in Simulation; its release notes will say so.
 
-When it is armed but has no campaign yet, the line under its status says when it will open one, or **Waiting:** and why, for example when another campaign already manages the expiry it would use (see [Several campaigns](iron-condors.md#several-campaigns)). Its card shows the **Campaign** it is running (**paper** or **live**, with its expiry; a live one links to Portfolio), **Paper cycles · approved** (the evidence behind the modes) and **Last backtest**. The play icon starts a campaign of your own instead (see [Starting a campaign](iron-condors.md#starting-a-campaign)); the bot never acts on it unless you [hand it to the bot](iron-condors.md#handing-a-campaign-to-the-bot) later.
+When it is armed but has no campaign yet, the line under its status says when it will open one, or **Waiting:** and why, for example when another campaign already manages the expiry it would use (see [Several campaigns](iron-condors.md#several-campaigns)). Its card shows the **Campaign** it is running (**simulation** or **live**, with its expiry; a live one links to Portfolio), **Simulation cycles · approved** (the evidence behind the modes) and **Last backtest**. The play icon starts a campaign of your own instead (see [Starting a campaign](iron-condors.md#starting-a-campaign)); the bot never acts on it unless you [hand it to the bot](iron-condors.md#handing-a-campaign-to-the-bot) later.
 
 The settings (gear icon) are the [campaign settings](iron-condors.md#settings) on the **Cycle**, **Strikes**, **Rolls** and **Risk** tabs, plus on the **Bot** tab:
 
@@ -195,9 +196,9 @@ The settings (gear icon) are the [campaign settings](iron-condors.md#settings) o
 |---|---|
 | **At the exit DTE** | **Time-roll** closes the cycle and opens the next in one ticket; **Close** ends the campaign and the bot starts a new one when the next cycle's tranche is due. |
 | **Lots per tranche** | Blank sizes each tranche from today's margin (the ceiling over the number of tranches, divided by one lot's margin). Entries then shrink to what the order book can take, or are skipped. |
-| **Approval window** | How long a Telegram proposal stays valid (default 15 minutes). |
+| **Approval window** | How long a Semi-auto proposal on Telegram stays valid (default 15 minutes). |
 
-Changing any setting needs a new backtest before the bot can be switched on again, and hands its current campaign back to you (a paper one simply ends). The settings cannot be changed while the bot is on: switch it off, save, backtest, then switch it back on.
+Changing any setting hands the bot's current campaign back to you (a Simulation one simply ends), and Semi-auto and Auto stay locked until the new settings have earned them again. In Semi-auto or Auto a change is therefore refused: switch the bot to Simulation (or Off), save, and let it run a Simulation cycle on the new settings.
 
 **You always win.** If you execute a ticket on the bot's campaign, or stop managing it, the bot **pauses**: it decides nothing until you press **Resume** on its card, so it never undoes your change at its next check. In [read-only mode](read-only-mode.md) it still closes, but opens nothing.
 

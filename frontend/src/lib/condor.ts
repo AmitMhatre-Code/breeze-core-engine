@@ -12,7 +12,8 @@ export type CondorSettings = {
   tranche_cutoff_dte: number;
   exit_dte: number;
   short_delta: number;
-  wing_delta: number;
+  /** Each wing this % of spot beyond its short, the same on both sides (#69). */
+  wing_width_pct: number;
   tranches: number;
   entry_check: "sod" | "eod";
   sod_check_ist: string;
@@ -41,7 +42,7 @@ export type CondorCampaign = {
   id: string;
   underlying: string;
   origin: string;
-  /** `paper` campaigns (the bot's paper mode) hold nothing at the broker and own no group. */
+  /** `paper` campaigns (the bot's Simulation mode) hold nothing at the broker and own no group. */
   mode: "live" | "paper" | string;
   status: "active" | "closed";
   settings: CondorSettings;
@@ -342,6 +343,8 @@ export type CondorEntry = {
   lots: number;
   sizing: string;
   indicative: boolean;
+  /** Set when a wing sits at the furthest listed strike, nearer than the set width (#69). */
+  wing_note: string | null;
 };
 
 export const fetchCondorEntry = () => apiClient.get<CondorEntry>("/api/condor/bot/entry");

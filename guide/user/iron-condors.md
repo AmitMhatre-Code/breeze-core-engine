@@ -8,7 +8,7 @@ Campaigns are **NIFTY only** for now. You act on a suggestion from the campaign'
 
 An iron condor sells an out-of-the-money call and put and buys further-out wings on both, so the loss on either side is capped. A *dynamic* condor is managed rather than left alone: when the market moves towards one side, the other side is rolled closer to collect more premium and bring the position back towards neutral.
 
-- **Strikes are chosen by delta, not by points.** Shorts go in at the **Short Δ** (0.20 by default) and wings at the **Wing Δ** (0.05), snapped outward so a wing is never closer than set. The same rule works for a weekly or a monthly.
+- **Shorts by delta, wings by distance.** Shorts go in at the **Short Δ** (0.20 by default), so one rule works for a weekly or a monthly. Each wing then goes the same distance beyond its short on both sides: the **Wing width**, a percentage of spot (4.5% by default, about 1,000 NIFTY points at 22,400), snapped outward to a listed strike. Equal widths keep the most a side can lose, and the margin, the same on both sides. If the listed strikes end before the wing's target, the furthest one is used and the suggestion says how narrow that wing is.
 - **Entries come in tranches.** The campaign's size is spread over several entries into the **same expiry**, evenly between the entry DTE and the cut-off. All tranches are managed together as one position.
 - **Only the side that is not under attack moves.** When the market rallies the puts are rolled up; when it falls the calls are rolled down. The threatened side is never moved by an adjustment.
 - **The roll stops at the straddle.** A roll moves the untested short to the threatened side's delta, but never past the threatened short's strike. At that point the position is an iron fly, and it never inverts.
@@ -63,13 +63,13 @@ A campaign you started yourself can be handed to the [Dynamic Iron Condor bot](b
 
 The dialog shows what will change before you confirm:
 
-- **The bot's settings.** The bot only ever runs on its own settings, because its backtest, paper cycles and approvals were earned on them. Any setting that differs is listed with both values, and the campaign takes the bot's.
+- **The bot's settings.** The bot only ever runs on its own settings, because its Simulation cycles and approvals were earned on them. Any setting that differs is listed with both values, and the campaign takes the bot's.
 - **The remaining tranches**, and how the bot will size them (its **Lots per tranche**, or that day's margin). Your own tranches may have been a different size.
 - **What the rules say now on the bot's settings.** This can differ from the card's suggestion: with a narrower band, for example, a roll may be due at once.
 
 It is refused, with every reason listed, until:
 
-- the bot is switched on in **Telegram** or **Auto** mode and is not paused (in Paper mode it only simulates, so it cannot run real positions);
+- the bot is switched on in **Semi-auto** or **Auto** and is not paused (in Simulation it places nothing, so it cannot run real positions);
 - the bot is not already running a campaign (it runs one at a time);
 - the broker's position matches the campaign's ledger (assign or leave out every difference first);
 - no ticket is executing on the campaign.
@@ -82,7 +82,7 @@ You can run as many campaigns as you like, each on its **own NIFTY expiry**: for
 
 - **Margin is per campaign.** Each campaign sizes and checks against its own margin ceiling and max loss. Nothing adds them up, so leave room in your account for all of them together.
 - **A time roll never lands on an expiry another campaign manages.** If the next cycle's expiry is taken, the time roll is refused before any order is sent and you get a Telegram alert. The position stays open past its exit DTE until you act: close it from its card (**Adjust… → Close all**), or close the other campaign first. The suggestion is repeated at every check until then.
-- **The bot waits for a free expiry.** If the expiry its next campaign would use is already another campaign's (or has a Profit Booking / Stop Loss rule armed), the bot opens nothing. Its card says **Waiting:** and why, and you get one Telegram alert. In **Paper** mode it never waits, because a paper campaign holds nothing at the broker.
+- **The bot waits for a free expiry.** If the expiry its next campaign would use is already another campaign's (or has a Profit Booking / Stop Loss rule armed), the bot opens nothing. Its card says **Waiting:** and why, and you get one Telegram alert. In **Simulation** it never waits, because a Simulation campaign holds nothing at the broker.
 
 ## Settings
 
@@ -96,7 +96,8 @@ The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tab
 | **Exit DTE** | 21 | Exit or time-roll at or below this. |
 | **Tranches** | 3 | Entries spread evenly from the entry DTE to just before the cut-off (45, 40 and 35 by default). |
 | **Enter tranches at** | Start-of-day check | Which check enters a due tranche. |
-| **Short Δ / Wing Δ** | 0.20 / 0.05 | The deltas the shorts and wings are chosen at. |
+| **Short Δ** | 0.20 | The delta the shorts are chosen at. |
+| **Wing width** | 4.5% of spot | How far beyond its short each wing goes, the same on both sides. |
 | **Untested side below Δ** | 0.10 | Roll when the untested short falls below this delta… |
 | **…or decayed** | 80% | …or has lost this share of its premium. |
 | **Net Δ band per lot** | 0.15 | Roll when the position's net delta per lot is outside ± this. |
@@ -106,7 +107,7 @@ The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tab
 | **Margin ceiling** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
 | **Max loss / …or of the ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
 
-The **Bot** tab adds the bot's own settings (see [Dynamic Iron Condor](bots.md#dynamic-iron-condor)): what happens at the exit DTE, the lots per tranche and the Telegram approval window.
+The **Bot** tab adds the bot's own settings (see [Dynamic Iron Condor](bots.md#dynamic-iron-condor)): what happens at the exit DTE, the lots per tranche and the Semi-auto approval window.
 
 The defaults are starting points, not findings. Backtest them before trusting them.
 
@@ -116,7 +117,9 @@ The history icon on the **Dynamic Iron Condor** bot card backtests the rules on 
 
 Lots per tranche left blank are sized from today's margin, which needs ICICI's margin calculator; a mock instance has none, so set the lots in the settings first.
 
-Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. A run that cannot get what it needs stops at that check, says where and why in its notes, and is not a completed backtest: it does not unlock the bot. Run it again to carry on.
+The replay only opens legs at strikes ICICI lists as tradeable: the range ICICI lists today for NIFTY (for example 8.6% below to 16.4% above spot), applied to every day of the period, because the lists of past days are not kept. Its notes say which range was used. Without it, a backtest could trade far strikes that live trading cannot.
+
+Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. A run that cannot get what it needs stops at that check, says where and why in its notes, and is not a completed backtest: the card's **Last backtest** does not count it. Run it again to carry on.
 
 Its Activity row lists one line per **campaign**: when it started and ended, its expiries, tranches and rolls, the worst P&L it showed at a check, how it ended, charges and net P&L. A campaign still open when the period ends is marked at its last check (what closing then would have left), and reads **Open at period end (marked)**. **Download backtest results (.zip)** adds every action the replay took.
 
