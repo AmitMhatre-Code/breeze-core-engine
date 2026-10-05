@@ -87,6 +87,17 @@ export function SignalChoicePicker({
           </div>
         ) : null}
       </div>
+      {/* What the three choices mean, in one place for every bot that reads a signal. The
+          full rules live on the Signals page and in the guide. */}
+      <p className="text-hint text-faint">
+        <b>Volume expansion</b> calls a move that is both unusually large and unusually heavily traded.{" "}
+        <b>Momentum</b>{" "}calls when the index futures close above (or below) their short-term trend and the day&rsquo;s average
+        price, on heavy volume. <b>Duration</b> is the length of the bars it reads: shorter fires more often and is
+        noisier.
+        {withDirection
+          ? " Trading with the signal bets the move continues; fading it bets the move reverses."
+          : ""}
+      </p>
       {withDirection && directionHint ? <p className="text-hint text-faint">{directionHint}</p> : null}
       <p className={`text-hint ${a && !a.available ? "text-down" : "text-faint"}`}>
         {a === undefined

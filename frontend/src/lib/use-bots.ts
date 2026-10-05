@@ -84,7 +84,7 @@ export type CasBingoConfig = {
 
 /** Shown on the Credit choice, the Autonomous confirmation and both credit rows of the sheet. */
 export const CAS_BINGO_CREDIT_WARNING =
-  "ICICI may square off your positions at an extreme loss if MTM or margin requirements spike during CAS.";
+  "ICICI may square off your positions at an extreme loss if mark-to-market losses or margin requirements spike during the closing auction.";
 export const CAS_BINGO_REGIME_NOTE =
   "During CAS the index is an indicative auction value, and SEBI's consultation (comments due 3 Oct 2026) may move expiry settlement off the auction.";
 
@@ -486,7 +486,7 @@ export const BOT_META: Record<BotType, { title: string; blurb: string }> = {
   },
   [BOT_MOMENTUM_LONG_SCALPER]: {
     title: "Long Scalper",
-    blurb: "Buys one ATM option on a NIFTY signal of your choice, holds it for the call.",
+    blurb: "Buys one ATM option on a NIFTY signal of your choice, exits on a trailing stop.",
   },
   [BOT_IRON_FLY_SCALPER]: {
     title: "Intraday Iron Fly",

@@ -1,6 +1,9 @@
 "use client";
 
-import { NumberInput } from "@/components/ui/NumberInput";
+import { useContext, useEffect } from "react";
+
+import { SettingsError, TabIntro, WorkedExample, num, rupees } from "@/components/bots/SettingsHelp";
+import { FieldValidityContext, NumberInput } from "@/components/ui/NumberInput";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import type { CondorSettings as Campaign } from "@/lib/condor";
 import type { Tab } from "@/components/bots/ScalperSettings";
@@ -204,6 +207,33 @@ function Choice<T extends string>({
   );
 }
 
+/** `CondorSettings._clock_is_ordered` and `_has_a_stop`, said beside the fields instead of on Save. */
+function clockError(c: Campaign): string | null {
+  if (!(c.entry_dte >= c.tranche_cutoff_dte && c.tranche_cutoff_dte >= c.exit_dte)) {
+    return "Entry DTE must be at or above the tranche cut-off DTE, which must be at or above the exit DTE.";
+  }
+  if (c.tranche_cutoff_dte === c.exit_dte && c.tranches > 1) {
+    return "Tranches need a cut-off DTE above the exit DTE.";
+  }
+  return null;
+}
+
+function stopError(c: Campaign): string | null {
+  return c.max_loss_inr == null && c.max_loss_pct_of_ceiling == null
+    ? "Set a max loss in rupees, as a % of the margin ceiling, or both."
+    : null;
+}
+
+/** DTE at or below which each tranche is due: `strikes.tranche_due_dte`, evenly spaced from the
+ *  entry DTE, the last one a full step before the cut-off. */
+function trancheDtes(c: Campaign): number[] {
+  const spacing = (c.entry_dte - c.tranche_cutoff_dte) / c.tranches;
+  return Array.from({ length: c.tranches }, (_, i) => c.entry_dte - i * spacing);
+}
+
+// Illustrative index level for the Strikes example: a percentage of spot needs a spot.
+const EXAMPLE_INDEX = 25_000;
+
 export function CondorSettings({
   tab,
   config,
@@ -217,6 +247,20 @@ export function CondorSettings({
 }) {
   const c = config.campaign;
   const set = (patch: Partial<Campaign>) => onConfig({ campaign: { ...c, ...patch } });
+
+  // Checked whichever tab is open: an invalid clock on a tab you have left still blocks Save.
+  const clock = clockError(c);
+  const stop = stopError(c);
+  const report = useContext(FieldValidityContext);
+  useEffect(() => {
+    report?.("condor_clock", clock === null);
+    report?.("condor_stop", stop === null);
+    return () => {
+      report?.("condor_clock", true);
+      report?.("condor_stop", true);
+    };
+  }, [report, clock, stop]);
+
   const evidence = (
     <p className="text-hint text-faint">
       Any change here needs a new Simulation cycle before Semi-auto or Auto unlock again, and hands a campaign
@@ -225,15 +269,24 @@ export function CondorSettings({
   );
 
   if (tab === "cycle") {
+    const dues = trancheDtes(c);
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            The bot runs NIFTY iron condors as a <b>campaign</b> of cycles, one expiry at a time. Each cycle opens in{" "}
+            <b>tranches</b>{" "}— several smaller entries a few days apart, so one bad day&rsquo;s prices do not set the
+            whole position — and then exits, or rolls into the next cycle, as expiry approaches. <b>DTE</b> is calendar
+            days to expiry. It acts only at its two daily checks.
+          </p>
+        </TabIntro>
         {evidence}
-        <Choice id="condor-expiry-kind" label="Expiries" value={c.expiry_kind} options={EXPIRY_KINDS} disabled={disabled} onChange={(v) => set({ expiry_kind: v })} />
+        <Choice id="condor-expiry-kind" label="Expiries" hint="Monthly uses each month's last expiry, where far-dated options trade most; Any allows weeklies too." value={c.expiry_kind} options={EXPIRY_KINDS} disabled={disabled} onChange={(v) => set({ expiry_kind: v })} />
         <Num label="Entry DTE" suffix="days" min={0} max={120} value={c.entry_dte} disabled={disabled} onChange={(v) => set({ entry_dte: v })} hint="The first tranche goes in at or below this many days to expiry." />
         <Num label="Tranche cut-off DTE" suffix="days" min={0} max={120} value={c.tranche_cutoff_dte} disabled={disabled} onChange={(v) => set({ tranche_cutoff_dte: v })} hint="No new tranche below this." />
-        <Num label="Exit DTE" suffix="days" min={0} max={120} value={c.exit_dte} disabled={disabled} onChange={(v) => set({ exit_dte: v })} hint="Exit or time-roll at or below this." />
+        <Num label="Exit DTE" suffix="days" min={0} max={120} value={c.exit_dte} disabled={disabled} onChange={(v) => set({ exit_dte: v })} hint="The cycle closes (or rolls on, per the Bot tab) at or below this. Close to expiry, a short option's price swings hardest." />
         <Num label="Tranches" min={1} max={10} value={c.tranches} disabled={disabled} onChange={(v) => set({ tranches: v })} hint="Entries spread evenly between the entry and cut-off DTE, all on the same expiry." />
-        <Choice id="condor-entry-check" label="Enter tranches at" value={c.entry_check} options={ENTRY_CHECKS} disabled={disabled} onChange={(v) => set({ entry_check: v })} />
+        <Choice id="condor-entry-check" label="Enter tranches at" hint="Which of the two daily checks opens a tranche that is due." value={c.entry_check} options={ENTRY_CHECKS} disabled={disabled} onChange={(v) => set({ entry_check: v })} />
         <div className="flex gap-3">
           <Time label="Start-of-day check" value={c.sod_check_ist} disabled={disabled} onChange={(v) => set({ sod_check_ist: v })} />
           <Time label="End-of-day check" value={c.eod_check_ist} disabled={disabled} onChange={(v) => set({ eod_check_ist: v })} />
@@ -242,16 +295,49 @@ export function CondorSettings({
           IST. Prices are ignored before the start-of-day check, which also catches overnight gaps; the end-of-day
           check runs after the closing auction, while options still trade until 15:40.
         </p>
+        {clock ? (
+          <SettingsError>{clock}</SettingsError>
+        ) : (
+          <WorkedExample title="With these settings, each cycle">
+            {dues.map((dte, i) => (
+              <li key={i}>
+                Tranche {i + 1} of {c.tranches} goes in at the first {c.entry_check === "sod" ? "start-of-day" : "end-of-day"}{" "}
+                check at or below <b>{num(dte, 1)} DTE</b>.
+              </li>
+            ))}
+            <li>
+              No new tranche below {c.tranche_cutoff_dte} DTE; the cycle exits or rolls at <b>{c.exit_dte} DTE</b>.
+            </li>
+          </WorkedExample>
+        )}
       </div>
     );
   }
 
   if (tab === "strikes") {
+    const wingPts = (EXAMPLE_INDEX * c.wing_width_pct) / 100;
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            An <b>iron condor</b> sells a call above the index and a put below it, collecting a credit, and buys a
+            further-out call and put as <b>wings</b> that cap the loss. It earns while NIFTY stays between the two sold
+            strikes.
+          </p>
+        </TabIntro>
         {evidence}
-        <Num label="Short Δ" step={0.01} min={0.01} max={0.49} value={c.short_delta} disabled={disabled} onChange={(v) => set({ short_delta: v })} hint="|Δ| of the shorts at entry (0.20 = 20 delta)." />
+        <Num label="Short Δ" step={0.01} min={0.01} max={0.49} value={c.short_delta} disabled={disabled} onChange={(v) => set({ short_delta: v })} hint="Which strikes to sell, by delta (Δ): how much the option's price moves per point of NIFTY, and roughly its chance of ending in the money. 0.20 sells options with about a 1-in-5 chance; lower is further out, safer, and pays less." />
         <Num label="Wing width" suffix="% of spot" step={0.1} min={0.1} max={25} value={c.wing_width_pct} disabled={disabled} onChange={(v) => set({ wing_width_pct: v })} hint="Each wing this far beyond its short, the same on both sides, snapped outward to a listed strike. When the listed strikes end first, the furthest one is used and the suggestion says so. 4.5% is about 1,000 NIFTY points at 22,400." />
+        <WorkedExample title={<>Example with these settings: NIFTY at {num(EXAMPLE_INDEX, 0)}</>}>
+          <li>
+            It sells the call and the put whose delta is closest to <b>{num(c.short_delta)}</b> — strikes set by the
+            option prices that day, not by a fixed distance.
+          </li>
+          <li>
+            Each wing sits about <b>{num(wingPts, 0)} points</b> beyond its short. The most a cycle can lose is that
+            width, less the credit collected, per unit.
+          </li>
+        </WorkedExample>
       </div>
     );
   }
@@ -259,10 +345,18 @@ export function CondorSettings({
   if (tab === "rolls") {
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            When NIFTY moves, the side it moves towards is <b>tested</b>; the other side is <b>untested</b>, and its
+            short loses value. A <b>roll</b>{" "}buys back the untested short and sells a new one closer to the index, at
+            the tested short&rsquo;s delta (never past the tested strike), with a new wing. That collects more credit
+            and re-centres the condor. Any rule below can trigger it at a daily check.
+          </p>
+        </TabIntro>
         {evidence}
         <Num label="Untested side below Δ" step={0.01} min={0.01} max={0.49} value={c.leg_rule_delta_floor} disabled={disabled} onChange={(v) => set({ leg_rule_delta_floor: v })} hint="Roll the untested side when its short falls under this." />
         <Num label="…or decayed" suffix="%" min={1} max={100} value={c.leg_rule_decay_pct} disabled={disabled} onChange={(v) => set({ leg_rule_decay_pct: v })} hint="…or when it has lost this share of its premium." />
-        <Num label="Net Δ band per lot" step={0.01} min={0.01} max={1} value={c.net_delta_band_per_lot} disabled={disabled} onChange={(v) => set({ net_delta_band_per_lot: v })} hint="Roll when net delta per lot is outside ±this." />
+        <Num label="Net Δ band per lot" step={0.01} min={0.01} max={1} value={c.net_delta_band_per_lot} disabled={disabled} onChange={(v) => set({ net_delta_band_per_lot: v })} hint="Net delta is how much the whole position gains or loses per point of NIFTY. Roll when, per lot, it drifts outside ±this — the condor has become a bet on direction." />
         <Num label="Minimum roll credit" suffix="points" min={0} max={1000} value={c.min_roll_credit_points} disabled={disabled} onChange={(v) => set({ min_roll_credit_points: v })} hint="A roll adding less than this per unit, after charges, is skipped and reported." />
         <Num label="No rolls within" suffix="days of exit" min={0} max={30} value={c.no_roll_within_days_of_exit} disabled={disabled} onChange={(v) => set({ no_roll_within_days_of_exit: v })} hint="A roll due this close to the exit DTE is reported, not done. 0 = off." />
       </div>
@@ -270,12 +364,32 @@ export function CondorSettings({
   }
 
   if (tab === "risk") {
+    const limits = [
+      c.max_loss_inr,
+      c.max_loss_pct_of_ceiling != null ? (c.margin_ceiling_inr * c.max_loss_pct_of_ceiling) / 100 : null,
+    ].filter((v): v is number => v != null);
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            How much capital the campaign may tie up, and the loss at which it closes everything. At least one of the
+            two max-loss limits must be set.
+          </p>
+        </TabIntro>
         {evidence}
         <Num label="Margin ceiling" suffix="₹" step={10_000} min={1} max={100_000_000} value={c.margin_ceiling_inr} disabled={disabled} onChange={(v) => set({ margin_ceiling_inr: v })} hint="The campaign's margin across all its tranches; the rest of your capital is the buffer." />
         <OptionalNum label="Max loss" suffix="₹" step={1000} min={1} max={100_000_000} blank="off" value={c.max_loss_inr} disabled={disabled} onChange={(v) => set({ max_loss_inr: v })} hint="Close everything past this loss, checked at the two daily checks. Blank = off." />
         <OptionalNum label="…or of the ceiling" suffix="%" step={0.5} min={0.1} max={100} blank="off" value={c.max_loss_pct_of_ceiling} disabled={disabled} onChange={(v) => set({ max_loss_pct_of_ceiling: v })} hint="The tighter of the two binds. Blank = off." />
+        {stop ? (
+          <SettingsError>{stop}</SettingsError>
+        ) : (
+          <WorkedExample title="With these settings">
+            <li>
+              The campaign closes every leg once it is down <b>{rupees(Math.min(...limits), 0)}</b>
+              {limits.length > 1 ? " — the tighter of the two limits" : ""}, checked at the two daily checks.
+            </li>
+          </WorkedExample>
+        )}
       </div>
     );
   }
@@ -283,7 +397,13 @@ export function CondorSettings({
   if (tab === "bot") {
     return (
       <div className="space-y-4">
-        <Choice id="condor-exit-action" label="At the exit DTE" value={config.exit_action} options={EXIT_ACTIONS} disabled={disabled} onChange={(v) => onConfig({ exit_action: v })} hint="Part of what the bot's evidence is matched on, like the campaign settings." />
+        <TabIntro>
+          <p>
+            How the bot itself runs the campaign. The other tabs are the campaign&rsquo;s rules, shared with
+            campaigns you manage by hand.
+          </p>
+        </TabIntro>
+        <Choice id="condor-exit-action" label="At the exit DTE" value={config.exit_action} options={EXIT_ACTIONS} disabled={disabled} onChange={(v) => onConfig({ exit_action: v })} hint="Time-roll closes the cycle and opens the next expiry's in one ticket. Close ends the campaign, and the bot starts a new one when the next cycle's first tranche is due. Part of what the bot's evidence is matched on, like the campaign settings." />
         <OptionalNum label="Lots per tranche" step={1} min={1} max={500} blank="from margin" value={config.lots_per_tranche} disabled={disabled} onChange={(v) => onConfig({ lots_per_tranche: v == null ? null : Math.round(v) })} hint="Blank sizes each tranche from today's margin: the ceiling over the tranches. Also what the play button pre-fills." />
         <Num label="Approval window" suffix="min" min={2} max={60} value={config.proposal_ttl_minutes} disabled={disabled} onChange={(v) => onConfig({ proposal_ttl_minutes: v })} hint="In Semi-auto, how long a proposal waits for your tap on Telegram before it lapses." />
       </div>

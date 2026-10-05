@@ -35,6 +35,7 @@ import {
   type Tab,
 } from "@/components/bots/ScalperSettings";
 import { CAS_BINGO_TABS, CasBingoSettings } from "@/components/bots/CasBingoSettings";
+import { TabIntro, WorkedExample, rupees } from "@/components/bots/SettingsHelp";
 import { CONDOR_TABS, CondorSettings, type CondorBotConfig } from "@/components/bots/CondorSettings";
 import type { CasBingoConfig } from "@/lib/use-bots";
 
@@ -52,6 +53,12 @@ const INDEX_TABS: Tab[] = [
 ];
 
 const ALL_STRATEGIES: IndexStrategy[] = ["naked_ce", "naked_pe", "short_strangle"];
+
+const STRATEGY_HINT: Record<IndexStrategy, string> = {
+  naked_ce: "sells a call above the index; it profits unless the index rises past the strike.",
+  naked_pe: "sells a put below the index; it profits unless the index falls past the strike.",
+  short_strangle: "sells both; it profits while the index stays between the two strikes.",
+};
 
 const EXPIRY_OPTIONS = [
   { value: "current", label: "Current month" },
@@ -265,6 +272,32 @@ function ScripTable({
 }) {
   return (
     <>
+      <div className="mb-4">
+        <TabIntro>
+          <p>
+            Each month the bot sells (&ldquo;writes&rdquo;) options against the stocks below and keeps the premium.
+            One row per holding that has NSE options. Leave a cell blank to use the default.
+          </p>
+          <ul className="list-disc space-y-1 pl-4">
+            <li>
+              <b>CE lots</b> — call lots to sell. Always covered: never more than the shares you can deliver.
+              Blank sells every covered lot.
+            </li>
+            <li>
+              <b>PE lots</b> — put lots to sell. If assigned you buy the shares, paid from the delivery-cash
+              budget on the Limits tab. Blank sells none.
+            </li>
+            <li>
+              <b>CE %</b> / <b>PE %</b>{" "}— how far above (call) or below (put) the stock&rsquo;s current price the
+              strike sits. Further is safer but earns less. Blank uses the Limits tab&rsquo;s defaults.
+            </li>
+            <li>
+              <b>Priority</b> — who is funded first when free margin or delivery cash cannot cover every row. Lower
+              goes first.
+            </li>
+          </ul>
+        </TabIntro>
+      </div>
       <div className="app-table-wrap">
         <table className="w-full text-left">
           <thead className="app-table-head">
@@ -405,14 +438,7 @@ function ScripTable({
         are not coverage, so they are excluded from the call cap.
       </p>
       <p className="mt-2 text-hint text-faint">
-        Blank means the default: every covered lot for calls, none for puts, and the
-        distances on the Limits tab. Priority decides who gets funded first when free
-        margin or the delivery-cash budget cannot cover everything — lower goes first.
-      </p>
-      <p className="mt-2 text-hint text-faint">
-        Calls are capped by stock you can deliver, so asking for more lots than that writes
-        what is covered. Puts are not covered by stock at all — assignment means buying
-        shares, funded from the delivery-cash budget.
+        Asking for more call lots than you can deliver writes only what is covered.
       </p>
     </>
   );
@@ -463,6 +489,13 @@ function HoldingsSettings({
   if (tab === "schedule") {
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            When the bot writes each month, in Semi-auto or Auto. In Manual it waits for you to start a run. It needs
+            a live ICICI session to trade, and ICICI sessions end every night, so if you are not logged in it reminds
+            you on Telegram until you are.
+          </p>
+        </TabIntro>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Days before expiry"
@@ -480,7 +513,7 @@ function HoldingsSettings({
           </Field>
           <SelectField
             label="Expiry"
-            hint="Stock options are monthly only."
+            hint="Which month's options to write. Stock options expire monthly only."
             value={config.expiry_preference}
             options={EXPIRY_OPTIONS}
             disabled={disabled}
@@ -488,7 +521,7 @@ function HoldingsSettings({
           />
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Start (IST)" hint="Fires here if you are logged in.">
+          <Field label="Start (IST)" hint="Writes at this time if you are logged in; otherwise reminders start.">
             <input
               type="time"
               className="app-input"
@@ -497,7 +530,7 @@ function HoldingsSettings({
               onChange={(e) => onConfig({ nag_start_ist: e.target.value })}
             />
           </Field>
-          <Field label="Until (IST)" hint="Last reminder and last trade.">
+          <Field label="Until (IST)" hint="Last reminder and last chance to trade that day.">
             <input
               type="time"
               className="app-input"
@@ -506,7 +539,7 @@ function HoldingsSettings({
               onChange={(e) => onConfig({ cutoff_ist: e.target.value })}
             />
           </Field>
-          <Field label="Remind every (min)">
+          <Field label="Remind every (min)" hint="Gap between Telegram reminders.">
             <NumberInput
               className="app-input"
               validityKey="hw_nag_interval_minutes"
@@ -518,19 +551,38 @@ function HoldingsSettings({
             />
           </Field>
         </div>
-        <p className="text-hint text-faint">
-          Reminders only go out when your ICICI session has lapsed, and stop the moment you
-          log in. No session by the cut-off means the month is skipped, with the reason in
-          the run log.
-        </p>
+        <WorkedExample title="With these settings">
+          <li>
+            It writes {config.expiry_preference === "next" ? "next month's" : "this month's"} options at{" "}
+            <b>{config.nag_start_ist}</b>,{" "}
+            {config.fire_days_before_expiry === 0 ? (
+              <b>on the day they expire</b>
+            ) : (
+              <b>
+                {config.fire_days_before_expiry} trading day{config.fire_days_before_expiry === 1 ? "" : "s"} before
+                they expire
+              </b>
+            )}
+            , if your ICICI session is live.
+          </li>
+          <li>
+            If not, it reminds you every <b>{config.nag_interval_minutes} minutes</b> and writes as soon as you log
+            in. No session by <b>{config.cutoff_ist}</b> and that month is skipped, with the reason in Activity.
+          </li>
+        </WorkedExample>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      <TabIntro>
+        <p>
+          Defaults for every stock on the Scrips tab, and the limits on what the bot may commit.
+        </p>
+      </TabIntro>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Default call distance %" hint="Above spot. Per-scrip values override it.">
+        <Field label="Default call distance %" hint="How far above the stock's current price a written call's strike sits. A row on the Scrips tab can set its own.">
           <NumberInput
             className="app-input"
             validityKey="default_safety_pct_ce"
@@ -542,7 +594,7 @@ function HoldingsSettings({
             onChange={(v) => onConfig({ default_safety_pct_ce: v })}
           />
         </Field>
-        <Field label="Default put distance %" hint="Below spot. Per-scrip values override it.">
+        <Field label="Default put distance %" hint="How far below the stock's current price a written put's strike sits. A row on the Scrips tab can set its own.">
           <NumberInput
             className="app-input"
             validityKey="default_safety_pct_pe"
@@ -557,7 +609,7 @@ function HoldingsSettings({
       </div>
       <Field
         label="Delivery-cash budget (₹)"
-        hint="Ceiling on what every written put would cost if all were assigned. Spent in scrip-priority order."
+        hint="A written put can be assigned: you then buy the shares at its strike. This caps what buying the shares for every written put would cost, all at once. Spent in Priority order; ₹0 writes no puts."
       >
         <NumberInput
           className="app-input"
@@ -571,7 +623,7 @@ function HoldingsSettings({
       </Field>
       <Field
         label="Proposal validity (minutes)"
-        hint="A manual run is a priced snapshot; after this it must be re-run."
+        hint="How long a priced proposal (a manual run, or a Telegram request in Semi-auto) can be placed. After this it must be re-priced, so nothing is placed on stale prices."
       >
         <NumberInput
           className="app-input"
@@ -583,6 +635,16 @@ function HoldingsSettings({
           onChange={(v) => onConfig({ proposal_ttl_minutes: v })}
         />
       </Field>
+      <WorkedExample title="Example: a stock trading at ₹1,000">
+        <li>
+          A call is written at <b>{rupees(1000 * (1 + config.default_safety_pct_ce / 100), 0)}</b> or the next listed
+          strike above — strikes are always rounded further from the price, never closer.
+        </li>
+        <li>
+          A put is written at <b>{rupees(1000 * (1 - config.default_safety_pct_pe / 100), 0)}</b> or the next listed
+          strike below.
+        </li>
+      </WorkedExample>
     </div>
   );
 }
@@ -654,6 +716,13 @@ function IndexPanel({
             );
           })}
         </div>
+        <ul className="mt-2 space-y-0.5 text-hint text-faint">
+          {ALL_STRATEGIES.map((strategy) => (
+            <li key={strategy}>
+              <b>{STRATEGY_LABEL[strategy]}</b> {STRATEGY_HINT[strategy]}
+            </li>
+          ))}
+        </ul>
         {strategies.length > 1 && (
           <p className="mt-2 text-hint text-faint">
             With more than one picked, the bot trades whichever earns the most premium per
@@ -665,7 +734,7 @@ function IndexPanel({
 
       <div className="mt-3 grid gap-3 sm:grid-cols-4">
         {showCe && (
-          <Field label="CE distance %">
+          <Field label="CE distance %" hint="Call strike, this far above the index.">
             <NumberInput
               className="app-input"
               validityKey={`${code}_safety_pct_ce`}
@@ -679,7 +748,7 @@ function IndexPanel({
           </Field>
         )}
         {showPe && (
-          <Field label="PE distance %">
+          <Field label="PE distance %" hint="Put strike, this far below the index.">
             <NumberInput
               className="app-input"
               validityKey={`${code}_safety_pct_pe`}
@@ -692,7 +761,7 @@ function IndexPanel({
             />
           </Field>
         )}
-        <Field label="Margin cap %">
+        <Field label="Margin cap %" hint="Most of your free margin this index may use.">
           <NumberInput
             className="app-input"
             validityKey={`${code}_margin_pct_cap`}
@@ -704,7 +773,7 @@ function IndexPanel({
             onChange={(v) => onChange({ margin_pct_cap: v })}
           />
         </Field>
-        <Field label="Priority">
+        <Field label="Priority" hint="Lower is sized first on a shared expiry day.">
           <NumberInput
             className="app-input"
             validityKey={`${code}_priority`}
@@ -734,6 +803,18 @@ function IndexSettings({
   if (tab === "indices") {
     return (
       <div className="space-y-3">
+        <TabIntro>
+          <p>
+            On a NIFTY or SENSEX expiry morning, the bot sells options on that index which are out of the money and
+            should lose most of their value by the close. It sells as many lots as fit the margin cap. These are{" "}
+            <b>naked</b> options — unhedged — so the stop on the Exits tab, armed the moment the sale fills, is what
+            limits a loss.
+          </p>
+          <p>
+            Distances are measured from the index level when it fires, and strikes are rounded further out, never
+            closer.
+          </p>
+        </TabIntro>
         {Object.entries(config.indices ?? {}).map(([code, leg]) => (
           <IndexPanel
             key={code}
@@ -757,8 +838,15 @@ function IndexSettings({
   if (tab === "schedule") {
     return (
       <div className="space-y-4">
+        <TabIntro>
+          <p>
+            When the bot sells on an expiry day, in Semi-auto or Auto. In Manual it waits for you to start a run. It
+            needs a live ICICI session, and ICICI sessions end every night, so if you are not logged in it reminds you
+            on Telegram until you are.
+          </p>
+        </TabIntro>
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Entry (IST)" hint="Fires here if a broker session exists.">
+          <Field label="Entry (IST)" hint="Sells at this time if you are logged in.">
             <input
               type="time"
               className="app-input"
@@ -767,7 +855,7 @@ function IndexSettings({
               onChange={(e) => onConfig({ entry_time_ist: e.target.value })}
             />
           </Field>
-          <Field label="Remind from (IST)" hint="Or when the app starts, whichever is later.">
+          <Field label="Remind from (IST)" hint="When reminders start if you are not logged in (or when the app starts, if later).">
             <input
               type="time"
               className="app-input"
@@ -776,7 +864,7 @@ function IndexSettings({
               onChange={(e) => onConfig({ nag_start_ist: e.target.value })}
             />
           </Field>
-          <Field label="Until (IST)" hint="Last reminder and last trade.">
+          <Field label="Until (IST)" hint="Last reminder and last chance to trade that day.">
             <input
               type="time"
               className="app-input"
@@ -786,7 +874,7 @@ function IndexSettings({
             />
           </Field>
         </div>
-        <Field label="Remind every (min)">
+        <Field label="Remind every (min)" hint="Gap between Telegram reminders.">
           <NumberInput
             className="app-input"
             validityKey="idx_nag_interval_minutes"
@@ -797,20 +885,35 @@ function IndexSettings({
             onChange={(v) => onConfig({ nag_interval_minutes: v })}
           />
         </Field>
-        <p className="text-hint text-faint">
-          A session arriving late still trades — right up to the cut-off. No session by then
-          means the day is skipped, with the reason in the run log.
-        </p>
+        <WorkedExample title="With these settings, on an expiry day">
+          <li>
+            It sells at <b>{config.entry_time_ist}</b> if your ICICI session is live.
+          </li>
+          <li>
+            If not, it reminds you from <b>{config.nag_start_ist}</b> every{" "}
+            <b>{config.nag_interval_minutes} minutes</b>, and sells as soon as you log in. No session by{" "}
+            <b>{config.cutoff_ist}</b> and the day is skipped, with the reason in Activity.
+          </li>
+        </WorkedExample>
       </div>
     );
   }
 
   const bookAll = config.profit_book_premium_pct >= 100;
+  const premium = 10_000;
+  const kept = (premium * config.profit_book_premium_pct) / 100;
+  const stopLoss = premium * config.loss_limit_premium_multiple;
   return (
     <div className="space-y-4">
+      <TabIntro>
+        <p>
+          The <b>premium</b> is what the bot collects when it sells. Both exits are armed as a Profit Booking / Stop
+          Loss rule the moment the sale fills, and show on Portfolio like one you set yourself.
+        </p>
+      </TabIntro>
       <Field
         label="Book at % of premium"
-        hint="How much of the premium to capture before buying the position back."
+        hint="How much of the premium to keep before buying the position back."
       >
         <NumberInput
           className="app-input"
@@ -838,7 +941,7 @@ function IndexSettings({
       )}
       <Field
         label="Stop at N × premium"
-        hint="1 means stop once the loss equals the premium collected."
+        hint="Closes once the loss reaches this many times the premium collected. 1 means the loss equals the premium."
       >
         <NumberInput
           className="app-input"
@@ -851,6 +954,25 @@ function IndexSettings({
           onChange={(v) => onConfig({ loss_limit_premium_multiple: v })}
         />
       </Field>
+      <WorkedExample
+        title={<>Example with these settings: {rupees(premium, 0)} of premium collected</>}
+        footer="Before charges. On a strangle the stop is on the two legs together."
+      >
+        <li>
+          {bookAll ? (
+            <>No profit exit: the position is left to expire, keeping all {rupees(premium, 0)} if it expires worthless.</>
+          ) : (
+            <>
+              Books once it can be bought back for <b>{rupees(premium - kept, 0)}</b>, keeping{" "}
+              <b>{rupees(kept, 0)}</b>.
+            </>
+          )}
+        </li>
+        <li>
+          Stops out once the loss reaches <b>{rupees(stopLoss, 0)}</b> — buying back would then cost{" "}
+          {rupees(premium + stopLoss, 0)}.
+        </li>
+      </WorkedExample>
     </div>
   );
 }
@@ -1073,7 +1195,7 @@ export function BotSettingsDrawer({
           {readOnly
             ? "Read-only mode — settings cannot be changed."
             : anyInvalid
-              ? "A highlighted field is empty or out of range."
+              ? "A setting needs fixing before saving — look for the field or message in red."
               : dirty
                 ? "Unsaved changes"
                 : "All changes saved"}

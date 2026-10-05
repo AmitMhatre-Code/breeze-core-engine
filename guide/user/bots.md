@@ -71,6 +71,8 @@ In semi-auto, Telegram approval works like this: the bot sends the priced trade 
 
 The gear icon opens a settings panel with tabs. Changes apply to the next run. The footer shows **Unsaved changes** or **All changes saved**, with **Discard** and **Save**.
 
+Each tab opens with a short explanation of what it controls, and every setting has a line saying what it does. Where settings work together (a stop ladder, a profit target and stop, a tranche schedule), an example at the bottom of the tab shows what your current numbers would do; examples that need an index level or a premium use round illustrative figures, not today's market. A setting that conflicts with another (for example a spread whose outer leg is not beyond its inner leg) says why in red, and **Save** stays off until it is fixed.
+
 ### Holdings Option Writer
 
 Earns premium on stock you already hold, without ever selling naked calls. It writes the current or next month's stock options on your demat holdings that have NSE options.
@@ -111,7 +113,7 @@ Catches short bursts of NIFTY movement by buying one at-the-money option on the 
 |---|---|
 | **Schedule** | Trading windows (**Add window** / **Remove**; defaults 09:35–11:30 and 13:30–15:10), **Flat by (square-off)** (default 15:15) and **Trade on expiry day** (off by default). |
 | **Signal** | **Signal** (Volume expansion or Momentum), **Duration** (1, 5 or 15 min) and **Direction** (follow, or trade against the signal). It says if the chosen signal is not yet available to bots. **Premium outlay** (₹): capital per trade; lots = outlay ÷ option price. |
-| **Exits** | The trailing ladder, in option points: **Initial stop**, **Level 1 trigger** / **Level 1 locks**, **Level 2 trigger** / **Level 2 locks**, **Runner trigger** (starts the trailing runner rather than taking profit) and **Runner trails by**. |
+| **Exits** | The trailing ladder, in option points, in the order the stop climbs it: **Initial stop**, **Level 1 trigger** / **Level 1 locks**, **Level 2 trigger** / **Level 2 locks**, **Runner trigger** (starts the trailing runner rather than taking profit) and **Runner trails by**. The example walks an option bought at ₹100 up the ladder. |
 | **Risk** | **Daily loss cap** (₹; hitting it closes the position and disables the bot until you re-enable it), **Consecutive losses** before a pause, **Cooldown** (min), and **Broker calls held back** (reserved so scalping can never starve your manual trading). |
 
 How it trades:
