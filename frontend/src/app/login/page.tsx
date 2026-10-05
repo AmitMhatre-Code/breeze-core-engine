@@ -8,6 +8,7 @@ import { ChangelogDialog } from "@/components/changelog/ChangelogDialog";
 import { IciciHandoffHelpLinks } from "@/components/auth/IciciHandoffHelpLinks";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { ExternalLinkIcon } from "@/components/ui/ExternalLinkIcon";
 import { apiClient } from "@/lib/api-client";
 import { formatAppVersionLabel } from "@/lib/app-version";
 import { getLatestRelease } from "@/lib/changelog";
@@ -151,7 +152,8 @@ function LoginContent() {
           <p className="text-center text-body text-muted">
             New here?{" "}
             <a href="/guide/before-you-begin" target="_blank" rel="noopener" className="app-link">
-              Read the user guide ↗
+              Read the user guide
+              <ExternalLinkIcon className="ml-1 inline-block shrink-0 align-[-1px]" />
             </a>
           </p>
         </div>

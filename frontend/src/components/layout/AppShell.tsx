@@ -36,6 +36,7 @@ import { formatMarginCompact, moneyToneClass } from "@/lib/format-money-in";
 import { useWsHealth } from "@/lib/use-ws-health";
 import { useIndexQuotes, type IndexQuote, type IndexSignalSummary } from "@/lib/use-index-quotes";
 import { indexSignalChip } from "@/lib/index-signal-chip";
+import { ExternalLinkIcon } from "@/components/ui/ExternalLinkIcon";
 
 // Hidden from nav (route still works): { href: "/trade-options-chain", label: "Trade Options Chain" },
 const navItems = [
@@ -601,27 +602,6 @@ function GuideIcon() {
     >
       <path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z" />
       <path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z" />
-    </svg>
-  );
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-      className="shrink-0 text-faint"
-    >
-      <path d="M15 3h6v6" />
-      <path d="M10 14 21 3" />
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
     </svg>
   );
 }
