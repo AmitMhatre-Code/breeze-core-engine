@@ -11,6 +11,7 @@ responsible for warning the user well before they reach them.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from typing import Any
 
@@ -80,6 +81,13 @@ def load_pnl_engine_settings() -> dict[str, Any]:
     """Fresh read every call (no cache) — callers polling this every loop
     iteration is how live reload without a restart works."""
     row: tuple[Any, ...] | None
+    # Never create users.sqlite3 from here: the chain-builder worker calls this at boot, and a
+    # file it creates first used to stop the backend seeding the real schema from its template.
+    if not os.path.isfile(_db_path()):
+        return {
+            "quote_flush_interval_seconds": _default_quote_flush_seconds(),
+            "pnl_recompute_interval_seconds": _default_pnl_recompute_seconds(),
+        }
     try:
         ensure_pnl_engine_settings_table()
         with sqlite3.connect(_db_path()) as conn:

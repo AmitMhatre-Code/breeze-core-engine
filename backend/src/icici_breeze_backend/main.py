@@ -164,6 +164,42 @@ def _resolve_sqlite_template(cfg, empty_filename: str) -> str | None:
     return None
 
 
+def _has_user_account_table(db_path: str) -> bool:
+    import sqlite3
+
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='user_account'"
+            ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        # Unreadable is not proof it is unseeded; leave the file alone.
+        return True
+
+
+def _set_aside_unseeded_database(db_path: str) -> None:
+    """Rename an unseeded users DB (and its WAL/SHM, which must never be replayed onto the
+    fresh copy) out of the way, keeping it for inspection rather than deleting it."""
+    import time
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    _logger.warning(
+        "App database at %s has no user_account table; setting it aside as %s.unseeded-%s "
+        "and re-seeding from the template.",
+        db_path,
+        db_path,
+        stamp,
+    )
+    for suffix in ("", "-wal", "-shm"):
+        path = db_path + suffix
+        if os.path.isfile(path):
+            try:
+                os.replace(path, f"{db_path}.unseeded-{stamp}{suffix}")
+            except OSError as e:
+                _logger.warning("Could not set aside %s: %s", path, e)
+
+
 def _ensure_app_database() -> None:
     """Create users.sqlite3 from template when missing, empty, or unreadable (e.g. bind-mounted data dir)."""
     import shutil
@@ -180,9 +216,18 @@ def _ensure_app_database() -> None:
         except OSError as e:
             _logger.warning("Could not remove empty users DB: %s", e)
 
+    if template and os.path.isfile(db_path) and not _has_user_account_table(db_path):
+        # Another process (the chain-builder worker, at boot on a fresh volume) created the
+        # file before we could seed it, so it holds a stray table or two and no real schema.
+        # Every later start would skip the template and crash on "no such table".
+        _set_aside_unseeded_database(db_path)
+
     if not os.path.isfile(db_path):
         if template:
-            shutil.copy2(template, db_path)
+            # Copy then rename, so a worker connecting mid-copy never sees a partial file.
+            tmp_path = db_path + ".seeding"
+            shutil.copy2(template, tmp_path)
+            os.replace(tmp_path, db_path)
             _logger.info("Initialized app database at %s from %s.", db_path, template)
         else:
             _logger.warning(
