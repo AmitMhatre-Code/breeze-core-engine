@@ -183,6 +183,9 @@ Built on the `bots-scalping-plan.md` §8.7 harness: demand-driven fetches, `miss
 - **Output per cycle:** every decision with its reason, the ledger, P&L, worst drawdown at a check,
   margin used. Aggregates over cycles; monthly and weekly presets side by side. Findings go to
   `guide/technical/backtest-findings.md`.
+- **Settings comparison** (added 2026-10-05, design-decisions #71): every run also replays 108
+  combinations around the saved settings (net-Δ band, minimum roll credit, max loss, no-roll
+  window, exit action), which calibrates the defaults section 3 names.
 - **Honest reach:** history starts 2026-01-05, which gives about 8 monthly cycles and about 38
   weekly. That is enough to prove the mechanics and size the losing months; it is not enough to
   prove an edge.

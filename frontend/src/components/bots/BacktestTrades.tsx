@@ -6,6 +6,7 @@ import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { BacktestEquityChart } from "@/components/bots/BacktestEquityChart";
 import {
   comparisonRows,
+  condorComparisonRows,
   downloadBacktestCsv,
   equityCurve,
   exitLabel,
@@ -17,6 +18,7 @@ import {
   type BacktestBot,
   type BacktestTrade,
   type ComparisonRow,
+  type CondorComparisonRow,
   type EquityPoint,
   type RunTotals,
 } from "@/lib/bots-backtest";
@@ -140,6 +142,77 @@ function Comparison({ rows }: { rows: ComparisonRow[] }) {
   );
 }
 
+const TH = "px-2.5 py-2 font-semibold whitespace-nowrap";
+const TH_R = `${TH} text-right`;
+const TD_NUM = "px-2.5 py-1.5 text-right font-mono tabular-nums";
+
+/** Every settings combination a condor backtest replayed, side by side (#71): the five settings
+ *  each one sets, every other as saved. The campaigns below are the saved combination's; every
+ *  combination's are in the run's zip. */
+function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
+  const best = rows.reduce<CondorComparisonRow | null>(
+    (b, r) => (b === null || (r.net_pnl ?? -Infinity) > (b.net_pnl ?? -Infinity) ? r : b),
+    null,
+  );
+  return (
+    <div>
+      <p className="mb-1.5 text-micro font-bold uppercase tracking-wide text-faint">
+        Every settings combination, replayed ({rows.length})
+      </p>
+      <div className="app-table-wrap max-h-[22rem]">
+        <table className="min-w-full text-left text-table">
+          <thead className="app-table-head sticky top-0">
+            <tr>
+              <th className={TH_R}>Net-Δ band</th>
+              <th className={TH_R}>Min roll credit</th>
+              <th className={TH_R}>Max loss</th>
+              <th className={TH_R}>No-roll window</th>
+              <th className={TH}>Exit action</th>
+              <th className={TH_R}>Campaigns</th>
+              <th className={TH_R}>Rolls</th>
+              <th className={TH_R}>Win rate</th>
+              <th className={TH_R}>Net P&amp;L</th>
+              <th className={TH_R}>Max drawdown</th>
+              <th className={TH_R}>Worst at a check</th>
+              <th className={TH} />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className={`app-table-row ${r.is_saved ? "font-semibold" : ""}`}>
+                <td className={TD_NUM}>{r.varied.net_delta_band_per_lot}</td>
+                <td className={TD_NUM}>{r.varied.min_roll_credit_points}</td>
+                <td className={TD_NUM}>{r.varied.max_loss}</td>
+                <td className={TD_NUM}>{r.varied.no_roll_within_days_of_exit}d</td>
+                <td className="px-2.5 py-1.5 whitespace-nowrap text-foreground">
+                  {r.varied.exit_action === "close" ? "Close" : "Time roll"}
+                </td>
+                <td className={TD_NUM}>{r.trades}</td>
+                <td className={TD_NUM}>{r.rolls}</td>
+                <td className={TD_NUM}>{r.win_rate_pct == null ? "—" : `${r.win_rate_pct}%`}</td>
+                <td className={`${TD_NUM} ${(r.net_pnl ?? 0) >= 0 ? "text-up" : "text-down"}`}>{inr(r.net_pnl)}</td>
+                <td className={`${TD_NUM} text-muted`}>{inr(r.max_drawdown)}</td>
+                <td className={`${TD_NUM} text-muted`}>{r.worst_at_check == null ? "—" : inr(r.worst_at_check)}</td>
+                <td className="px-2.5 py-1.5 whitespace-nowrap">
+                  {r.is_saved ? <span className="text-hint text-accent">your settings</span> : null}
+                  {best && r.id === best.id && rows.length > 1 ? (
+                    <span className="ml-2 text-hint text-up">best</span>
+                  ) : null}
+                  {!r.complete ? (
+                    <span className="ml-2 text-hint text-amber-on-tint" title={r.stopped_at ? `Stopped at the ${r.stopped_at} check` : undefined}>
+                      partial
+                    </span>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Tile({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="app-card-muted p-3">
@@ -193,10 +266,15 @@ export function BacktestRunTrades({ runId, bot }: { runId: string; bot: Backtest
           <AsyncLabelSpan busy={csv.isPending} idleLabel="Download trades CSV" busyLabel="Preparing…" />
         </button>
       </div>
-      {comparison.length > 1 ? <Comparison rows={comparison} /> : null}
+      {comparison.length > 1 && bot === "condor" ? (
+        <CondorComparison rows={condorComparisonRows(q.data.summary)} />
+      ) : comparison.length > 1 ? (
+        <Comparison rows={comparison} />
+      ) : null}
       {comparison.length > 1 ? (
         <p className="text-micro font-bold uppercase tracking-wide text-faint">
-          Your setting: {String(summary.signal_setting ?? "")}
+          {bot === "condor" ? "Your settings" : "Your setting"}:{" "}
+          {String(summary.setting_label ?? summary.signal_setting ?? "")}
         </p>
       ) : null}
       <RunResults trades={trades} totals={totals} curve={curve} columns={COLUMNS[bot]} footnote={footnote} />

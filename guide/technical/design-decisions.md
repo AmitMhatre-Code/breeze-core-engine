@@ -1197,3 +1197,26 @@ Paper campaigns own no expiry and are never refused. Margin stays per campaign: 
 
 **Why not keep the backtest gate for Semi-auto and Auto only.** It would be a gate no other bot has, and real orders are already behind a Simulation cycle on the same fingerprint, which tests the same rules at live prices.
 
+
+## 71. Every condor backtest compares 108 combinations of its roll and risk settings, on one price source
+
+**Decision** (2026-10-05, every point the user's call). `condor/backtest_combos.combos_for` builds the full cross-product of five settings around the saved ones, and `backtest_job.start` replays every combination on each card backtest. There is no separate "compare" action.
+
+| Setting | Values |
+|---|---|
+| `net_delta_band_per_lot` | saved ± 0.05 |
+| `min_roll_credit_points` | saved ± 10 |
+| `max_loss_pct_of_ceiling` | saved × 0.5 / 1 / 1.5; a rupee limit stays as saved. With no % form, `max_loss_inr` is scaled instead |
+| `no_roll_within_days_of_exit` | 0 and 3, plus the saved value if it is neither |
+| exit action | `time_roll`, `close` |
+
+That is 3 × 3 × 3 × 2 × 2 = 108 with the defaults. A value outside the field's range (checked by constructing `CondorSettings`) is **dropped, never shifted inward**, so every row is the saved value or exactly one step from it. The saved combination is always in the grid.
+
+- **What is held fixed, and why.** Strikes (short Δ, wing %) and the cycle clock change which contracts and expiries are traded, so every value multiplies the fetch bill. The leg-rule floor and decay were left out to keep the grid small (the user kept the three settings the plan names for calibration, plus the no-roll window and exit action). Sizing is out because the replay models neither margin nor depth, so more lots only scale P&L.
+- **One `StoreSource`, fetched for in rounds** (`backtest_job._drive`). Each round runs every unfinished combination as far as the cache allows, then fetches the union of what they lack, once per window, and resumes them all. The budget is spread over the grid, not spent on the saved combination first (the user's choice). A run that cannot finish is `partial`; each row says where it stopped; running it again continues from the cache. A cancel is honoured between combinations. `StoreSource` now keeps at most `BARS_KEPT` (400) contracts' bars, least recently used first, because one source serves every combination.
+- **Measured on the test suite's synthetic paths** (nine months, 324 rule variants): the union of contracts was 1.4× the saved settings' alone on a steady trend and 3.6× on a ±4% whipsaw. Once a rule sends a campaign down another path, every later strike differs. Replay time (~0.6 s each) is not the constraint; the daily call budget is. A long first comparison takes several days' budgets.
+- **Storage** (the user's call). Only the saved combination keeps its action log (`trades` until `record` turns it into campaign rows). Every combination's row in `summary.comparison` stores its `overrides` (the four settings it changes), exit action, status, `stopped_at` and the figures the evidence shows. It does not store a full settings dump, because `bot.eligibility` reads every run's summary. The other combinations' campaigns go only to the card's zip (`combinations/<id>.csv`, plus `summary.csv`). `backtest_store.save_run` has fixed columns, so nothing outside `params`/`summary`/`trades` survives. The Activity row's `detail.summary` omits the comparison, because Activity lists every row's detail.
+- **Every combination is evidence for its own settings** (the user's choice). `bot.eligibility` rebuilds each row's settings as `params.settings` + `overrides` and hashes them with the row's exit action and the run's `ENGINE_VERSION` (#66). A completed row matches; a partial one does not. Runs from before this change still match on their own params. The card's new **Backtest of these settings** line shows the match, since **Last backtest** shows whichever run is newest. It still gates nothing (#70).
+- **Presentation as the signal bots have it** (#39): a table, the saved row marked, the headline naming the best by net P&L. The user declined a curve-fit caveat and a drawdown ranking. About eight monthly cycles cannot separate 108 combinations, so the guide calls the best a lead, not a finding.
+
+This is backtest bookkeeping, not a rule change, so `ENGINE_VERSION` is unchanged.

@@ -7,6 +7,12 @@ the data volume or the container's memory runs out (#41, #44). What it cannot fe
 pretend to have: the replay stops at the first check missing data and the run is `partial`,
 saying how far it got.
 
+Every run replays the saved settings' neighbours too (`backtest_combos`, #71): one replay per
+combination, all on one price source, fetched for together a round at a time. Each combination's
+row stores what it changed and its status, so the bot's evidence (#66) finds it once those
+settings are saved; only the saved combination keeps its action log, and the others' campaigns
+go to the card's zip.
+
 Sizing follows #36: one lot of today's condor is priced on ICICI's margin calculator (strikes at
 the settings' deltas, from today's VIX, on the listed expiry nearest the entry DTE), and the
 lots per tranche follow from the ceiling. A caller may pass the lots instead -- the only way to
@@ -33,7 +39,9 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
     BudgetExhausted,
     Stopped,
 )
+from icici_breeze_backend.app.services.bots.scalping.backtest_store import Need
 from icici_breeze_backend.app.services.bots.scalping.spreads import spread_stats
+from icici_breeze_backend.app.services.condor import backtest_combos
 from icici_breeze_backend.app.services.condor.backtest import CondorReplay, ExitAction, StoreSource
 from icici_breeze_backend.app.services.condor.engine import ENGINE_VERSION
 
@@ -208,6 +216,7 @@ def start(
     (`start_card`): the stored run then shares its id with the Activity row, and `on_finish`
     records that row once the run is saved, whatever its outcome."""
     check_startable(from_date, to_date, lots_per_tranche)
+    combos = backtest_combos.combos_for(settings, exit_action)
     now = now_ist()
     run_id = run_id or str(uuid.uuid4())
     run: dict[str, Any] = {
@@ -225,6 +234,7 @@ def start(
             "lots_per_tranche": lots_per_tranche,
             "settings": settings.model_dump(mode="json"),
             "engine_version": ENGINE_VERSION,
+            "combinations": len(combos),
             **({"period": period} if period else {}),
         },
     }
@@ -269,15 +279,25 @@ def start(
 
                 band, band_note = tradeable_band(settings, now.date())
                 notes.append(band_note)
-                source = StoreSource(service.holidays(), from_date, end, data_until=last_session)
-                replay = CondorReplay(
-                    settings, from_date, end,
-                    lots_per_tranche=lots, exit_action=exit_action, source=source, listed_band=band,
-                    charges=load_charges(), spread=spread_stats(), holidays=service.holidays(),
-                    on_day=lambda d: jobs._update(phase="replaying", day=d.isoformat()),  # noqa: SLF001
+                hol = service.holidays()
+                # One source for every combination: the anchors and most held legs are the same
+                # contracts, so each is read (and fetched) once whichever combinations want it.
+                source = StoreSource(hol, from_date, end, data_until=last_session)
+                charges, spread = load_charges(), spread_stats()
+                replays = [
+                    (combo, CondorReplay(
+                        combo.settings, from_date, end,
+                        lots_per_tranche=lots, exit_action=combo.exit_action, source=source,
+                        listed_band=band, charges=charges, spread=spread, holidays=hol,
+                    ))
+                    for combo in combos
+                ]
+                notes.append(
+                    f"{len(combos)} settings combinations replayed: {_grid_text(settings)}. "
+                    "Every other setting as saved."
                 )
-                status = _drive(replay, source, fetcher, notes)
-                status = _spot_gap(replay, status, notes)
+                stopped = _drive(replays, source, fetcher, notes)
+                missing = _spot_gap(replays[0][1], notes)
             finally:
                 if fetcher is not None:
                     calls = fetcher.calls
@@ -287,10 +307,27 @@ def start(
             verdict = five_minute_verdict()
             if verdict:
                 notes.append(verdict)
+            rows, campaigns_by_combo = [], {}
+            for combo, replay in replays:
+                combo_summary = replay.summary()
+                campaigns = card_trades(combo_summary)
+                rows.append(backtest_combos.comparison_row(
+                    combo, combo_summary, campaigns,
+                    complete=replay.done and not missing, stopped_at=stopped.get(combo.id),
+                ))
+                campaigns_by_combo[combo.id] = campaigns
+            status = "completed" if all(r["complete"] for r in rows) else "partial"
+            saved_combo, replay = next(((c, r) for c, r in replays if c.is_saved), replays[0])
             summary = replay.summary()
             summary["notes"] = notes
             summary["calls"] = calls
-            run.update(status=status, summary=summary, trades=replay.events)
+            summary["comparison"] = rows
+            summary["setting_label"] = saved_combo.label
+            # Only the saved combination keeps its action log; the others keep their summary
+            # and campaigns (the user's call, 2026-10-05: 108 logs a run would fill the volume).
+            # `combos` is not a stored column: the card's zip writes it out, and that is all.
+            run.update(status=status, summary=summary, trades=replay.events, combos=campaigns_by_combo)
+            del replays
             store.save_run(run)
             finished()
             # A card run's dialog says what its Activity row says (`record` sets the headline).
@@ -386,12 +423,17 @@ def start_card(
         store.save_run(run)
         _write_zip(user_id, run, events)
         partial = run.get("status") == "partial"
-        run["headline"] = _headline(period_text, summary, partial)
+        run["headline"] = (
+            backtest_combos.headline(period_text, summary["comparison"], partial)
+            if summary.get("comparison") else _headline(period_text, summary, partial)
+        )
         bots_repo.finish_run(
             run_id, status="completed",
             reason_code="backtest_gaps" if partial else "backtest_complete",
             reason_text=run["headline"],
-            detail={**detail, "summary": summary},
+            # The comparison stays on the stored run, which the row opens: Activity lists every
+            # row's detail, and 108 rows a backtest would weigh down every page of it.
+            detail={**detail, "summary": {k: v for k, v in summary.items() if k != "comparison"}},
         )
 
     try:
@@ -453,8 +495,9 @@ def _headline(period_text: str, summary: dict[str, Any], partial: bool) -> str:
 
 
 def _write_zip(user_id: str, run: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    """The row's download, as the other bots' rows have one: the run, its campaigns and every
-    action the replay took."""
+    """The row's download, as the other bots' rows have one: the run, the comparison, and the
+    saved combination's campaigns and every action its replay took. The other combinations
+    have their campaigns only; their action logs are not kept (#71)."""
     import json
 
     from icici_breeze_backend.app.db.bots_migrate import BOT_DYNAMIC_CONDOR
@@ -463,12 +506,24 @@ def _write_zip(user_id: str, run: dict[str, Any], events: list[dict[str, Any]]) 
     writer = bot_audit.BacktestZipWriter(user_id, BOT_DYNAMIC_CONDOR, run["id"])
     try:
         writer.add_all({
-            "run.json": json.dumps({k: v for k, v in run.items() if k != "trades"}, indent=2, default=str),
+            "run.json": json.dumps(
+                {k: v for k, v in run.items() if k not in ("trades", "combos")}
+                | {"summary": {k: v for k, v in (run.get("summary") or {}).items() if k != "comparison"}},
+                indent=2, default=str,
+            ),
             "campaigns.csv": run.get("trades") or [{"note": "no campaigns"}],
             "actions.csv": [
                 {k: (json.dumps(v, default=str) if isinstance(v, (list, dict)) else v) for k, v in e.items()}
                 for e in events
             ] or [{"note": "no actions"}],
+            "summary.csv": [
+                {**{k: v for k, v in r.items() if k not in ("varied", "overrides")}, **(r.get("varied") or {})}
+                for r in (run.get("summary") or {}).get("comparison") or []
+            ] or [{"note": "no combinations"}],
+            **{
+                f"combinations/{combo_id}.csv": campaigns or [{"note": "no campaigns"}]
+                for combo_id, campaigns in (run.get("combos") or {}).items()
+            },
         })
         writer.close()
     except Exception:  # noqa: BLE001 -- the row stands without its download
@@ -500,58 +555,101 @@ def _fetch_allowance(user_id: str, now: datetime.datetime, notes: list[str]) -> 
     return min(budget_left, headroom)
 
 
-def _drive(replay: CondorReplay, source: StoreSource, fetcher: Any, notes: list[str]) -> str:
-    """Replay, fetching what each stopped check lacked, until done or unable to continue."""
+def _grid_text(settings: CondorSettings) -> str:
+    loss = "max loss % of ceiling" if backtest_combos.max_loss_field(settings) == "max_loss_pct_of_ceiling" else "max loss ₹"
+    return (
+        f"net-Δ band ±{backtest_combos.BAND_STEP:g}, minimum roll credit ±{backtest_combos.ROLL_CREDIT_STEP:g} points, "
+        f"{loss} × 0.5 / 1 / 1.5, no-roll window 0 and 3 days (and the saved value), time roll and close"
+    )
+
+
+def _drive(
+    replays: list[tuple[backtest_combos.Combo, CondorReplay]],
+    source: StoreSource,
+    fetcher: Any,
+    notes: list[str],
+) -> dict[str, str]:
+    """Replay every combination, fetching what their stopped checks lacked, until all are done
+    or nothing more can be fetched. Each round runs every unfinished combination as far as the
+    cache allows and fetches what all of them lack together, once, so the budget is spread over
+    the grid rather than spent on one combination first (the user's call, 2026-10-05).
+
+    Returns {combo id: where it stopped} for the combinations left unfinished."""
+    pending = list(replays)
     for _ in range(MAX_ROUNDS):
-        jobs._memory_check("mid-replay")  # noqa: SLF001
-        needs = replay.run()
-        if not needs:
-            return "completed"
+        waiting: list[tuple[backtest_combos.Combo, CondorReplay]] = []
+        needs: dict[Need, None] = {}
+        for n, (combo, replay) in enumerate(pending, start=1):
+            if jobs._cancel.is_set():  # noqa: SLF001
+                raise RuntimeError("Stopped at your request.")
+            jobs._memory_check("mid-replay")  # noqa: SLF001
+            jobs._update(phase="replaying", step=n, steps=len(pending), day=None)  # noqa: SLF001
+            got = replay.run()
+            if got:
+                waiting.append((combo, replay))
+                needs.update(dict.fromkeys(got))
+        pending = waiting
+        if not pending:
+            return {}
         if fetcher is None:
-            notes.append(_stopped_at(replay, "its option prices are not cached and nothing can be fetched now"))
-            return "partial"
-        store.add_needs(needs)
+            return _stopped(pending, replays, notes, "their option prices are not cached and nothing can be fetched now")
+        wanted = list(needs)
+        store.add_needs(wanted)
+        jobs._update(phase="fetching", step=None, steps=None)  # noqa: SLF001
+        jobs._log(f"{len(pending)} combination(s) wait for {len(wanted)} option window(s); fetching…")  # noqa: SLF001
         try:
-            stats = fetcher.fetch_needs(needs)
+            stats = fetcher.fetch_needs(wanted)
         except (AllowanceSpent, BudgetExhausted) as exc:
             notes.append(f"Fetch stopped: {exc}")
-            notes.append(_stopped_at(replay, "the call budget ran out"))
-            return "partial"
+            return _stopped(pending, replays, notes, "the call budget ran out")
         except Stopped as exc:
             notes.append(f"Fetch stopped: {exc}")
-            notes.append(_stopped_at(replay, "fetching stopped"))
-            return "partial"
+            return _stopped(pending, replays, notes, "fetching stopped")
         if stats["fetched"] == 0:
-            notes.append(_stopped_at(replay, "every request for its data errored (see the job log)"))
-            return "partial"
+            return _stopped(pending, replays, notes, "every request for their data errored (see the job log)")
         source.refresh()
-    notes.append(_stopped_at(replay, f"{MAX_ROUNDS} fetch rounds were used"))
-    return "partial"
+    return _stopped(pending, replays, notes, f"{MAX_ROUNDS} fetch rounds were used")
 
 
-def _spot_gap(replay: CondorReplay, status: str, notes: list[str]) -> str:
-    """A check with no cached NIFTY index price was not replayed. Holidays are not checks, so
-    every one of these is missing data: the run is `partial`, never a completed ₹0."""
+def _stopped(
+    pending: list[tuple[backtest_combos.Combo, CondorReplay]],
+    replays: list[tuple[backtest_combos.Combo, CondorReplay]],
+    notes: list[str],
+    why: str,
+) -> dict[str, str]:
+    where = {combo.id: _check_time(replay) for combo, replay in pending}
+    saved = next((where[c.id] for c, _r in pending if c.is_saved), None)
+    text = f"{len(pending)} of {len(replays)} combination(s) stopped part-way because {why}"
+    text += f"; yours at the {saved} check." if saved else "; yours finished."
+    notes.append(text + " Run it again to continue.")
+    return where
+
+
+def _check_time(replay: CondorReplay) -> str:
+    _day, _kind, ts = replay.checks[replay.i]
+    return f"{ts:%d %b %Y %H:%M}"
+
+
+def _spot_gap(replay: CondorReplay, notes: list[str]) -> int:
+    """Checks with no cached NIFTY index price, which were not replayed. Holidays are not checks,
+    so every one is missing data, and every combination misses the same ones (they share the
+    index bars): none of them is then complete, never a completed ₹0."""
     missing = int(replay.skipped.get("no_spot", 0))
-    if not missing:
-        return status
-    notes.append(
-        f"{missing} of {len(replay.checks)} checks had no cached NIFTY index price and were not "
-        "replayed. The index bars are fetched on the live instance outside market hours; run it "
-        "there to fill them."
-    )
-    return "partial" if status == "completed" else status
-
-
-def _stopped_at(replay: CondorReplay, why: str) -> str:
-    day, kind, ts = replay.checks[replay.i]
-    return f"Replay stopped at the {ts:%d %b %Y %H:%M} check because {why}. Run it again to continue."
+    if missing:
+        notes.append(
+            f"{missing} of {len(replay.checks)} checks had no cached NIFTY index price and were not "
+            "replayed. The index bars are fetched on the live instance outside market hours; run it "
+            "there to fill them."
+        )
+    return missing
 
 
 def _message(summary: dict[str, Any], status: str) -> str:
     pnl = (summary.get("closed_pnl") or 0) + (summary.get("open_campaign_cash") or 0)
     head = "Replayed in full." if status == "completed" else "Replayed in part."
-    return f"{head} Cash P&L ₹{pnl:,.0f}, max drawdown ₹{summary.get('max_drawdown', 0):,.0f}."
+    n = len(summary.get("comparison") or [])
+    return (f"{head} {n} combination(s); your settings: cash P&L ₹{pnl:,.0f}, "
+            f"max drawdown ₹{summary.get('max_drawdown', 0):,.0f}.")
 
 
 def list_runs(user_id: str, limit: Optional[int] = 20) -> list[dict[str, Any]]:

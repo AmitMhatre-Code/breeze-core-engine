@@ -116,23 +116,39 @@ class Eligibility:
 
 
 def eligibility(user_id: str, cfg: DynamicCondorBotConfig) -> Eligibility:
-    from icici_breeze_backend.app.services.condor import backtest_job
+    from icici_breeze_backend.app.services.condor import backtest_combos, backtest_job
 
     h = hash_of(cfg)
     found = None
     try:
         for run in backtest_job.list_runs(user_id, limit=None):
             params = run.get("params") or {}
-            # A run from before versions were recorded counts as version 0, so it never matches.
-            matches = settings_hash(params.get("settings") or {}, params.get("exit_action") or "",
-                                    params.get("engine_version") or 0) == h
-            if run.get("status") == "completed" and matches:
-                s = run.get("summary") or {}
-                found = {
-                    "run_id": run["id"], "created_at": run["created_at"], "from": params.get("from"),
-                    "to": params.get("to"), "closed_pnl": s.get("closed_pnl"),
-                    "open_campaign_cash": s.get("open_campaign_cash"), "max_drawdown": s.get("max_drawdown"),
-                }
+            # A run compares settings combinations (#71), each evidence for its own settings; a
+            # run from before that holds one, its own. A run from before versions were recorded
+            # counts as version 0, so it never matches.
+            summary = run.get("summary") or {}
+            saved = params.get("settings") or {}
+            members = [
+                {**row, "settings": backtest_combos.settings_of(saved, row),
+                 "max_drawdown": abs(float(row.get("max_drawdown") or 0))}
+                for row in summary.get("comparison") or []
+            ] or [{
+                "settings": saved, "exit_action": params.get("exit_action"), "status": run.get("status"),
+                "closed_pnl": summary.get("closed_pnl"), "open_campaign_cash": summary.get("open_campaign_cash"),
+                "max_drawdown": summary.get("max_drawdown"), "net_pnl": summary.get("net_pnl"), "label": None,
+            }]
+            for m in members:
+                matches = settings_hash(m["settings"], m.get("exit_action") or "",
+                                        params.get("engine_version") or 0) == h
+                if m.get("status") == "completed" and matches:
+                    found = {
+                        "run_id": run["id"], "created_at": run["created_at"], "from": params.get("from"),
+                        "to": params.get("to"), "closed_pnl": m.get("closed_pnl"),
+                        "open_campaign_cash": m.get("open_campaign_cash"), "max_drawdown": m.get("max_drawdown"),
+                        "net_pnl": m.get("net_pnl"), "combination": m.get("label"),
+                    }
+                    break
+            if found:
                 break
     except Exception:  # noqa: BLE001 -- no backtest cache means no evidence, never a crash
         _logger.debug("condor bot: backtest runs unreadable", exc_info=True)

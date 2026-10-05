@@ -102,7 +102,7 @@ The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tab
 | **…or decayed** | 80% | …or has lost this share of its premium. |
 | **Net Δ band per lot** | 0.15 | Roll when the position's net delta per lot is outside ± this. |
 | **Minimum roll credit** | 20 points | A roll adding less than this per unit, after charges, is skipped and the card says so. |
-| **No rolls within … days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. Backtest it at 0 and at 3 to see which suits you. |
+| **No rolls within … days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. Every backtest compares 0 and 3 for you (see [Comparing settings](#comparing-settings)). |
 | **Start-of-day check / End-of-day check** | 10:30 / 15:31 | The two check times, IST. |
 | **Margin ceiling** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
 | **Max loss / …or of the ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
@@ -115,12 +115,30 @@ The defaults are starting points, not findings. Backtest them before trusting th
 
 The history icon on the **Dynamic Iron Condor** bot card backtests the rules on the card's **saved** settings, exit action and lots per tranche, like every bot's backtest (see [Backtesting a bot](bots.md#backtesting-a-bot)): choose a period, run it, and read the result in **Activity**. Save a change before you backtest it. The replay runs the same rules a campaign runs, at the same two checks, on ICICI's traded **5-minute** option prices from January 2026; a period reaching further back starts there, and the result says so.
 
+### Comparing settings
+
+Every backtest also replays the saved settings' neighbours, so one run shows how the rules compare with the settings around yours. It replays every combination of:
+
+| Setting | Values compared |
+|---|---|
+| **Net-Δ band per lot** | yours, 0.05 below and 0.05 above |
+| **Minimum roll credit** | yours, 10 points below and 10 points above |
+| **Max loss** | your % of the margin ceiling, half of it and one and a half times it. A rupee limit you also set stays as it is; with only a rupee limit, that limit is compared instead. |
+| **No rolls within … days of exit** | 0 and 3, and yours if it is neither |
+| **Exit action** | time roll and close |
+
+That is 108 combinations with the defaults. A value outside the setting's allowed range is left out rather than moved, so the run may compare fewer. Every other setting (strikes, the cycle clock, the leg rule, lots per tranche) stays as you saved it.
+
+The Activity row opens on a table with one line per combination: the five settings, **Campaigns**, **Rolls**, **Win rate**, **Net P&L**, **Max drawdown** (the largest fall at a check) and **Worst at a check**. **your settings** marks your saved combination, **best** marks the highest net P&L, and **partial** marks a combination that stopped for missing prices (hover it to see where). The campaigns, chart and figures below the table are your saved combination's.
+
+History covers only about eight monthly cycles, so the best of 108 combinations is a lead to look into, not a finding. Each combination is also kept as a backtest of its own settings: save one, and the card's **Backtest of these settings** shows its result straight away.
+
 Lots per tranche left blank are sized from today's margin, which needs ICICI's margin calculator; a mock instance has none, so set the lots in the settings first.
 
 The replay only opens legs at strikes ICICI lists as tradeable: the range ICICI lists today for NIFTY (for example 8.6% below to 16.4% above spot), applied to every day of the period, because the lists of past days are not kept. Its notes say which range was used. Without it, a backtest could trade far strikes that live trading cannot.
 
-Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. A run that cannot get what it needs stops at that check, says where and why in its notes, and is not a completed backtest: the card's **Last backtest** does not count it. Run it again to carry on.
+Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. All the combinations are fetched for together, so the budget is spread across them, and each window is fetched once whichever combinations need it. Comparing settings therefore needs more history than one replay: a long period may take several days' budgets. A combination that cannot get what it needs stops at that check, and its row and the run's notes say where and why. It is not a completed backtest, so **Backtest of these settings** does not count it. Run the backtest again to carry on from what is already fetched.
 
-Its Activity row lists one line per **campaign**: when it started and ended, its expiries, tranches and rolls, the worst P&L it showed at a check, how it ended, charges and net P&L. A campaign still open when the period ends is marked at its last check (what closing then would have left), and reads **Open at period end (marked)**. **Download backtest results (.zip)** adds every action the replay took.
+Its Activity row lists one line per **campaign**: when it started and ended, its expiries, tranches and rolls, the worst P&L it showed at a check, how it ended, charges and net P&L. A campaign still open when the period ends is marked at its last check (what closing then would have left), and reads **Open at period end (marked)**. **Download backtest results (.zip)** adds every action your saved combination's replay took, the comparison table (`summary.csv`), and every other combination's campaigns (`combinations/`). Only your saved combination keeps its full action log.
 
 What it cannot model: bid and ask (spreads are modelled from your own observed samples), order-book depth, intraday moves between the two checks, and margin, which is sized once at today's levels. History starts in January 2026, which is only about eight monthly cycles: enough to see how the rules behave and how large the losing months are, not enough to prove an edge. A monthly campaign takes weeks, so a short period may finish none.

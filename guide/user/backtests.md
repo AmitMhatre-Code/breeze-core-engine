@@ -35,7 +35,7 @@ Backtests use only data ICICI serves as history: one-minute bars of price, volum
 
 - **Real traded prices only.** Fills use actual ICICI option prices, down to one-second bars where available, with the bid-ask spread modelled from observed quotes. No theoretical prices are ever used.
 - **Today's set-up.** Every past day is replayed with your **current** settings, **today's** lot size and **today's** margin. The question is "how would this bot, as I have it now, have done?"
-- **Every signal setting side by side** for bots that read a signal, so you can compare following and fading each reading. Your saved setting is marked.
+- **Every signal setting side by side** for bots that read a signal, so you can compare following and fading each reading. Your saved setting is marked. The Dynamic Iron Condor compares combinations of its roll and risk settings instead (see [Comparing settings](iron-condors.md#comparing-settings)).
 - **Full costs**, from [Trading Costs](settings-trading.md#trading-costs), including the **Simulation slippage** allowance.
 - **Margin for lot sizing** comes from the SPAN file or ICICI, as set by the **Backtesting** switch in [Reference Data Loads](settings-automation.md#use-span-files-for-margin-calculation). You are warned if the SPAN file is out of date.
 
@@ -53,7 +53,7 @@ Backtests use only data ICICI serves as history: one-minute bars of price, volum
 
 | Part | What it shows |
 |---|---|
-| Comparison table | For each signal setting: **Trades**, **Win rate**, **Net P&L**, **Max drawdown** (largest fall from a peak) and **Worst day**. |
+| Comparison table | For each signal setting: **Trades**, **Win rate**, **Net P&L**, **Max drawdown** (largest fall from a peak) and **Worst day**. For the Dynamic Iron Condor, one line per settings combination ([Comparing settings](iron-condors.md#comparing-settings)). |
 | Totals | Net P&L and the main figures for the run. |
 | Trades | Every trade with entry and exit times, contract, lots, prices and **Exit reason**. **Download trades CSV** saves them. |
 | Chart | Cumulative net P&L over the period. |

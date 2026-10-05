@@ -13,6 +13,7 @@ import type { CondorBotConfig } from "@/components/bots/CondorSettings";
 import { CampaignCard } from "@/components/condor/CondorCampaignPanel";
 import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
+import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import type { CondorCampaign } from "@/lib/condor";
 import { fetchTelegramStatus, TELEGRAM_STATUS_QUERY_KEY } from "@/lib/telegram/telegram-alerts";
 import { BOT_META, useUpdateBot, type Bot } from "@/lib/use-bots";
@@ -29,7 +30,16 @@ import { BOT_META, useUpdateBot, type Bot } from "@/lib/use-bots";
 type Overview = {
   eligibility: {
     settings_hash: string;
-    backtest: { run_id: string; created_at: string; from: string; to: string } | null;
+    /** The newest completed backtest of exactly these settings, a compared combination
+     *  included (#71). Shown, never a gate (#70). */
+    backtest: {
+      run_id: string;
+      created_at: string;
+      from: string;
+      to: string;
+      net_pnl?: number | null;
+      combination?: string | null;
+    } | null;
     paper_cycles: number;
     approved_executions: number;
     may_telegram: boolean;
@@ -208,6 +218,23 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
               </dd>
             </div>
             <LastBacktestRow botType={bot.bot_type} />
+            <div className="flex items-baseline justify-between gap-3 text-hint">
+              <dt className="text-faint">Backtest of these settings</dt>
+              <dd
+                className="m-0 font-mono tabular-nums"
+                title={
+                  e?.backtest
+                    ? `${e.backtest.from} → ${e.backtest.to}${e.backtest.combination ? ` · compared as ${e.backtest.combination}` : ""}`
+                    : "No completed backtest has replayed these exact settings yet."
+                }
+              >
+                {typeof e?.backtest?.net_pnl === "number" ? (
+                  <span className={moneyToneClass(e.backtest.net_pnl)}>{formatIndianMoneyCompact(e.backtest.net_pnl)}</span>
+                ) : (
+                  <span className="text-text">—</span>
+                )}
+              </dd>
+            </div>
           </dl>
         </div>
 

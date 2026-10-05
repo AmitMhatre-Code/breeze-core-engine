@@ -52,6 +52,33 @@ export type ComparisonRow = {
   days_awaiting_data: number | null;
 };
 
+/** One settings combination's line in a condor backtest's comparison (design-decisions #71):
+ *  the five settings it sets, every other one as saved. */
+export type CondorComparisonRow = {
+  id: string;
+  label: string;
+  varied: {
+    net_delta_band_per_lot: number;
+    min_roll_credit_points: number;
+    max_loss: string;
+    no_roll_within_days_of_exit: number;
+    exit_action: "time_roll" | "close";
+  };
+  is_saved: boolean;
+  trades: number;
+  rolls: number;
+  win_rate_pct: number | null;
+  net_pnl: number | null;
+  max_drawdown: number | null;
+  worst_at_check: number | null;
+  complete: boolean;
+  stopped_at: string | null;
+};
+
+export function condorComparisonRows(summary: BacktestSummary | null | undefined): CondorComparisonRow[] {
+  return comparisonRows(summary) as unknown as CondorComparisonRow[];
+}
+
 export function comparisonRows(summary: BacktestSummary | null | undefined): ComparisonRow[] {
   const rows = (summary as { comparison?: unknown } | null | undefined)?.comparison;
   return Array.isArray(rows) ? (rows as ComparisonRow[]) : [];

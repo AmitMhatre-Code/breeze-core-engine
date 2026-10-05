@@ -211,6 +211,20 @@ def test_the_card_backtest_is_an_activity_row_sharing_the_stored_runs_id(bt):
     assert stored["bot"] == "condor" and stored["status"] == "partial"
     assert stored["params"]["period"] == "custom" and stored["params"]["lots_per_tranche"] == 2
     assert "net_pnl" in stored["summary"] and isinstance(stored["trades"], list)
+    # The comparison (#71) rides on the stored run, not on the Activity row, and the row's
+    # download carries every combination's campaigns.
+    assert len(stored["summary"]["comparison"]) == 108
+    assert "comparison" not in row["detail"]["summary"]
+    assert "108 combination(s) replayed in part" in row["reason_text"]
+    import glob
+    import zipfile
+
+    from icici_breeze_backend.audit import bot_audit
+
+    [archive] = glob.glob(f"{bot_audit.audit_dir()}/**/*.zip", recursive=True)
+    names = zipfile.ZipFile(archive).namelist()
+    assert {"summary.csv", "campaigns.csv", "actions.csv", "run.json"} <= set(names)
+    assert sum(n.startswith("combinations/") for n in names) == 108
     # A partial run is not shown as the settings' backtest.
     cfg = condor_bot.config_of(bots_repo.get_or_create_bot("u1", BOT_DYNAMIC_CONDOR).config)
     assert condor_bot.eligibility("u1", cfg).backtest is None

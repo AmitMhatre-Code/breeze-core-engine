@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Literal, Optional, Protocol
 
@@ -76,6 +77,10 @@ MAX_RESOLVE_PASSES = 4
 # skew it is chosen against. A fixed grid this coarse barely moves as spot drifts, so it costs
 # little more to fetch.
 SMILE_ANCHOR_STEP = 500
+# Contracts whose bars a StoreSource keeps in memory. A comparison run (#71) replays one source
+# for every settings combination, so the bars of every contract any of them touched would
+# otherwise stay loaded for the whole run; a check needs only a few dozen at once.
+BARS_KEPT = 400
 
 ExitAction = Literal["time_roll", "close"]
 Status = Literal["ok", "missing", "stale", "unlisted"]
@@ -145,7 +150,7 @@ class StoreSource:
         )
         self._spot = {c.ts: c.close for c in spot}
         self._spot_ts = sorted(self._spot)
-        self._bars: dict[Contract, list[store.HistCandle]] = {}
+        self._bars: OrderedDict[Contract, list[store.HistCandle]] = OrderedDict()
         self._fetched: dict[tuple[Contract, datetime.date], bool] = {}
 
     def refresh(self) -> None:
@@ -186,7 +191,9 @@ class StoreSource:
 
     def _load(self, contract: Contract) -> list[store.HistCandle]:
         bars = self._bars.get(contract)
-        if bars is None:
+        if bars is not None:
+            self._bars.move_to_end(contract)
+        else:
             expiry = contract[0]
             bars = store.load_option_bars(
                 self._key(contract),
@@ -196,6 +203,8 @@ class StoreSource:
                 path=self.path,
             )
             self._bars[contract] = bars
+            if len(self._bars) > BARS_KEPT:
+                self._bars.popitem(last=False)
         return bars
 
     def option(self, contract: Contract, at: datetime.datetime) -> tuple[Status, Optional[float]]:
