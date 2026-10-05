@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AdjustTicket, type TicketRequest } from "@/components/condor/AdjustTicket";
 import { CondorSettingsForm } from "@/components/condor/CondorSettingsForm";
+import { Modal } from "@/components/ui/Modal";
 import {
   actionLabel,
   actionTone,
@@ -20,6 +21,8 @@ import {
   useCondorEvaluation,
   useCreateCampaign,
   useExecutions,
+  useHandOver,
+  useHandoverPreview,
   useLeaveOutDifference,
   useUpdateCampaignSettings,
   type CondorCampaign,
@@ -239,6 +242,11 @@ export function CampaignCard({
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="app-text-heading text-sm">
+          {campaign.origin === "bot" ? (
+            <span className="me-2 rounded border border-accent px-1.5 py-px align-middle text-[10px] font-semibold uppercase tracking-wide text-accent">
+              Managed by the bot
+            </span>
+          ) : null}
           Dynamic Iron Condor · cycle {cycle?.expiry ?? "—"}
           {m.dte != null ? ` · ${m.dte} DTE` : ""} · tranche {cycle?.tranches_entered ?? 0}/{s.tranches}
         </h3>
@@ -330,6 +338,7 @@ export function CampaignCard({
         <button type="button" className="app-btn-secondary" onClick={() => openTicket({ kind: "blank" })}>
           Adjust…
         </button>
+        {campaign.origin === "manual" ? <HandOverButton campaign={campaign} /> : null}
         <span className="text-xs text-muted">
           Tickets place one order at a time, wings first. Orders placed elsewhere on this group show up above as
           differences to assign.
@@ -417,6 +426,136 @@ export function CampaignCard({
   );
 }
 
+const SETTING_LABEL: Partial<Record<keyof CondorSettings, string>> = {
+  expiry_kind: "Expiries",
+  entry_dte: "Entry DTE",
+  tranche_cutoff_dte: "Tranche cut-off DTE",
+  exit_dte: "Exit DTE",
+  tranches: "Tranches",
+  entry_check: "Enter tranches at",
+  sod_check_ist: "Start-of-day check",
+  eod_check_ist: "End-of-day check",
+  short_delta: "Short Δ",
+  wing_delta: "Wing Δ",
+  leg_rule_delta_floor: "Untested side below Δ",
+  leg_rule_decay_pct: "…or decayed %",
+  net_delta_band_per_lot: "Net Δ band per lot",
+  min_roll_credit_points: "Minimum roll credit",
+  no_roll_within_days_of_exit: "No rolls within N days of exit",
+  max_loss_inr: "Max loss ₹",
+  max_loss_pct_of_ceiling: "…or % of ceiling",
+  margin_ceiling_inr: "Margin ceiling ₹",
+};
+
+const show = (v: unknown) => (v == null || v === "" ? "off" : String(v));
+
+/** Hand this campaign to the Dynamic Iron Condor bot (#68). Nothing is traded: the bot runs it
+ *  from its next check, on its own settings, and gives it back if you trade it or switch it off. */
+function HandOverButton({ campaign }: { campaign: CondorCampaign }) {
+  const [open, setOpen] = useState(false);
+  const preview = useHandoverPreview(campaign.id, open);
+  const handOver = useHandOver(campaign.id);
+  const p = preview.data;
+  const close = () => {
+    if (handOver.isPending) return;
+    handOver.reset();
+    setOpen(false);
+  };
+  return (
+    <>
+      <button type="button" className="app-btn-outline" onClick={() => setOpen(true)}>
+        Hand to the bot…
+      </button>
+      <Modal
+        open={open}
+        onClose={close}
+        pending={handOver.isPending}
+        titleId={`handover-${campaign.id}`}
+        zIndexClass="z-[110]"
+        panelClassName="w-full max-w-lg rounded-xl border border-border bg-panel p-5 shadow-pop"
+      >
+        <h2 id={`handover-${campaign.id}`} className="app-text-heading">
+          Hand NIFTY {campaign.cycle?.expiry ?? "—"} to the bot
+        </h2>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Nothing is traded now. From its next check the Dynamic Iron Condor bot manages this campaign on its own
+          settings{p && p.mode !== "off" && p.mode !== "paper" ? `, in ${p.mode === "auto" ? "Auto" : "Telegram"} mode` : ""}.
+          A ticket you execute on it pauses the bot; switching the bot off or changing this campaign&rsquo;s settings
+          hands it back to you.
+        </p>
+        {!p ? (
+          <p className="mt-4 text-sm text-muted">{preview.isError ? (preview.error as Error).message : "Checking…"}</p>
+        ) : (
+          <div className="mt-4 space-y-3 text-sm">
+            {p.blockers.length ? (
+              <div className="rounded-lg border border-down/30 bg-down-tint p-3">
+                <p className="font-semibold">Not yet</p>
+                <ul className="mt-1 list-disc space-y-1 ps-4 text-xs">
+                  {p.blockers.map((b) => (
+                    <li key={b}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {p.settings_changes.length ? (
+              <div>
+                <p className="text-xs font-semibold">It switches to the bot&rsquo;s settings</p>
+                <table className="mt-1 w-full text-xs">
+                  <thead className="text-muted">
+                    <tr>
+                      <th className="text-left font-normal">Setting</th>
+                      <th className="text-right font-normal">Now</th>
+                      <th className="text-right font-normal">The bot&rsquo;s</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {p.settings_changes.map((c) => (
+                      <tr key={c.field}>
+                        <td className="font-sans">{SETTING_LABEL[c.field] ?? c.field}</td>
+                        <td className="text-right">{show(c.campaign)}</td>
+                        <td className="text-right">{show(c.bot)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs text-muted">Its settings already match the bot&rsquo;s.</p>
+            )}
+            <p className="text-xs text-muted">
+              Tranche {p.tranches_entered} of {p.tranches_entered + p.tranches_remaining} entered. {p.sizing}
+            </p>
+            {p.decision ? (
+              <DecisionBlock
+                decision={p.decision}
+                heading={`On the bot's settings, now${p.indicative ? " · indicative" : ""}`}
+              />
+            ) : null}
+            {handOver.error ? (
+              <p className="text-xs text-down" role="alert">
+                {(handOver.error as Error).message}
+              </p>
+            ) : null}
+          </div>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="app-btn-secondary" onClick={close} disabled={handOver.isPending}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="app-btn-primary"
+            disabled={!p?.allowed || handOver.isPending}
+            onClick={() => handOver.mutate(undefined, { onSuccess: () => setOpen(false) })}
+          >
+            {handOver.isPending ? "Handing over…" : "Hand to the bot"}
+          </button>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
 function SettingsEditor({ campaign }: { campaign: CondorCampaign }) {
   const [draft, setDraft] = useState<CondorSettings>(campaign.settings);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -426,6 +565,12 @@ function SettingsEditor({ campaign }: { campaign: CondorCampaign }) {
     <details className="rounded-lg border border-border bg-panel p-3">
       <summary className="cursor-pointer text-sm font-medium">Settings</summary>
       <div className="mt-3 space-y-3">
+        {campaign.origin === "bot" ? (
+          <p className="text-xs text-muted">
+            The bot runs this campaign on its own settings. Saving different ones here hands the campaign back to you;
+            to change what the bot runs, use the gear on its card.
+          </p>
+        ) : null}
         <CondorSettingsForm value={draft} onChange={setDraft} disabled={save.isPending} />
         {save.isError ? <p className="text-sm text-down">{(save.error as Error).message}</p> : null}
         <div className="flex flex-wrap gap-2">

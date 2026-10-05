@@ -306,7 +306,6 @@ const SHOTS = [
   // Pages
   { name: "performance", auth: true, run: async (p, t) => { await go(p, "/performance", { waitFor: "P&L statement", wait: 3000 }); await shoot(p, t, "performance", "full"); } },
   { name: "signals", auth: true, run: async (p, t) => { await go(p, "/signals", { waitFor: "Backtest every signal" }); await shoot(p, t, "signals", "full"); } },
-  { name: "iron-condors", auth: true, run: async (p, t) => { await go(p, "/iron-condors", { waitFor: "Lots per tranche" }); await shoot(p, t, "iron-condors", "full"); } },
   {
     name: "bots",
     auth: true,

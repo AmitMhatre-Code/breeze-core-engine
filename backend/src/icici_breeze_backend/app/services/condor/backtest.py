@@ -271,6 +271,8 @@ class _Campaign:
     charges: float = 0.0
     cycles: list[_Cycle] = field(default_factory=list)
     worst_pnl: float = 0.0
+    # Campaign P&L at the latest check it was marked at: what closing then would have left.
+    last_pnl: Optional[float] = None
     ended: Optional[str] = None
     end_reason: Optional[str] = None
 
@@ -626,6 +628,7 @@ class CondorReplay:
             else:
                 return
             camp.worst_pnl = min(camp.worst_pnl, open_pnl)
+            camp.last_pnl = open_pnl
         equity = self.closed_pnl + open_pnl
         self.peak = max(self.peak, equity)
         self.max_drawdown = max(self.max_drawdown, self.peak - equity)
@@ -643,6 +646,7 @@ class CondorReplay:
                 "pnl": round(c.cash, 2),
                 "charges": round(c.charges, 2),
                 "worst_pnl_at_check": round(c.worst_pnl, 2),
+                "pnl_at_last_check": round(c.last_pnl, 2) if c.last_pnl is not None else None,
                 "cycles": [
                     {"expiry": cy.expiry.isoformat(), "opened": cy.opened, "closed": cy.closed,
                      "close_reason": cy.close_reason, "tranches": cy.tranches, "rolls": cy.rolls}

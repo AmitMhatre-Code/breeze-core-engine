@@ -1,14 +1,13 @@
 # Backtests
 
-A backtest replays history and asks: *what would this have done, exactly as it is set up today?* Breeze Modern has three kinds:
+A backtest replays history and asks: *what would this have done, exactly as it is set up today?* Breeze Modern has two kinds:
 
 | Kind | Where | What it replays |
 |---|---|---|
 | **Signal backtest** | [Signals](signals.md#backtest-every-signal) page, **Run backtest** | All twelve direction readings (two mechanisms × three durations × two indices), scoring every call. |
-| **Bot backtest** | The history icon on a [bot card](bots.md#backtesting-a-bot) | One bot on its saved settings, minute by minute, on real option prices. |
-| **Iron Condor backtest** | [Iron Condors](iron-condors.md#backtest-the-rules) page, **Run backtest** | The campaign rules on the settings you enter, at the two daily checks, on real 5-minute option prices. |
+| **Bot backtest** | The history icon on a [bot card](bots.md#backtesting-a-bot) | One bot on its saved settings on real option prices: minute by minute, or for the Dynamic Iron Condor at its two daily checks on 5-minute prices (see [Backtest the rules](iron-condors.md#backtest-the-rules)). |
 
-This section covers what they have in common. The Signals, Bots and Iron Condors sections explain the controls on each page.
+This section covers what they have in common. The Signals and Bots sections explain the controls on each page.
 
 ## Choosing a period
 

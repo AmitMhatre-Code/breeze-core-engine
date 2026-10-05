@@ -2,6 +2,7 @@ import { apiClient } from "@/lib/api-client";
 import { getBackendBaseUrl } from "@/lib/config";
 import {
   BOT_CAS_BINGO,
+  BOT_DYNAMIC_CONDOR,
   BOT_EXPIRY_INDEX_WRITER,
   BOT_IRON_FLY_SCALPER,
   BOT_MOMENTUM_LONG_SCALPER,
@@ -10,7 +11,7 @@ import {
 
 /** Bot backtests: started from the clock on each card, recorded in Activity (design-decisions #35, #36). */
 
-export type BacktestBot = "momentum" | "fly" | "expiry" | "cas";
+export type BacktestBot = "momentum" | "fly" | "expiry" | "cas" | "condor";
 
 /** Which bots have a replay, and what the API calls each one.
  *
@@ -21,6 +22,7 @@ export const BACKTEST_SLUG: Partial<Record<BotType, BacktestBot>> = {
   [BOT_IRON_FLY_SCALPER]: "fly",
   [BOT_EXPIRY_INDEX_WRITER]: "expiry",
   [BOT_CAS_BINGO]: "cas",
+  [BOT_DYNAMIC_CONDOR]: "condor",
 };
 
 export const BACKTEST_BOT_TYPE: Record<BacktestBot, BotType> = {
@@ -28,6 +30,7 @@ export const BACKTEST_BOT_TYPE: Record<BacktestBot, BotType> = {
   fly: BOT_IRON_FLY_SCALPER,
   expiry: BOT_EXPIRY_INDEX_WRITER,
   cas: BOT_CAS_BINGO,
+  condor: BOT_DYNAMIC_CONDOR,
 };
 
 /** One signal setting's line in a bot backtest's comparison (docs/signals-streamline-plan.md 8):
@@ -297,6 +300,8 @@ const EXIT_LABELS: Record<string, string> = {
   group_stop_loss_hit: "Loss stop",
   group_target_hit: "Profit target",
   expired: "Expired",
+  // A condor campaign still running when the period ends, marked at its last check.
+  open_at_period_end: "Open at period end (marked)",
 };
 
 export function exitLabel(code: unknown): string {

@@ -12,7 +12,7 @@ All user and technical documentation lives in `guide/` (index: `guide/README.md`
 
 Deeper engineering docs live in `guide/technical/` — read these before making non-trivial changes, they are kept current:
 - `guide/technical/architecture.md` — runtime topologies, middleware chain, routing, persistence, portal integration, reference-data pipeline, active-chains/WS layer
-- `guide/technical/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 66 numbered decisions
+- `guide/technical/design-decisions.md` — **why** things are shaped this way (read before "fixing" something that looks odd) — 68 numbered decisions
 - `guide/technical/functionality.md` — feature/route map
 - `guide/technical/flows.md` — sequence diagrams for auth, broker return, heartbeat/upgrade, deploy
 - `guide/technical/configuration-reference.md` — full env var reference

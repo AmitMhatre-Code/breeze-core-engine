@@ -400,9 +400,13 @@ async def post_margin(
     existing_span_value: float | None = None
     netting_position_count = 0
     netting_unavailable_reason: str | None = None
+    # Loaded whether or not netting is on: the count is what tells the Basket Order
+    # page to offer its "Net against open positions" toggle -- the same position set
+    # the server nets against, so the page never has to match scrips itself.
+    stock_code = str(legs[0].get("stock_code") or "").strip()
+    position_set = positions_for_underlying(breeze, ctx.user_id, stock_code, ex0)
+    open_positions_in_underlying = len(position_set.rows) if position_set.available else None
     if body.net_against_positions:
-        stock_code = str(legs[0].get("stock_code") or "").strip()
-        position_set = positions_for_underlying(breeze, ctx.user_id, stock_code, ex0)
         if not position_set.available:
             netting_unavailable_reason = "Unable to load open positions — showing standalone margin."
         elif position_set.rows:
@@ -450,6 +454,8 @@ async def post_margin(
         # The processor may still have fallen back to ICICI (a contract or add-on the SPAN
         # file cannot price), so its own stamp wins.
         data["Success"].setdefault("margin_source", effective_margin_source)
+        if open_positions_in_underlying is not None:
+            data["Success"]["open_positions_in_underlying"] = open_positions_in_underlying
     elif data.get("Status") != 200:
         data["margin_source"] = effective_margin_source
     AuditLogger(None).log_operation(ctx.user_id, OperationType.PORTFOLIO_VIEW, "StrategyBuilderMargin")

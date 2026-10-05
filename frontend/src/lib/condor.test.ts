@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   actionTone,
-  backtestCashPnl,
   campaignForGroup,
   differenceText,
   executionDone,
@@ -68,10 +67,6 @@ describe("labels", () => {
     expect(formatInr(null)).toBe("—");
     expect(formatDelta(-0.156)).toBe("−0.16");
     expect(formatDelta(0.1)).toBe("+0.10");
-  });
-  it("adds the open campaign's cash to the closed P&L", () => {
-    expect(backtestCashPnl({ closed_pnl: 1000, open_campaign_cash: -250 })).toBe(750);
-    expect(backtestCashPnl(null)).toBeNull();
   });
 });
 

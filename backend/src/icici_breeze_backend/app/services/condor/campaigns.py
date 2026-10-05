@@ -249,6 +249,67 @@ def create(
     return repo.get_campaign(campaign.id, user_id)
 
 
+def entry_proposal(proc: Any, user_id: str, settings: CondorSettings, *, today: Optional[datetime.date] = None) -> dict[str, Any]:
+    """A first tranche at these settings, for Basket Orders to pre-fill: the expiry a new cycle
+    would use, and the four strikes the engine's own helpers pick on today's chain.
+
+    Priced on stand-ins outside market hours, like an on-demand evaluation: it is a starting
+    point the user edits and the executor re-prices, never an order."""
+    from icici_breeze_backend.app.services.condor.engine import entry_strikes
+    from icici_breeze_backend.app.services.condor.pricing import build_greeks_model
+
+    today = today or datetime.datetime.now(live.IST).date()
+    expiry = cycle_expiry(listed_expiries(proc), today, settings)
+    if expiry is None:
+        raise Refused("No listed NIFTY expiry is at or beyond the tranche cut-off.")
+    display = expiry.strftime(_FMT)
+    snap = live.snapshot(proc, user_id, display)
+    market = snap.market if snap.live else live.with_ltp_stand_ins(snap.market)
+    model = build_greeks_model(market.chain, market.spot, expiry, market.now) if market.spot else None
+    if model is None:
+        raise Refused(f"The NIFTY {display} chain has no spot or prices yet. Try again shortly.")
+    strikes = entry_strikes(model, market.strikes, settings)
+    if strikes is None:
+        raise Refused(_why_no_entry(model, market.strikes, settings, display))
+    lot = int(proc.fetch_lot_size(UNDERLYING, display, exchange_code=cfg.NFO) or 0) or None
+    return {
+        "underlying": UNDERLYING,
+        "exchange_code": cfg.NFO,
+        "expiry": display,
+        "lot_size": lot,
+        "legs": [
+            {"strike": strikes["long_put"], "right": "Put", "side": "Buy"},
+            {"strike": strikes["short_put"], "right": "Put", "side": "Sell"},
+            {"strike": strikes["short_call"], "right": "Call", "side": "Sell"},
+            {"strike": strikes["long_call"], "right": "Call", "side": "Buy"},
+        ],
+        "tranches": settings.tranches,
+        "indicative": not snap.live,
+    }
+
+
+def _why_no_entry(model: Any, strikes: list[float], settings: CondorSettings, display: str) -> str:
+    """Which strike the chain cannot supply. The usual case is a wing: only strikes ICICI lists
+    as tradeable are in the chain, and a far-dated 5-delta wing can lie beyond the furthest one.
+    Wings never snap inward (#63), so that is a refusal, not a narrower wing."""
+    from icici_breeze_backend.app.services.condor.strikes import strike_for_delta
+
+    for right in ("Put", "Call"):
+        short = strike_for_delta(model, strikes, right, settings.short_delta)
+        if short is None:
+            return f"The NIFTY {display} chain cannot price a {settings.short_delta:g} Δ {right.lower()} short yet. Try again shortly."
+        beyond = [k for k in strikes if (k < short if right == "Put" else k > short)]
+        if strike_for_delta(model, beyond, right, settings.wing_delta, outward=True) is None:
+            far = min(beyond) if right == "Put" else max(beyond) if beyond else None
+            d = model.delta(right, far) if far else None
+            where = f" The furthest listed {right.lower()}, {far:g}, is Δ {abs(d):.2f}." if far and d is not None else ""
+            return (
+                f"No listed NIFTY {display} {right.lower()} is as far out as the {settings.wing_delta:g} Δ wing.{where} "
+                "Choose a nearer expiry, or a larger Wing Δ in the bot's settings."
+            )
+    return f"The NIFTY {display} chain cannot place the entry strikes right now. Try again shortly."
+
+
 def assign(proc: Any, campaign: repo.Campaign, strike: float, right: str, price: float) -> int:
     """Book the broker/ledger difference on one contract into the ledger at `price`."""
     cycle = campaign.cycle

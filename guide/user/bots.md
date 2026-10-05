@@ -1,6 +1,6 @@
 # Bots
 
-Bots are automated strategies that scan, size and place trades on your behalf, within limits you set. There are six. Each can ask your approval or trade on its own, all but the Dynamic Iron Condor can also be run by hand, and every decision it makes, including every decision not to trade, is logged.
+Bots are automated strategies that scan, size and place trades on your behalf, within limits you set. There are six. Each can ask your approval or trade on its own, each can also be run by hand, and every decision it makes, including every decision not to trade, is logged.
 
 ![The Bots page](images/dark/bots.png)
 
@@ -25,7 +25,7 @@ The Long Scalper, CAS Bingo's spreads and (optionally) the Iron Fly read a [sign
 | Part | What it shows or does |
 |---|---|
 | **Priority N** | The bot's place in the queue. Lower runs first and sizes against your margin before the others, so two bots never commit the same margin. Click it to pick a slot; taking a slot that another bot holds swaps the two. |
-| Play icon | **Start a run** now, by hand (Holdings Writer, Expiry Writer, CAS Bingo). Opens the run sheet. |
+| Play icon | **Start a run** now, by hand (Holdings Writer, Expiry Writer, CAS Bingo). Opens the run sheet. On the Dynamic Iron Condor it opens [Basket Order](basket-order.md#managing-it-as-a-dynamic-iron-condor-campaign) with a first tranche filled in, to start a campaign of your own. |
 | History icon | **Backtest** this bot. See [Backtesting a bot](#backtesting-a-bot). |
 | Gear icon | Opens the bot's settings. |
 | Status | **Idle** (not armed), **Armed**, or **Closing** (switched off with a real position still open, which it manages to its exit). A pill reads **Asks first** or **Simulation** when the bot is armed but cannot reach the exchange on its own. |
@@ -181,21 +181,23 @@ Runs an [Iron Condor campaign](iron-condors.md) for you. It uses the same rules,
 | Mode | What it does | Unlocks when |
 |---|---|---|
 | **Off** | Decides nothing. A live campaign it was running is handed back to you, legs open, and its card on Portfolio becomes yours. | Always |
-| **Paper** | Acts at every check on a **paper campaign**, filling at the live bid or ask plus the paper slippage, with charges. Nothing is placed. A paper campaign's card is on the [Iron Condors](iron-condors.md) page. | A **completed** Iron Condor backtest of exactly these settings and exit action exists. **Backtest these settings** on the card starts one. |
+| **Paper** | Acts at every check on a **paper campaign**, filling at the live bid or ask plus the paper slippage, with charges. Nothing is placed. Click the card's **Campaign** figure to open the paper campaign's card. | A **completed** backtest of exactly these settings and exit action exists. The history icon on the card starts one. |
 | **Telegram** | Sends each action to Telegram with **Approve all** / **Reject**. A tap places it, wings first; nothing is placed if you do not answer within the approval window. | One paper cycle has finished on these settings. |
 | **Auto** | Places each action itself, wings first. | A paper cycle has finished **and** at least one Telegram-approved ticket has executed, both on these settings. |
 
 **What counts as evidence.** A backtest, a paper cycle or an approval counts only for the exact settings and exit action it was earned on, **under the rules of the app version that earned it**. Changing back to settings you used before brings their old evidence back, however long ago it was earned. But a release that changes how the rules behave starts every bot over from a fresh backtest; its release notes will say so.
 
-The settings (gear icon) are the [campaign settings](iron-condors.md#settings), plus:
+When it is armed but has no campaign yet, the line under its status says when it will open one, or **Waiting:** and why, for example when another campaign already manages the expiry it would use (see [Several campaigns](iron-condors.md#several-campaigns)). Its card shows the **Campaign** it is running (**paper** or **live**, with its expiry; a live one links to Portfolio), **Paper cycles · approved** (the evidence behind the modes) and **Last backtest**. The play icon starts a campaign of your own instead (see [Starting a campaign](iron-condors.md#starting-a-campaign)); the bot never acts on it unless you [hand it to the bot](iron-condors.md#handing-a-campaign-to-the-bot) later.
+
+The settings (gear icon) are the [campaign settings](iron-condors.md#settings) on the **Cycle**, **Strikes**, **Rolls** and **Risk** tabs, plus on the **Bot** tab:
 
 | Setting | What it does |
 |---|---|
-| **At exit DTE** | **Time-roll** closes the cycle and opens the next in one ticket; **Close** ends the campaign and the bot starts a new one when the next cycle's tranche is due. |
+| **At the exit DTE** | **Time-roll** closes the cycle and opens the next in one ticket; **Close** ends the campaign and the bot starts a new one when the next cycle's tranche is due. |
 | **Lots per tranche** | Blank sizes each tranche from today's margin (the ceiling over the number of tranches, divided by one lot's margin). Entries then shrink to what the order book can take, or are skipped. |
 | **Approval window** | How long a Telegram proposal stays valid (default 15 minutes). |
 
-Changing any setting needs a new backtest before the bot can be switched on again, and hands its current campaign back to you (a paper one simply ends).
+Changing any setting needs a new backtest before the bot can be switched on again, and hands its current campaign back to you (a paper one simply ends). The settings cannot be changed while the bot is on: switch it off, save, backtest, then switch it back on.
 
 **You always win.** If you execute a ticket on the bot's campaign, or stop managing it, the bot **pauses**: it decides nothing until you press **Resume** on its card, so it never undoes your change at its next check. In [read-only mode](read-only-mode.md) it still closes, but opens nothing.
 
@@ -236,4 +238,4 @@ The history icon on a card opens **Backtest**, which replays the bot's **saved**
 
 For bots that read a signal, the backtest replays **every signal setting side by side** (for example the Long Scalper twelve ways: two mechanisms × three durations × follow or fade), in a table of **Signal setting**, **Trades**, **Win rate**, **Net P&L**, **Max drawdown** and **Worst day**, with your saved setting marked. Each run also has a trade list (**Download trades CSV**) and a cumulative P&L chart.
 
-The Holdings Option Writer has no backtest yet. See [Backtests](backtests.md) for how history is fetched, what the results mean and what backtests cannot tell you.
+A Dynamic Iron Condor backtest lists campaigns rather than trades (see [Backtest the rules](iron-condors.md#backtest-the-rules)). The Holdings Option Writer has no backtest yet. See [Backtests](backtests.md) for how history is fetched, what the results mean and what backtests cannot tell you.

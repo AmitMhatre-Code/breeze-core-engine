@@ -316,63 +316,11 @@ export function useCloseCampaign(id: string) {
   });
 }
 
-// ---- backtests --------------------------------------------------------------------------
+// ---- defaults and the bot's entry (#67) --------------------------------------------------
 
+/** Backtests run from the bot card's clock and land in Activity, like every bot's (#67); only
+ *  the default settings a new campaign's form starts from are read from here. */
 export type CondorBacktestDefaults = { settings: CondorSettings; history_start: string; live: boolean };
-
-export type CondorBacktestCampaignRow = {
-  started: string;
-  ended: string | null;
-  end_reason: string | null;
-  pnl: number;
-  charges: number;
-  worst_pnl_at_check: number;
-  cycles: { expiry: string; opened: string | null; closed: string | null; close_reason: string | null; tranches: number; rolls: number }[];
-};
-
-export type CondorBacktestSummary = {
-  complete?: boolean;
-  checks?: number;
-  checks_replayed?: number;
-  lots_per_tranche?: number | null;
-  exit_action?: string;
-  closed_pnl?: number;
-  open_campaign_cash?: number | null;
-  campaigns?: CondorBacktestCampaignRow[];
-  campaigns_finished?: number;
-  wins?: number;
-  losses?: number;
-  worst_campaign_pnl?: number | null;
-  best_campaign_pnl?: number | null;
-  max_drawdown?: number;
-  charges?: number;
-  rolls?: number;
-  skipped?: Record<string, number>;
-  spread_model?: string;
-  notes?: string[];
-  calls?: number;
-};
-
-export type CondorBacktestRun = {
-  id: string;
-  created_at: string;
-  status: "running" | "completed" | "partial" | "failed" | string;
-  params: {
-    from: string;
-    to: string;
-    exit_action: string;
-    lots_per_tranche: number | null;
-    settings: CondorSettings;
-  };
-  summary: CondorBacktestSummary | null;
-  error: string | null;
-  trades?: Record<string, unknown>[];
-};
-
-export function backtestCashPnl(s: CondorBacktestSummary | null | undefined): number | null {
-  if (!s) return null;
-  return (s.closed_pnl ?? 0) + (s.open_campaign_cash ?? 0);
-}
 
 export function useCondorBacktestDefaults() {
   return useQuery({
@@ -382,33 +330,62 @@ export function useCondorBacktestDefaults() {
   });
 }
 
-export function useCondorBacktestRuns(running: boolean) {
-  return useQuery({
-    queryKey: ["condor", "backtest", "runs"],
-    queryFn: ({ signal }) => apiClient.get<{ runs: CondorBacktestRun[] }>("/api/condor/backtest/runs", signal),
-    refetchInterval: running ? 5_000 : 60_000,
-  });
-}
+/** The bot card's play button: a first tranche at the bot's saved settings, which Basket
+ *  Orders loads when opened with `?condor=1`. */
+export type CondorEntry = {
+  underlying: "NIFTY";
+  exchange_code: "NFO";
+  expiry: string;
+  lot_size: number | null;
+  legs: { strike: number; right: "Call" | "Put"; side: "Buy" | "Sell" }[];
+  tranches: number;
+  lots: number;
+  sizing: string;
+  indicative: boolean;
+};
 
-export function useCondorBacktestRun(id: string | null) {
-  return useQuery({
-    queryKey: ["condor", "backtest", "run", id],
-    queryFn: ({ signal }) => apiClient.get<CondorBacktestRun>(`/api/condor/backtest/run?id=${encodeURIComponent(id ?? "")}`, signal),
-    enabled: Boolean(id),
-  });
-}
+export const fetchCondorEntry = () => apiClient.get<CondorEntry>("/api/condor/bot/entry");
 
-export function useStartCondorBacktest() {
+/** Basket Orders' "Manage as a Dynamic Iron Condor campaign": a new campaign on the bot's saved
+ *  settings whose first tranche is the basket, placed by the campaign executor. */
+export function useOpenCampaign() {
   const done = useCondorInvalidate();
   return useMutation({
-    mutationFn: (body: {
-      settings: CondorSettings;
-      from_date: string;
-      to_date: string;
-      exit_action: "time_roll" | "close";
-      lots_per_tranche?: number | null;
-    }) => apiClient.post("/api/condor/backtest/start", body),
+    mutationFn: (body: { expiry: string; orders: TicketRow[]; note?: string }) =>
+      apiClient.post<{ campaign: CondorCampaign; execution: CondorExecution }>("/api/condor/campaigns/open", body),
     onSuccess: done,
+  });
+}
+
+/** Handing a manual campaign to the bot (#68): what it would change, and what still stops it. */
+export type CondorHandover = {
+  allowed: boolean;
+  blockers: string[];
+  mode: "off" | "paper" | "telegram" | "auto";
+  settings_changes: { field: keyof CondorSettings; campaign: unknown; bot: unknown }[];
+  tranches_entered: number;
+  tranches_remaining: number;
+  sizing: string;
+  decision: CondorDecision | null;
+  indicative: boolean;
+};
+
+export function useHandoverPreview(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["condor", "handover", id],
+    queryFn: ({ signal }) => apiClient.get<CondorHandover>(`/api/condor/campaigns/${id}/handover`, signal),
+    enabled,
+  });
+}
+
+export function useHandOver(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.post<CondorCampaign>(`/api/condor/campaigns/${id}/handover`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["condor"] });
+      void qc.invalidateQueries({ queryKey: ["bots"] });
+    },
   });
 }
 

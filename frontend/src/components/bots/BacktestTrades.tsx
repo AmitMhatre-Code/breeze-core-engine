@@ -70,6 +70,16 @@ const COLUMNS: Record<BacktestBot, Column[]> = {
     { key: "premium", label: "Net premium", align: "right", render: (t) => price(t.net_entry_per_unit) },
     { key: "why", label: "Exit", render: (t) => `${exitLabel(t.exit_reason)} ${time(t.exited_at).slice(11)}` },
   ],
+  // One row per campaign: it can span several cycles, each with its tranches and rolls (#67).
+  condor: [
+    { key: "in", label: "Started", render: (t) => time(t.entered_at) },
+    { key: "out", label: "Ended", render: (t) => (t.exited_at ? time(t.exited_at) : "open") },
+    { key: "cycles", label: "Cycles", render: (t) => String(t.cycles ?? "") },
+    { key: "tranches", label: "Tranches", align: "right", render: (t) => String(t.tranches ?? 0) },
+    { key: "rolls", label: "Rolls", align: "right", render: (t) => String(t.rolls ?? 0) },
+    { key: "worst", label: "Worst at a check", align: "right", render: (t) => inr(num(t.worst_pnl_at_check)) },
+    { key: "why", label: "Ended by", render: (t) => exitLabel(t.exit_reason) },
+  ],
 };
 
 /** Every signal setting the bot could trade, side by side (docs/signals-streamline-plan.md 8).

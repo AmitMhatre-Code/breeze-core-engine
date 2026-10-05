@@ -99,10 +99,11 @@ export function ScenarioGreeksLine({
 export function DeltaHelp() {
   return (
     <>
-      Position delta: how many units of the underlying this leg behaves like right now —
-      option delta × quantity, negative when sold. Legs add up exactly to Net Δ. Priced off
-      the forward implied by the chain (put-call parity), each strike&apos;s own IV and the
-      time left to the 15:30 close on expiry day. Hover a value for its breakdown.
+      Delta: roughly how many rupees this leg makes or loses when the underlying moves 1
+      point. +40 means it gains about ₹40 for each point up and loses about ₹40 for each
+      point down; −40 is the reverse. Near zero, small moves barely touch it. Net Δ is all
+      the legs added together. It shifts as prices move, fastest close to expiry. Hover a
+      number to see how it was worked out.
     </>
   );
 }

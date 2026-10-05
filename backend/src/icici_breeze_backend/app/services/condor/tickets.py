@@ -147,6 +147,20 @@ def target_position(ctx: Ctx, orders: list[OrderLeg]) -> dict[Optional[datetime.
 # --------------------------------------------------------------------------------------
 
 
+def refuse_owned_expiry(campaign: repo.Campaign, expiry_display: str) -> None:
+    """One live campaign per NIFTY expiry (#67, the user's rule): a ticket may not open legs on
+    an expiry another live campaign manages, because the broker nets the two into one position
+    no ledger can split. Paper campaigns hold nothing at the broker and are never refused."""
+    if campaign.mode != "live":
+        return
+    owner = repo.active_owner(campaign.user_id, campaign.underlying, expiry_display)
+    if owner and owner != campaign.id:
+        raise Refused(
+            f"NIFTY {expiry_display} is already managed by another campaign, and an expiry can have only one. "
+            "Close this cycle instead (Close all), or close the other campaign first."
+        )
+
+
 def _close(legs: Iterable[Leg]) -> list[OrderLeg]:
     return order_ops.diff_orders(order_ops.net_position(legs), {})
 
@@ -219,6 +233,7 @@ def template(proc: Any, campaign: repo.Campaign, kind: str, params: Optional[dic
         nxt = cycle_expiry(later, datetime.datetime.now(live.IST).date(), campaign.settings)
         if nxt is None:
             raise Refused("No later NIFTY expiry qualifies for the next cycle.")
+        refuse_owned_expiry(campaign, nxt.strftime(_FMT))
         snap2 = live.snapshot(proc, campaign.user_id, nxt.strftime(_FMT))
         m2 = snap2.market if snap2.live else live.with_ltp_stand_ins(snap2.market)
         model2 = build_greeks_model(m2.chain, m2.spot, nxt, m2.now) if m2.spot else None

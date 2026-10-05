@@ -74,7 +74,13 @@ def _step(i: int, o: OrderLeg, cycle_expiry: str) -> dict[str, Any]:
 def plan(proc: Any, campaign: repo.Campaign, raw: list[dict[str, Any]]) -> tuple[list[OrderLeg], tickets.Ctx]:
     """The canonical, sequenced orders a ticket executes as, or Refused."""
     ctx = tickets.context(proc, campaign)
-    return _plan(ctx, raw)
+    sequenced, ctx = _plan(ctx, raw)
+    # A row on another expiry (a time roll's second half, or one typed in) must not land on an
+    # expiry another campaign manages; re-checked here because a ticket can be edited, or
+    # approved on Telegram after another campaign took that expiry.
+    for exp in sorted({o.expiry for o in sequenced if o.expiry}):
+        tickets.refuse_owned_expiry(campaign, exp.strftime(_FMT))
+    return sequenced, ctx
 
 
 def _plan(ctx: "tickets.Ctx", raw: list[dict[str, Any]]) -> tuple[list[OrderLeg], "tickets.Ctx"]:
@@ -132,6 +138,54 @@ def start(
 
     run(target)
     return repo.get_execution(eid, campaign.id) or {"id": eid}
+
+
+def open_campaign(
+    proc: Any,
+    user_id: str,
+    settings: Any,
+    expiry: str,
+    raw: list[dict[str, Any]],
+    *,
+    note: Optional[str] = None,
+    run: Optional[Callable[[Callable[[], None]], None]] = None,
+) -> tuple[repo.Campaign, dict[str, Any]]:
+    """A new manual campaign whose first tranche is these orders (Basket Orders, #67).
+
+    The campaign exists before the first order so every fill is booked to its ledger as it
+    lands, wings first; anything that refuses the ticket refuses the campaign too and leaves
+    nothing behind. The group must be flat: legs already held on this expiry belong to no
+    ledger, and the way to bring them in is Portfolio's adopt."""
+    if campaigns.parse_expiry(expiry) is None:
+        raise Refused(f"'{expiry}' is not a DD-Mon-YYYY expiry.")
+    if campaigns._sg_armed(user_id, expiry):  # noqa: SLF001
+        raise Refused(
+            f"A PB/SL rule is armed on NIFTY {expiry}. A campaign has its own max-loss; disarm the rule first."
+        )
+    held = campaigns.broker_position(proc, user_id, expiry)
+    if held is None:
+        raise Refused("Positions could not be read from the broker, so nothing was placed. Try again.")
+    if held:
+        raise Refused(
+            f"NIFTY {expiry} already holds legs. Place this basket without the campaign and adopt the whole "
+            "group from its Portfolio row, or choose another expiry."
+        )
+    try:
+        campaign = repo.create_campaign(user_id, settings, expiry=expiry)
+    except repo.GroupTaken as e:
+        raise Refused(str(e)) from e
+    try:
+        sequenced, _ = plan(proc, campaign, raw)
+        if any(not o.opening for o in sequenced):
+            raise Refused("A new campaign's first ticket can only open legs.")
+        warnings = tickets.preview(proc, campaign, raw, "add_tranche", with_margin=False)["warnings"]
+        execution = start(
+            proc, campaign, raw, kind="add_tranche", note=note, warnings=warnings, **({"run": run} if run else {}),
+        )
+    except Exception:
+        repo.delete_unopened(campaign.id, user_id)
+        raise
+    return campaign, execution
 
 
 def _alert(campaign: repo.Campaign, text: str) -> None:

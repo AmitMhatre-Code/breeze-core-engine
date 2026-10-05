@@ -147,8 +147,9 @@ def guard(user_id: str, *, after_enabled: bool, after_config: dict[str, Any]) ->
     e = eligibility(user_id, cfg)
     if e.backtest is None:
         raise Refused(
-            "Run a backtest of exactly these settings (Iron Condors → Backtest the rules) and let it complete "
-            "before switching the bot on. Changing any setting needs a new backtest."
+            "These settings have no completed backtest. With the bot off, save them, run a backtest with the "
+            "clock on the bot's card and let it complete, then switch the bot on. Changing any setting needs a "
+            "new backtest."
         )
     if cfg.mode == "telegram" and e.paper_cycles < 1:
         raise Refused("Telegram approval unlocks after one full paper cycle on these settings.")
@@ -187,6 +188,77 @@ def on_config_change(user_id: str, *, before: dict[str, Any], after: dict[str, A
         release(camp, "settings_changed")
 
 
+# --------------------------------------------------------------------------------------
+# Handing a manual campaign to the bot (#68)
+# --------------------------------------------------------------------------------------
+
+
+def _settings_diff(before: Any, after: Any) -> list[dict[str, Any]]:
+    a, b = before.model_dump(mode="json"), after.model_dump(mode="json")
+    return [{"field": k, "campaign": a.get(k), "bot": b.get(k)} for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
+
+
+def handover_preview(proc: Any, campaign: repo.Campaign) -> dict[str, Any]:
+    """What handing this campaign to the bot would change, and why it cannot happen yet.
+
+    Every refusal is listed, not just the first, so the user sees everything to fix at once.
+    The decision is the engine's answer under the **bot's** settings now, because those are
+    what it will run on: it can differ from the card's (an immediate roll, a tranche due)."""
+    record = _bots_repo().get_or_create_bot(campaign.user_id, BOT)
+    cfg = config_of(record.config)
+    blockers: list[str] = []
+    if campaign.status != "active" or campaign.origin != "manual" or campaign.mode != "live":
+        blockers.append("Only an active campaign of your own, on real positions, can be handed to the bot.")
+    if not record.enabled or cfg.mode == "paper":
+        blockers.append(
+            "Switch the bot on in Telegram or Auto mode first. In Paper mode it only simulates, so it cannot "
+            "manage real positions."
+        )
+    elif cfg.paused:
+        blockers.append(f"The bot is paused ({cfg.paused_reason or 'by you'}). Resume it on its card first.")
+    own = repo.bot_campaign(campaign.user_id)
+    if own is not None and own.id != campaign.id:
+        expiry = own.cycle.expiry if own.cycle else "—"
+        blockers.append(f"The bot already runs a campaign (NIFTY {expiry}, {own.mode}); it runs one at a time.")
+    if repo.running_execution(campaign.id):
+        blockers.append("A ticket is executing on this campaign. Wait for it to finish.")
+    as_bot = dataclasses.replace(campaign, settings=cfg.campaign)
+    ev = campaigns.evaluate(proc, as_bot, "on_demand")
+    if any(not d.get("left_out") for d in ev.get("differences") or []):
+        blockers.append("The broker's position differs from the campaign's ledger. Assign or leave out each difference first.")
+    cycle = campaign.cycle
+    entered = cycle.tranches_entered if cycle else 0
+    remaining = max(0, cfg.campaign.tranches - entered)
+    sizing = (
+        f"{cfg.lots_per_tranche} lot(s) each, the bot's lots per tranche" if cfg.lots_per_tranche
+        else "each sized from that day's margin: the ceiling over the tranches"
+    )
+    return {
+        "allowed": not blockers,
+        "blockers": blockers,
+        "mode": cfg.mode if record.enabled else "off",
+        "settings_changes": _settings_diff(campaign.settings, cfg.campaign),
+        "tranches_entered": entered,
+        "tranches_remaining": remaining,
+        "sizing": f"{remaining} more tranche(s), {sizing}." if remaining else "No tranches left to enter.",
+        "decision": ev.get("decision"),
+        "indicative": ev.get("indicative", False),
+    }
+
+
+def hand_over(proc: Any, campaign: repo.Campaign) -> repo.Campaign:
+    """Make a manual campaign the bot's, re-checking everything the preview checked."""
+    preview = handover_preview(proc, campaign)
+    if not preview["allowed"]:
+        raise Refused(" ".join(preview["blockers"]))
+    cfg = config_of(_bots_repo().get_or_create_bot(campaign.user_id, BOT).config)
+    if not repo.hand_to_bot(campaign.id, campaign.user_id, cfg.campaign, f"bot:{hash_of(cfg)}"):
+        raise Refused("The campaign changed while it was being handed over. Reload and try again.")
+    expiry = campaign.cycle.expiry if campaign.cycle else "—"
+    _notify(campaign.user_id, f"You handed the NIFTY {expiry} campaign to the bot. It manages it from the next check, in {cfg.mode} mode.")
+    return repo.get_campaign(campaign.id, campaign.user_id)
+
+
 def pause(user_id: str, reason: str) -> None:
     bots_repo = _bots_repo()
     record = bots_repo.get_or_create_bot(user_id, BOT)
@@ -194,6 +266,26 @@ def pause(user_id: str, reason: str) -> None:
         return
     bots_repo.update_bot(user_id, BOT, config={"paused": True, "paused_reason": reason})
     _notify(user_id, f"Paused: {reason} It decides nothing until you resume it on its card.")
+
+
+def waiting_reason(proc: Any, user_id: str, cfg: DynamicCondorBotConfig, today: datetime.date) -> tuple[Optional[str], Optional[str]]:
+    """(the expiry a new bot campaign would use, why it cannot open there yet). A live bot never
+    shares an expiry with another campaign (#67): it waits, and says so, rather than skip."""
+    expiry = cycle_expiry(campaigns.listed_expiries(proc), today, cfg.campaign)
+    if expiry is None:
+        return None, "No listed NIFTY expiry is at or beyond the tranche cut-off yet."
+    display = expiry.strftime(_FMT)
+    if cfg.mode == "paper":
+        return display, None
+    if repo.active_owner(user_id, "NIFTY", display):
+        return display, f"NIFTY {display} is managed by another campaign; the bot opens its own once that one closes."
+    if campaigns._sg_armed(user_id, display):  # noqa: SLF001
+        return display, f"A PB/SL rule is armed on NIFTY {display}; the bot opens its campaign once it is disarmed."
+    return display, None
+
+
+# (user, expiry, reason) already told on Telegram, so a check every minute does not repeat it.
+_waiting_told: set[tuple[str, str, str]] = set()
 
 
 def ensure_campaign(proc: Any, user_id: str, record: Any, today: datetime.date) -> Optional[repo.Campaign]:
@@ -204,13 +296,16 @@ def ensure_campaign(proc: Any, user_id: str, record: Any, today: datetime.date) 
     camp = repo.bot_campaign(user_id)
     if camp is not None:
         return camp
-    expiry = cycle_expiry(campaigns.listed_expiries(proc), today, cfg.campaign)
-    if expiry is None:
+    display, why = waiting_reason(proc, user_id, cfg, today)
+    if display is None:
+        return None
+    if why:
+        key = (user_id, display, why)
+        if key not in _waiting_told:
+            _waiting_told.add(key)
+            _notify(user_id, f"Waiting: {why}")
         return None
     mode = "paper" if cfg.mode == "paper" else "live"
-    display = expiry.strftime(_FMT)
-    if mode == "live" and campaigns._sg_armed(user_id, display):  # noqa: SLF001
-        return None
     try:
         return repo.create_campaign(user_id, cfg.campaign, expiry=display, origin="bot", mode=mode, note=f"bot:{hash_of(cfg)}")
     except repo.GroupTaken:

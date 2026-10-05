@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
@@ -9,6 +9,9 @@ import { Modal } from "@/components/ui/Modal";
 import { RevokedTradingPageGuard } from "@/components/license/RevokedTradingPageGuard";
 import { BasketLegsPanel } from "@/components/basket-order/BasketLegsPanel";
 import { BasketPayoffPanel } from "@/components/basket-order/BasketPayoffPanel";
+import { CondorCampaignDialog } from "@/components/basket-order/CondorCampaignDialog";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { fetchCondorEntry, type CondorEntry, type TicketRow } from "@/lib/condor";
 import { netPremiumOfPricedLegs } from "@/lib/strategy-builder/leg-quote";
 import { OptionChainUnderlyingSearch } from "@/components/shared/order/OptionChainUnderlyingSearch";
 import {
@@ -105,6 +108,9 @@ export default function BasketOrderPage() {
   const [scaleMarginLakh, setScaleMarginLakh] = useState("");
   const [scalePremiumRupees, setScalePremiumRupees] = useState("");
   const [scaleIncludeElm, setScaleIncludeElm] = useState(true);
+  // Net margin against open positions in the underlying. Only offered once a
+  // calculation shows there are some; on by default.
+  const [netAgainstPositions, setNetAgainstPositions] = useState(true);
   const [scaling, setScaling] = useState(false);
   const [scaleWarning, setScaleWarning] = useState<string | null>(null);
   const [ivShockPct, setIvShockPct] = useState(0);
@@ -117,6 +123,16 @@ export default function BasketOrderPage() {
     stockCode: string;
     expiryDate: string;
   } | null>(null);
+
+  /** "Manage as a Dynamic Iron Condor campaign" (#67): Execute then opens a campaign whose
+   *  first tranche is this basket, placed by the campaign executor. NIFTY on NFO only. */
+  const [asCampaign, setAsCampaign] = useState(false);
+  const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
+  /** The condor bot card's play button lands here with `?condor=1`: the bot's first tranche,
+   *  applied once the chain for its expiry has loaded so every leg is priced from it. */
+  const [condorEntry, setCondorEntry] = useState<CondorEntry | null>(null);
+  const [condorNote, setCondorNote] = useState<string | null>(null);
+  const [condorError, setCondorError] = useState<string | null>(null);
 
   const resetBasket = useCallback(() => {
     setLegs([]);
@@ -335,6 +351,7 @@ export default function BasketOrderPage() {
     expiryDate,
     spot,
     marginScope: "app",
+    netAgainstPositions,
   });
 
   // Unpriced legs are left out, not counted at ₹0 (B-57); the panel says so.
@@ -447,6 +464,7 @@ export default function BasketOrderPage() {
           lotSize,
           spot,
           marginScope: "app",
+          netAgainstPositions,
         });
         if (scaleIncludeElm && data.elmRequirement == null) elmUnavailable = true;
         return (
@@ -501,6 +519,7 @@ export default function BasketOrderPage() {
     scaleMarginLakh,
     baseNetDebit,
     scaleIncludeElm,
+    netAgainstPositions,
     legs,
     stockCode,
     segmentExchange,
@@ -565,6 +584,65 @@ export default function BasketOrderPage() {
     });
   }, [stockCode, expiryDate, legs, strikeSet]);
 
+  // Read once on arrival. `window.location` rather than `useSearchParams`, which would need a
+  // Suspense boundary around the whole page for one optional flag.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("condor") !== "1") return;
+    let cancelled = false;
+    fetchCondorEntry()
+      .then((entry) => {
+        if (cancelled) return;
+        setSegmentExchange("NFO");
+        setStockCode(entry.underlying);
+        setExpiryDate(entry.expiry);
+        setLegs([]);
+        setAsCampaign(true);
+        setCondorEntry(entry);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setCondorError(err instanceof Error ? err.message : "Could not load the bot's entry.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!condorEntry || !section2Ready || stockCode !== condorEntry.underlying || expiryDate !== condorEntry.expiry) return;
+    setLegs(
+      condorEntry.legs.map((l, i) => ({
+        id: `condor-${Date.now()}-${i}`,
+        right: l.right,
+        side: l.side,
+        strike: l.strike,
+        lots: condorEntry.lots,
+        premiumPerUnit: premiumFromChainRow(chainSuccess?.chain_rows ?? [], l.strike, l.right) ?? undefined,
+      })),
+    );
+    setStrikePendingIds(new Set());
+    setCondorNote(
+      `Tranche 1 of ${condorEntry.tranches} at the Dynamic Iron Condor bot's settings: ${condorEntry.lots} lot(s), ${condorEntry.sizing}.` +
+        (condorEntry.indicative ? " Strikes were picked on last-traded prices, not a live book." : "") +
+        " Edit anything before you execute.",
+    );
+    setCondorEntry(null);
+  }, [condorEntry, section2Ready, stockCode, expiryDate, chainSuccess]);
+
+  const campaignAvailable = segmentExchange === "NFO" && stockCode === "NIFTY";
+  const campaignOrders = useMemo<TicketRow[]>(
+    () =>
+      legs
+        .filter((l) => l.lots > 0)
+        .map((l) => ({
+          action: l.side,
+          strike: l.strike,
+          right: l.right,
+          quantity: Math.round(l.lots * lotSize),
+          expiry: null,
+        })),
+    [legs, lotSize],
+  );
+
   const onSegmentChange = (ex: "NFO" | "BFO") => {
     setSegmentExchange(ex);
     setStockCode("");
@@ -611,6 +689,17 @@ export default function BasketOrderPage() {
               />
             ) : null}
           </header>
+
+          {condorNote || condorError ? (
+            <p
+              className={`rounded-[10px] border p-3 text-sm ${
+                condorError ? "border-down/30 bg-down-tint text-text" : "border-border bg-panel2 text-muted"
+              }`}
+              role={condorError ? "alert" : "status"}
+            >
+              {condorError ?? condorNote}
+            </p>
+          ) : null}
 
           <section className="relative z-20 divide-y divide-border-soft rounded-[14px] border border-border bg-panel">
             <div className="space-y-4 p-5">
@@ -686,7 +775,13 @@ export default function BasketOrderPage() {
                   legBuySellRatios={legBuySellRatios}
                   totalsNetPremium={totalsNetPremium}
                   totalsMargin={marginCalc.totalsMargin}
-                  onExecute={() => setExecutePreviewOpen(true)}
+                  netAgainstPositions={netAgainstPositions}
+                  onNetAgainstPositionsChange={setNetAgainstPositions}
+                  onExecute={() =>
+                    asCampaign && campaignAvailable
+                      ? setCampaignDialogOpen(true)
+                      : setExecutePreviewOpen(true)
+                  }
                   executeDisabled={executeDisabled}
                   addLegDisabled={!section2Ready}
                   marginError={marginCalc.error}
@@ -713,9 +808,29 @@ export default function BasketOrderPage() {
                 />
                 <AggressiveModeControl
                   controls={aggressiveControls}
-                  visible={anyAggressiveLeg}
+                  visible={anyAggressiveLeg && !(asCampaign && campaignAvailable)}
                   className="mt-3"
                 />
+                {campaignAvailable ? (
+                  <label className="mx-5 mb-5 mt-3 flex items-start gap-2.5 rounded-lg border border-border p-3">
+                    <Checkbox
+                      checked={asCampaign}
+                      onChange={setAsCampaign}
+                      aria-label="Manage as a Dynamic Iron Condor campaign"
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-body font-semibold text-text">
+                        Manage as a Dynamic Iron Condor campaign
+                      </span>
+                      <span className="mt-0.5 block text-hint text-faint">
+                        Execute opens a campaign on the Dynamic Iron Condor bot&rsquo;s settings with this basket as
+                        its first tranche, placed one order at a time, wings first, at the live bid or ask. Its card on
+                        Portfolio then suggests the other tranches, rolls and the exit.
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
               </div>
 
               <BasketPayoffPanel
@@ -755,6 +870,13 @@ export default function BasketOrderPage() {
             defaultsQuery: chunkDefaultsQ,
             chunkReady,
           }}
+        />
+
+        <CondorCampaignDialog
+          open={campaignDialogOpen}
+          onClose={() => setCampaignDialogOpen(false)}
+          expiry={expiryDate}
+          orders={campaignOrders}
         />
 
         <Modal

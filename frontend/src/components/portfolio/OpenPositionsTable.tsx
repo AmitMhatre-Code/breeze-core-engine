@@ -1807,7 +1807,7 @@ export function OpenPositionsTable({
                   </th>
                   <th
                     className={`${thBase} text-right`}
-                    title="Delta in units of the underlying: per leg, option delta × quantity (negative when sold); on the group row, the exact sum over its open legs. Hover a value for its breakdown."
+                    title="Delta: roughly how many rupees this makes or loses when the underlying moves 1 point (+40 gains about ₹40 per point up, −40 per point down). The group row adds up its open legs. Hover a number to see how it was worked out."
                   >
                     Δ
                   </th>
@@ -1890,7 +1890,7 @@ export function OpenPositionsTable({
                   </th>
                   <th
                     className={`${thBase} text-right`}
-                    title="Delta in units of the underlying: option delta × quantity, negative when sold. Hover a value for its breakdown."
+                    title="Delta: roughly how many rupees this leg makes or loses when the underlying moves 1 point (+40 gains about ₹40 per point up, −40 per point down). Hover a number to see how it was worked out."
                   >
                     Δ
                   </th>

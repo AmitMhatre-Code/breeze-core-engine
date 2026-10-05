@@ -1,6 +1,6 @@
 # Dynamic Iron Condors — campaigns, Portfolio manager, backtest, bot
 
-Status: **all five steps built** (2026-10-03, uncommitted): engine (#63); backtest, campaigns, scheduled checks, Portfolio card, Iron Condors page (#64); executor and Adjust ticket (#65); the bot with its paper → Telegram → auto gates (#66). Not yet proven against the live broker. Every decision in §1 was put to the user and
+Status: **all five steps built** (2026-10-03, uncommitted): engine (#63); backtest, campaigns, scheduled checks, Portfolio card, Iron Condors page (#64; the page was later folded into the bot card and Basket Orders, #67); executor and Adjust ticket (#65); the bot with its paper → Telegram → auto gates (#66). Not yet proven against the live broker. Every decision in §1 was put to the user and
 answered on 2026-10-02; nothing in it is an assumption. Source material: the user's Gemini
 conversation (https://share.gemini.google/tcD1MjXdC38s), read in full, 16 turns.
 

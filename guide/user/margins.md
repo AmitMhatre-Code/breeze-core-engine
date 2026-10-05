@@ -40,7 +40,7 @@ Because it is an estimate on top of ICICI's figure, the app always shows it sepa
 ## Why figures can differ from ICICI's screens
 
 - **Timing.** SPAN files are republished during the day and ICICI moves to the next day's file the evening before. The app loads them seven times a day (see [Reference Data Loads](settings-automation.md#daily-schedule)), so just after a new file appears the two can differ.
-- **Netting.** Proposed trades are shown as the **extra** margin they need on top of your existing positions in the same underlying. A figure for the position on its own would be higher.
+- **Netting.** Proposed trades in Strategy Builder and baskets in Basket Order are shown as the **extra** margin they need on top of your existing option positions in the same underlying. If those positions are hedged by the new trade, a figure for the trade on its own would be higher.
 - **Upstreamed margin.** ICICI's margin API does not always report the amount it has passed on to the exchange, so the Dashboard, Portfolio and Performance figures can be slightly lower than ICICI's own. The **i** icon next to those figures says so.
 - **Quantity.** Margin does not grow in a straight line with quantity. When Basket Order scales a basket to a margin target, it checks the result against real figures rather than multiplying.
 

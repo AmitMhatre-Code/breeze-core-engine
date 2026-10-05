@@ -31,7 +31,7 @@ router = APIRouter()
 
 BotKey = Literal["momentum", "fly", "expiry"]
 #: The card's backtest covers every bot with a replay; the retired page's routes never had CAS Bingo.
-StartBotKey = Literal["momentum", "fly", "expiry", "cas"]
+StartBotKey = Literal["momentum", "fly", "expiry", "cas", "condor"]
 
 
 class RangeRequest(BaseModel):

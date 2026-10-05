@@ -370,7 +370,7 @@ const STEP_LABEL: Record<string, string> = {
   unaccounted: "outcome unknown",
 };
 
-function ExecutionView({ exec }: { exec: import("@/lib/condor").CondorExecution | null }) {
+export function ExecutionView({ exec }: { exec: import("@/lib/condor").CondorExecution | null }) {
   if (!exec) return <p className="text-sm text-muted">Starting…</p>;
   return (
     <div className="space-y-2 text-sm">

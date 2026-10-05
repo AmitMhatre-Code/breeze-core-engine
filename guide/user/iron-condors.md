@@ -1,8 +1,6 @@
 # Iron Condors
 
-A **Dynamic Iron Condor campaign** manages one NIFTY iron condor for you over weeks: it checks the position twice a day, suggests when to add a tranche, roll a side or exit, and keeps a ledger of every rupee in and out across all of it. The **Iron Condors** page lists your campaigns and backtests the rules; each campaign's own card sits on its group in [Portfolio](portfolio.md#iron-condor-campaigns).
-
-![The Iron Condors page](images/dark/iron-condors.png)
+A **Dynamic Iron Condor campaign** manages one NIFTY iron condor for you over weeks: it checks the position twice a day, suggests when to add a tranche, roll a side or exit, and keeps a ledger of every rupee in and out across all of it. Each campaign's card sits on its group in [Portfolio](portfolio.md#iron-condor-campaigns). Its settings, backtest and a quick way to start one by hand are on the **Dynamic Iron Condor** card on the [Bots](bots.md#dynamic-iron-condor) page.
 
 Campaigns are **NIFTY only** for now. You act on a suggestion from the campaign's card with **Execute this suggestion…**, or make your own change with **Adjust…** (see [Portfolio](portfolio.md#adjusting-a-campaign)). Nothing is traded without you pressing Execute, unless you hand a campaign to the [Dynamic Iron Condor bot](bots.md#dynamic-iron-condor).
 
@@ -44,12 +42,51 @@ When a check suggests an action, or cannot decide, you get a [Telegram alert](se
 
 ## Starting a campaign
 
-- **From Portfolio:** expand a NIFTY group and choose **Adopt as a campaign…**. The group's open legs become the campaign's opening fills at the broker's average prices, with charges estimated.
-- **From this page:** **New empty campaign…** picks the earliest listed expiry still at or beyond the tranche cut-off. Tranches are then suggested as they fall due.
+- **From the bot card:** the play icon on the **Dynamic Iron Condor** card opens [Basket Order](basket-order.md#managing-it-as-a-dynamic-iron-condor-campaign) with the first tranche filled in: NIFTY, the expiry a new cycle would use, the four strikes at the settings' deltas, and the **Lots per tranche** (blank sizes it from today's margin). **Manage as a Dynamic Iron Condor campaign** is already ticked. Check or change anything, then **Execute**.
+- **From Basket Order:** build any NIFTY basket yourself and tick **Manage as a Dynamic Iron Condor campaign** before you execute.
+- **From Portfolio:** expand a NIFTY group you already hold and choose **Adopt as a campaign…**. The group's open legs become the campaign's opening fills at the broker's average prices, with charges estimated.
 
-A NIFTY expiry can have only one campaign. A campaign cannot start on a group with an armed Profit Booking / Stop Loss rule, and once it runs, that rule cannot be armed there: every roll would reset it, and the campaign has its own max loss.
+A campaign started from Basket Order uses the bot card's campaign settings, and its basket goes out through the campaign's own executor rather than as an ordinary basket: one order at a time, wings first, each at a limit near the live bid or ask (not at the prices in the basket), with every fill booked to the campaign's ledger. If a step does not fill, the rest are not sent, and the legs already filled are still hedged. The remaining tranches are then suggested on its card as they fall due. It is your campaign: the bot never acts on it unless you [hand it over](#handing-a-campaign-to-the-bot).
+
+The campaign is refused, before any order is sent, if:
+
+- another campaign already manages that NIFTY expiry, yours or the bot's;
+- you already hold legs on that expiry (adopt the group from Portfolio instead);
+- a Profit Booking / Stop Loss rule is armed on that expiry;
+- the basket would leave a short leg with no wing to cap it.
+
+Once a campaign runs, a Profit Booking / Stop Loss rule cannot be armed on its group: every roll would reset it, and the campaign has its own max loss.
+
+## Handing a campaign to the bot
+
+A campaign you started yourself can be handed to the [Dynamic Iron Condor bot](bots.md#dynamic-iron-condor), for example once its first tranche is in. On its card in Portfolio choose **Hand to the bot…**. Nothing is traded: the bot manages it from its next check, exactly as if it had opened it, and the card is marked **Managed by the bot**.
+
+The dialog shows what will change before you confirm:
+
+- **The bot's settings.** The bot only ever runs on its own settings, because its backtest, paper cycles and approvals were earned on them. Any setting that differs is listed with both values, and the campaign takes the bot's.
+- **The remaining tranches**, and how the bot will size them (its **Lots per tranche**, or that day's margin). Your own tranches may have been a different size.
+- **What the rules say now on the bot's settings.** This can differ from the card's suggestion: with a narrower band, for example, a roll may be due at once.
+
+It is refused, with every reason listed, until:
+
+- the bot is switched on in **Telegram** or **Auto** mode and is not paused (in Paper mode it only simulates, so it cannot run real positions);
+- the bot is not already running a campaign (it runs one at a time);
+- the broker's position matches the campaign's ledger (assign or leave out every difference first);
+- no ticket is executing on the campaign.
+
+Afterwards the usual rules apply. A ticket you execute on it pauses the bot until you resume it; switching the bot off hands the campaign back to you with its legs open; and saving different settings on the campaign's card hands it back too. To change what the bot runs, use the gear on its card.
+
+## Several campaigns
+
+You can run as many campaigns as you like, each on its **own NIFTY expiry**: for example one on this month's expiry and one on next month's. An expiry can have only one campaign, because the broker holds one net position per contract and could not tell two campaigns' legs apart.
+
+- **Margin is per campaign.** Each campaign sizes and checks against its own margin ceiling and max loss. Nothing adds them up, so leave room in your account for all of them together.
+- **A time roll never lands on an expiry another campaign manages.** If the next cycle's expiry is taken, the time roll is refused before any order is sent and you get a Telegram alert. The position stays open past its exit DTE until you act: close it from its card (**Adjust… → Close all**), or close the other campaign first. The suggestion is repeated at every check until then.
+- **The bot waits for a free expiry.** If the expiry its next campaign would use is already another campaign's (or has a Profit Booking / Stop Loss rule armed), the bot opens nothing. Its card says **Waiting:** and why, and you get one Telegram alert. In **Paper** mode it never waits, because a paper campaign holds nothing at the broker.
 
 ## Settings
+
+The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tabs **Cycle**, **Strikes**, **Rolls**, **Risk** and **Bot**. A campaign started from Basket Order takes a copy of them when it starts; a campaign's own card on Portfolio can change its copy later.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -61,22 +98,26 @@ A NIFTY expiry can have only one campaign. A campaign cannot start on a group wi
 | **Enter tranches at** | Start-of-day check | Which check enters a due tranche. |
 | **Short Δ / Wing Δ** | 0.20 / 0.05 | The deltas the shorts and wings are chosen at. |
 | **Untested side below Δ** | 0.10 | Roll when the untested short falls below this delta… |
-| **…or decayed %** | 80 | …or has lost this share of its premium. |
+| **…or decayed** | 80% | …or has lost this share of its premium. |
 | **Net Δ band per lot** | 0.15 | Roll when the position's net delta per lot is outside ± this. |
-| **Minimum roll credit (pts)** | 20 | A roll adding less than this per unit, after charges, is skipped and the card says so. |
-| **No rolls within N days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. Backtest it at 0 and at 3 to see which suits you. |
-| **Start-of-day / End-of-day check** | 10:30 / 15:31 | The two check times, IST. |
-| **Margin ceiling ₹** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
-| **Max loss ₹ / …or % of ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
+| **Minimum roll credit** | 20 points | A roll adding less than this per unit, after charges, is skipped and the card says so. |
+| **No rolls within … days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. Backtest it at 0 and at 3 to see which suits you. |
+| **Start-of-day check / End-of-day check** | 10:30 / 15:31 | The two check times, IST. |
+| **Margin ceiling** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
+| **Max loss / …or of the ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
+
+The **Bot** tab adds the bot's own settings (see [Dynamic Iron Condor](bots.md#dynamic-iron-condor)): what happens at the exit DTE, the lots per tranche and the Telegram approval window.
 
 The defaults are starting points, not findings. Backtest them before trusting them.
 
 ## Backtest the rules
 
-**Backtest the rules** replays the same rules a campaign runs, at the same two checks, on ICICI's traded **5-minute** option prices from January 2026. Choose the settings, the period, what happens at the exit DTE (**time-roll** into the next cycle, or **close** and start fresh by schedule), and the lots per tranche. On the live instance, leave lots blank to size from today's margin; a mock instance has no margin calculator, so you must enter them.
+The history icon on the **Dynamic Iron Condor** bot card backtests the rules on the card's **saved** settings, exit action and lots per tranche, like every bot's backtest (see [Backtesting a bot](bots.md#backtesting-a-bot)): choose a period, run it, and read the result in **Activity**. Save a change before you backtest it. The replay runs the same rules a campaign runs, at the same two checks, on ICICI's traded **5-minute** option prices from January 2026; a period reaching further back starts there, and the result says so.
 
-Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. A run that cannot get what it needs stops at that check and is marked **partial**, saying where and why. Run it again to carry on.
+Lots per tranche left blank are sized from today's margin, which needs ICICI's margin calculator; a mock instance has none, so set the lots in the settings first.
 
-Each run lists its campaigns with their cycles, tranches, rolls and how each ended, the worst P&L seen at a check, cash P&L, the largest drawdown, charges, and every action it took.
+Like every backtest, missing prices are fetched outside market hours within today's call budget (see [Backtests](backtests.md)). Only the contracts the rules actually need are fetched, plus a fixed set of strikes every 500 points to read volatility from. A run that cannot get what it needs stops at that check, says where and why in its notes, and is not a completed backtest: it does not unlock the bot. Run it again to carry on.
 
-What it cannot model: bid and ask (spreads are modelled from your own observed samples), order-book depth, intraday moves between the two checks, and margin, which is sized once at today's levels. History starts in January 2026, which is only about eight monthly cycles: enough to see how the rules behave and how large the losing months are, not enough to prove an edge.
+Its Activity row lists one line per **campaign**: when it started and ended, its expiries, tranches and rolls, the worst P&L it showed at a check, how it ended, charges and net P&L. A campaign still open when the period ends is marked at its last check (what closing then would have left), and reads **Open at period end (marked)**. **Download backtest results (.zip)** adds every action the replay took.
+
+What it cannot model: bid and ask (spreads are modelled from your own observed samples), order-book depth, intraday moves between the two checks, and margin, which is sized once at today's levels. History starts in January 2026, which is only about eight monthly cycles: enough to see how the rules behave and how large the losing months are, not enough to prove an edge. A monthly campaign takes weeks, so a short period may finish none.

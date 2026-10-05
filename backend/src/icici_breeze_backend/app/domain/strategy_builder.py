@@ -74,7 +74,10 @@ class StrategyBuilderMarginResponse(BaseModel):
     elm_is_index (bool), elm_approximate (bool, true when the stock flat-rate tier or a
     previous-close-lookup fallback was used) — see processor.strategy_builder_margin.
     On the SPAN-file source it also carries span_file_margin (the file's own figure),
-    icici_addon (ICICI's add-on included in span_margin_required) and icici_addon_version."""
+    icici_addon (ICICI's add-on included in span_margin_required) and icici_addon_version.
+    open_positions_in_underlying (int) counts the open option positions in the legs'
+    underlying and exchange, any expiry, whether or not the request netted against them;
+    absent when positions could not be loaded."""
 
     model_config = {"extra": "allow"}
     Status: int

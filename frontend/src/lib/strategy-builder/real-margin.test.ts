@@ -28,9 +28,9 @@ describe("fetchRealBasketMargins — portfolio-aware netting (D1-D10)", () => {
     vi.restoreAllMocks();
   });
 
-  it("marginBenefit (intra-structure) uses standaloneSpan, not the netted span, when netting applied", async () => {
-    // Two sell legs: per-leg standalone calls return 40000 each (sum=80000).
-    // The basket call is netted against positions: span(incremental)=25000,
+  it("marginBenefit (intra-structure) compares netted per-leg figures with the netted basket", async () => {
+    // Two sell legs: per-leg calls are netted against positions too and return
+    // 40000 each (sum=80000). The basket call: span(incremental)=25000,
     // standalone_span_margin(basket's own pre-netting figure)=60000.
     const legs: StrategyLeg[] = [
       leg({ id: "a", strike: 23500 }),
@@ -63,9 +63,9 @@ describe("fetchRealBasketMargins — portfolio-aware netting (D1-D10)", () => {
     expect(postSpy).toHaveBeenCalled();
     expect(result.spanMargin).toBe(25_000); // incremental, shown as the headline
     expect(result.standaloneSpan).toBe(60_000);
-    // marginBenefit = sumStandalone(80000) - standaloneSpan(60000) = 20000,
-    // NOT sumStandalone - spanMargin(25000)=55000 -- the pre-fix (wrong) formula.
-    expect(result.marginBenefit).toBe(20_000);
+    // marginBenefit = sum of netted legs(80000) - netted basket(25000) = 55000,
+    // NOT sumLegs - standaloneSpan(60000) -- that mixes netted and un-netted figures.
+    expect(result.marginBenefit).toBe(55_000);
     expect(result.positionsMarginBenefit).toBe(35_000);
     expect(result.nettedAgainstPositions).toBe(true);
     expect(result.nettedPositionCount).toBe(1);
@@ -84,7 +84,7 @@ describe("fetchRealBasketMargins — portfolio-aware netting (D1-D10)", () => {
 
     expect(result.spanMargin).toBe(40_000);
     expect(result.standaloneSpan).toBe(40_000);
-    expect(result.marginBenefit).toBe(0); // sumStandalone(40000) - standaloneSpan(40000)
+    expect(result.marginBenefit).toBe(0); // sumLegs(40000) - span(40000)
     expect(result.nettedAgainstPositions).toBe(false);
     expect(result.positionsMarginBenefit).toBeNull();
     expect(result.nettingUnavailableReason).toBeNull();
@@ -129,5 +129,49 @@ describe("fetchRealBasketMargins — portfolio-aware netting (D1-D10)", () => {
     expect(postSpy).toHaveBeenCalledTimes(2);
     expect(result.perLegMargin["b"]).toBe(0);
     expect(result.perLegMargin["a"]).toBe(40_000);
+  });
+
+  it("sends netAgainstPositions on every call and reads the open-position count", async () => {
+    const legs: StrategyLeg[] = [
+      leg({ id: "a", strike: 23500, side: "Sell" }),
+      leg({ id: "b", strike: 24000, side: "Sell" }),
+    ];
+
+    const postSpy = vi.spyOn(apiClient, "post").mockImplementation(async (_path, body) => {
+      const legCount = (body as { legs: unknown[] }).legs.length;
+      if (legCount === 1) {
+        return { Status: 200, Error: null, Success: { span_margin_required: 40_000 } };
+      }
+      return {
+        Status: 200,
+        Error: null,
+        Success: { span_margin_required: 60_000, open_positions_in_underlying: 3 },
+      };
+    });
+
+    const result = await fetchRealBasketMargins({ legs, ...ctx, netAgainstPositions: false });
+
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    for (const call of postSpy.mock.calls) {
+      expect((call[1] as { net_against_positions?: boolean }).net_against_positions).toBe(false);
+    }
+    expect(result.openPositionsInUnderlying).toBe(3);
+    expect(result.nettedAgainstPositions).toBe(false);
+  });
+
+  it("defaults netAgainstPositions to true and leaves the count null when not reported", async () => {
+    const legs: StrategyLeg[] = [leg({ id: "a", strike: 23500 })];
+    const postSpy = vi.spyOn(apiClient, "post").mockResolvedValue({
+      Status: 200,
+      Error: null,
+      Success: { span_margin_required: 40_000 },
+    });
+
+    const result = await fetchRealBasketMargins({ legs, ...ctx });
+
+    for (const call of postSpy.mock.calls) {
+      expect((call[1] as { net_against_positions?: boolean }).net_against_positions).toBe(true);
+    }
+    expect(result.openPositionsInUnderlying).toBeNull();
   });
 });

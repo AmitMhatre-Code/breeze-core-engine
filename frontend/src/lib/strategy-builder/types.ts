@@ -117,6 +117,9 @@ export type MarginApiRequest = {
   baseline_only?: boolean;
   /** Live spot for the underlying; only needed to compute the basket-level ELM figure. */
   spot?: number;
+  /** Net against the user's open option positions in the same underlying. The server
+   * defaults to true. */
+  net_against_positions?: boolean;
 };
 
 export type BasketLegMarginEntry = {

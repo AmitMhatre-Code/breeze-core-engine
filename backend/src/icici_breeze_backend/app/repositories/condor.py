@@ -230,6 +230,24 @@ def close_campaign(campaign_id: str, user_id: str, reason: str) -> bool:
         return cur.rowcount > 0
 
 
+def delete_unopened(campaign_id: str, user_id: str) -> bool:
+    """Remove a campaign that never got going: no fill, no execution. Used when the ticket that
+    was to open it is refused before any order goes out, so the refusal leaves nothing behind."""
+    with _connect() as conn:
+        busy = conn.execute(
+            "SELECT 1 FROM condor_fills WHERE campaign_id = ? UNION ALL "
+            "SELECT 1 FROM condor_executions WHERE campaign_id = ? LIMIT 1",
+            (campaign_id, campaign_id),
+        ).fetchone()
+        if busy:
+            return False
+        conn.execute("DELETE FROM condor_decisions WHERE campaign_id = ?", (campaign_id,))
+        conn.execute("DELETE FROM condor_cycles WHERE campaign_id = ?", (campaign_id,))
+        cur = conn.execute("DELETE FROM condor_campaigns WHERE id = ? AND user_id = ?", (campaign_id, user_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def add_fills(campaign_id: str, cycle_id: Optional[int], fills: Iterable[dict[str, Any]]) -> int:
     """Book fills. A fill whose order id is already booked is skipped, never doubled."""
     added = 0
@@ -494,6 +512,20 @@ def bot_campaigns(user_id: str, *, mode: Optional[str] = None) -> list[Campaign]
         args.append(mode)
     with _connect() as conn:
         return [_campaign(conn, r) for r in conn.execute(sql + " ORDER BY created_at", args).fetchall()]
+
+
+def hand_to_bot(campaign_id: str, user_id: str, settings: CondorSettings, note: str) -> bool:
+    """A manual live campaign becomes the bot's: the bot's settings, its fingerprint as the note
+    (which is what its evidence is matched on, #66), origin `bot`. One write, so the scheduler
+    never sees a bot campaign on the old settings."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE condor_campaigns SET origin = 'bot', settings = ?, note = ? "
+            "WHERE id = ? AND user_id = ? AND origin = 'manual' AND mode = 'live' AND status = ?",
+            (json.dumps(settings.model_dump(mode="json")), note, campaign_id, user_id, ACTIVE),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def set_origin(campaign_id: str, origin: str) -> None:

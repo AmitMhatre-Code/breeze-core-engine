@@ -89,7 +89,7 @@ class TestPostMarginNettingWiring(unittest.TestCase):
                 "Success": {"span_margin_required": 25_000.0},
             },
         ) as fake_margin_call:
-            _run(rsb.post_margin(body, _ctx()))
+            resp = _run(rsb.post_margin(body, _ctx()))
 
         fake_existing_span.assert_called_once()
         self.assertEqual(fake_margin_call.call_count, 1)
@@ -99,26 +99,70 @@ class TestPostMarginNettingWiring(unittest.TestCase):
         self.assertEqual(kwargs["existing_span_value"], 30_000.0)
         self.assertEqual(kwargs["netting_position_count"], 1)
         self.assertIsNone(kwargs["netting_unavailable_reason"])
+        self.assertEqual(resp.Success["open_positions_in_underlying"], 1)
 
-    def test_net_against_positions_false_skips_positions_fetch_entirely(self):
+    def test_net_against_positions_false_counts_positions_but_does_not_net(self):
+        """Off still reads positions -- the count drives Basket Order's toggle -- but
+        nothing is netted and no live M(P) call is made."""
+        body = StrategyBuilderMarginRequest(
+            legs=[_leg()], margin_source="breeze_api", net_against_positions=False
+        )
+        position_rows = [
+            {
+                "stock_code": "NIFTY",
+                "exchange_code": "NFO",
+                "expiry_date": "16-Jun-2099T06:00:00.000Z",
+                "product_type": "Options",
+                "right": "Put",
+                "strike_price": "24000",
+                "quantity": "50",
+                "action": "Sell",
+            }
+        ]
+
+        with patch.object(
+            rsb.breeze, "get_strategy_builder_margin_source", return_value="breeze_api"
+        ), patch.object(
+            rsb.breeze, "get_positions", return_value={"Status": 200, "Success": position_rows, "Error": None}
+        ), patch.object(
+            rsb.breeze, "_netted_span_for_legs"
+        ) as fake_existing_span, patch.object(
+            rsb.breeze,
+            "strategy_builder_margin",
+            return_value={"Status": 200, "Error": None, "Success": {"span_margin_required": 40_000.0}},
+        ) as fake_margin_call:
+            resp = _run(rsb.post_margin(body, _ctx()))
+
+        fake_existing_span.assert_not_called()
+        _, kwargs = fake_margin_call.call_args
+        self.assertIsNone(kwargs["existing_legs"])
+        self.assertIsNone(kwargs["existing_span_value"])
+        self.assertEqual(kwargs["netting_position_count"], 0)
+        # Another expiry of the same underlying still counts (any-expiry scope).
+        self.assertEqual(resp.Success["open_positions_in_underlying"], 1)
+
+    def test_positions_fetch_failure_omits_open_position_count(self):
         body = StrategyBuilderMarginRequest(
             legs=[_leg()], margin_source="breeze_api", net_against_positions=False
         )
 
         with patch.object(
             rsb.breeze, "get_strategy_builder_margin_source", return_value="breeze_api"
-        ), patch.object(rsb.breeze, "get_positions") as fake_get_positions, patch.object(
+        ), patch.object(
+            rsb.breeze,
+            "get_positions",
+            return_value={"Status": 400, "Error": "Unable to connect to broker.", "Success": None},
+        ), patch.object(
             rsb.breeze,
             "strategy_builder_margin",
             return_value={"Status": 200, "Error": None, "Success": {"span_margin_required": 40_000.0}},
         ) as fake_margin_call:
-            _run(rsb.post_margin(body, _ctx()))
+            resp = _run(rsb.post_margin(body, _ctx()))
 
-        fake_get_positions.assert_not_called()
         _, kwargs = fake_margin_call.call_args
-        self.assertIsNone(kwargs["existing_legs"])
-        self.assertIsNone(kwargs["existing_span_value"])
-        self.assertEqual(kwargs["netting_position_count"], 0)
+        # Off means no "showing standalone" banner either -- standalone is what was asked for.
+        self.assertIsNone(kwargs["netting_unavailable_reason"])
+        self.assertNotIn("open_positions_in_underlying", resp.Success)
 
     def test_no_open_positions_nets_nothing_no_error(self):
         body = StrategyBuilderMarginRequest(legs=[_leg()], margin_source="breeze_api")

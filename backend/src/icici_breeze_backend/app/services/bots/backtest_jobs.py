@@ -466,6 +466,11 @@ def _open_bot_backtest(
     from icici_breeze_backend.app.repositories import bots as repo
     from icici_breeze_backend.audit import bot_audit
 
+    if bot == "condor":
+        # Same dialog, same slot, same Activity row; the replay is the condor engine's (#67).
+        from icici_breeze_backend.app.services.condor import backtest_job as condor_job
+
+        return condor_job.start_card(user_id, period, from_date, to_date)
     if bot not in service.BOT_TYPES:
         raise ValueError(f"{bot!r} has no backtest.")
     if period not in service.PERIODS:

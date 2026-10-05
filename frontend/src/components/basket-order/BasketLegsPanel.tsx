@@ -74,6 +74,8 @@ export function BasketLegsPanel({
   legBuySellRatios,
   totalsNetPremium,
   totalsMargin,
+  netAgainstPositions,
+  onNetAgainstPositionsChange,
   onExecute,
   executeDisabled,
   addLegDisabled,
@@ -111,10 +113,21 @@ export function BasketLegsPanel({
     isFetching: boolean;
     netMargin: number | null;
     marginBenefit?: number | null;
+    /** Portfolio netting (docs/strategy-builder-portfolio-margin-plan.md): when
+     * `nettedAgainstPositions`, `netMargin` is the extra margin on top of the open
+     * positions in this underlying, not the basket's margin on its own. */
+    positionsMarginBenefit?: number | null;
+    nettedAgainstPositions?: boolean;
+    nettedPositionCount?: number;
+    nettingUnavailableReason?: string | null;
+    /** Open option positions in the underlying, any expiry; null until a calculation reports it. */
+    openPositionsInUnderlying?: number | null;
     elmRequirement?: number | null;
     elmIsIndex?: boolean;
     elmApproximate?: boolean;
   };
+  netAgainstPositions: boolean;
+  onNetAgainstPositionsChange: (net: boolean) => void;
   onExecute: () => void;
   executeDisabled: boolean;
   addLegDisabled: boolean;
@@ -220,8 +233,9 @@ export function BasketLegsPanel({
                       <span className="inline-flex items-center justify-end gap-1">
                         Margin
                         <InfoPopover title="SPAN margin" ariaLabel="SPAN margin help">
-                          Approximate margin from the exchange SPAN file for the quantity
-                          entered.
+                          Approximate margin for this leg alone at the quantity entered,
+                          netted against your open positions in the same underlying unless
+                          you untick Net against open positions.
                         </InfoPopover>
                       </span>
                     </th>
@@ -339,7 +353,7 @@ export function BasketLegsPanel({
       {legs.length > 0 ? <BasketScaleRow controls={scaleControls} /> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-soft bg-panel2 px-[18px] py-3.5">
-        <div className="flex flex-wrap items-center gap-6">
+        <div className="flex flex-wrap items-start gap-6">
           <TotalStat
             label="Net premium"
             value={formatIndianMoneyCompact(totalsNetPremium)}
@@ -354,18 +368,36 @@ export function BasketLegsPanel({
             label="Net Δ"
             value={<NetDeltaText net={netDelta} lotSize={lotSize} />}
           />
-          <TotalStat
-            label="Net SPAN margin"
-            value={
-              !totalsMargin.hasPositiveLots
-                ? "—"
-                : totalsMargin.isFetching
-                  ? "…"
-                  : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
-                    ? formatIndianMoneyCompact(totalsMargin.netMargin)
-                    : "—"
-            }
-          />
+          <div className="flex flex-col gap-1.5">
+            <TotalStat
+              label={
+                <span className="inline-flex items-center gap-1">
+                  Net SPAN margin
+                  <InfoPopover title="Net SPAN margin" ariaLabel="Net SPAN margin help">
+                    Margin for the whole basket as one position. When you hold open option
+                    positions in the same underlying it is netted against them by default: the
+                    extra margin placing this basket would add. A basket that hedges what you
+                    already hold can need less, or even free margin up. Untick{" "}
+                    <strong>Net against open positions</strong> to see the basket on its own.
+                  </InfoPopover>
+                </span>
+              }
+              value={
+                !totalsMargin.hasPositiveLots
+                  ? "—"
+                  : totalsMargin.isFetching
+                    ? "…"
+                    : totalsMargin.netMargin != null && Number.isFinite(totalsMargin.netMargin)
+                      ? formatIndianMoneyCompact(totalsMargin.netMargin)
+                      : "—"
+              }
+            />
+            <PositionsNettingControl
+              totalsMargin={totalsMargin}
+              net={netAgainstPositions}
+              onNetChange={onNetAgainstPositionsChange}
+            />
+          </div>
           <TotalStat
             label="Margin benefit"
             value={
@@ -555,6 +587,70 @@ function ScaleModeTab({
     >
       {label}
     </button>
+  );
+}
+
+/**
+ * The "Net against open positions" toggle under Net SPAN margin. Shown only once a
+ * calculation has reported open option positions in this underlying (any expiry);
+ * also says what netting saved, or why it could not be applied.
+ */
+function PositionsNettingControl({
+  totalsMargin,
+  net,
+  onNetChange,
+}: {
+  totalsMargin: {
+    isFetching: boolean;
+    netMargin: number | null;
+    positionsMarginBenefit?: number | null;
+    nettedAgainstPositions?: boolean;
+    nettingUnavailableReason?: string | null;
+    openPositionsInUnderlying?: number | null;
+  };
+  net: boolean;
+  onNetChange: (net: boolean) => void;
+}) {
+  const count = totalsMargin.openPositionsInUnderlying ?? 0;
+  const shown = totalsMargin.netMargin != null && !totalsMargin.isFetching;
+  let detail: ReactNode = null;
+  if (shown && net && totalsMargin.nettingUnavailableReason) {
+    detail = (
+      <span className="text-amber-accent">{totalsMargin.nettingUnavailableReason}</span>
+    );
+  } else if (shown && net && totalsMargin.nettedAgainstPositions) {
+    const saved = totalsMargin.positionsMarginBenefit;
+    if (saved != null && Number.isFinite(saved) && saved > 0) {
+      detail = `${formatIndianMoneyCompact(saved)} less than on its own`;
+    }
+  } else if (shown && net && count > 0) {
+    // The SPAN-file source nets the basket's own expiry only (design-decisions #23).
+    detail = "Positions in other expiries aren't netted with the SPAN file";
+  }
+
+  if (count === 0) {
+    return detail ? (
+      <span className="max-w-[16rem] text-hint" role="note">
+        {detail}
+      </span>
+    ) : null;
+  }
+  return (
+    <div className="max-w-[16rem] space-y-0.5">
+      <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted">
+        <Checkbox
+          checked={net}
+          onChange={onNetChange}
+          aria-label="Net margin against open positions"
+        />
+        Net against {count} open position{count === 1 ? "" : "s"}
+      </label>
+      {detail ? (
+        <div className="pl-6 text-hint text-muted" role="note">
+          {detail}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

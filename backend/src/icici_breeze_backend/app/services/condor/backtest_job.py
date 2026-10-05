@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
@@ -157,21 +157,17 @@ def start(
     *,
     exit_action: ExitAction,
     lots_per_tranche: Optional[int] = None,
+    run_id: Optional[str] = None,
+    period: Optional[str] = None,
+    notes: Optional[list[str]] = None,
+    on_finish: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any]:
-    jobs.ensure_store()
-    jobs.refuse_if_storage_blocked()
-    jobs._memory_check("before starting")  # noqa: SLF001
-    if from_date < regime.HISTORY_START:
-        raise ValueError(f"ICICI's option history starts {regime.HISTORY_START:%d %b %Y}.")
-    if to_date < from_date:
-        raise ValueError("The end date is before the start date.")
-    if lots_per_tranche is None and not jobs.broker_live():
-        raise ValueError(
-            f"Sizing from today's margin needs ICICI's margin calculator; this instance is in "
-            f"'{cfg.ICICI_BROKER_MODE}' mode. Enter the lots per tranche instead."
-        )
+    """Start a replay in the shared job slot. `run_id`, `period` and `on_finish` are the card's
+    (`start_card`): the stored run then shares its id with the Activity row, and `on_finish`
+    records that row once the run is saved, whatever its outcome."""
+    check_startable(from_date, to_date, lots_per_tranche)
     now = now_ist()
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     run: dict[str, Any] = {
         "id": run_id,
         "user_id": user_id,
@@ -187,12 +183,22 @@ def start(
             "lots_per_tranche": lots_per_tranche,
             "settings": settings.model_dump(mode="json"),
             "engine_version": ENGINE_VERSION,
+            **({"period": period} if period else {}),
         },
     }
     store.save_run(run)
+    first_notes = list(notes or [])
+
+    def finished() -> None:
+        if on_finish is None:
+            return
+        try:
+            on_finish(run)
+        except Exception:  # noqa: BLE001 -- the run is saved; only its Activity row is late
+            _logger.exception("condor backtest: could not record run %s", run_id)
 
     def target() -> None:
-        notes: list[str] = []
+        notes: list[str] = list(first_notes)
         calls = 0
         try:
             last_session = service.last_completed_session(now, service.holidays())
@@ -242,14 +248,189 @@ def start(
             summary["calls"] = calls
             run.update(status=status, summary=summary, trades=replay.events)
             store.save_run(run)
-            jobs._finish(status if status != "partial" else "completed", message=_message(summary, status), calls=calls, run_id=run_id)  # noqa: SLF001
-        except Exception as exc:  # noqa: BLE001 -- reported on the run and the page
+            finished()
+            # A card run's dialog says what its Activity row says (`record` sets the headline).
+            message = run.get("headline") or _message(summary, status)
+            jobs._finish(status if status != "partial" else "completed", message=message, calls=calls, run_id=run_id)  # noqa: SLF001
+        except Exception as exc:  # noqa: BLE001 -- reported on the run and its Activity row
             _logger.exception("condor backtest failed")
             run.update(status="failed", error=str(exc), summary={"notes": notes})
             store.save_run(run)
+            finished()
             jobs._finish("failed", error=str(exc), calls=calls, run_id=run_id)  # noqa: SLF001
 
-    return jobs._start("condor", target, bot=BOT, run_id=run_id, from_date=from_date.isoformat(), to_date=to_date.isoformat())  # noqa: SLF001
+    return jobs._start(  # noqa: SLF001
+        "condor" if period is None else "backtest", target, bot=BOT, run_id=run_id,
+        from_date=from_date.isoformat(), to_date=to_date.isoformat(), **({"period": period} if period else {}),
+    )
+
+
+def check_startable(from_date: datetime.date, to_date: datetime.date, lots_per_tranche: Optional[int]) -> None:
+    """Everything that refuses a run before it takes the job slot."""
+    jobs.ensure_store()
+    jobs.refuse_if_storage_blocked()
+    jobs._memory_check("before starting")  # noqa: SLF001
+    if from_date < regime.HISTORY_START:
+        raise ValueError(f"ICICI's option history starts {regime.HISTORY_START:%d %b %Y}.")
+    if to_date < from_date:
+        raise ValueError("The end date is before the start date.")
+    if lots_per_tranche is None and not jobs.broker_live():
+        raise ValueError(
+            f"Sizing from today's margin needs ICICI's margin calculator; this instance is in "
+            f"'{cfg.ICICI_BROKER_MODE}' mode. Set the lots per tranche in the bot's settings instead."
+        )
+
+
+# --------------------------------------------------------------------------------------
+# The card's clock (#36, #67): a period, the bot's saved settings, an Activity row
+# --------------------------------------------------------------------------------------
+
+
+def start_card(
+    user_id: str,
+    period: str,
+    from_date: Optional[datetime.date] = None,
+    to_date: Optional[datetime.date] = None,
+) -> dict[str, Any]:
+    """The bot card's backtest, as the other bots have it: one choice of period, and the rest
+    is the bot's saved settings -- campaign settings, exit action and lots per tranche (blank
+    sizes from today's margin). The result is an Activity row whose id is the stored run's, so
+    the row opens its campaigns and the bot's gate (#66) finds it like any other run.
+
+    History starts at `regime.HISTORY_START`; a period reaching earlier is cut there and says so,
+    rather than refused, because "last month" must never fail for a reason the user cannot see."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_DYNAMIC_CONDOR
+    from icici_breeze_backend.app.repositories import bots as bots_repo
+    from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+    if period not in service.PERIODS:
+        raise ValueError(f"Unknown period {period!r}.")
+    config = condor_bot.config_of(bots_repo.get_or_create_bot(user_id, BOT_DYNAMIC_CONDOR).config)
+    now = now_ist()
+    first, last = service.resolve_period(period, from_date, to_date, now, service.holidays())
+    notes: list[str] = []
+    if first < regime.HISTORY_START:
+        notes.append(
+            f"ICICI's option history starts {regime.HISTORY_START:%d %b %Y}, so the replay starts there, "
+            f"not {first:%d %b %Y}."
+        )
+        first = regime.HISTORY_START
+    check_startable(first, last, config.lots_per_tranche)
+    with jobs._lock:  # noqa: SLF001
+        if jobs._thread is not None and jobs._thread.is_alive():  # noqa: SLF001
+            raise jobs.Busy("A backtest is already running. Wait for it, or stop it.")
+
+    run_id = bots_repo.start_run(user_id, BOT_DYNAMIC_CONDOR, "backtest")
+    period_text = (
+        f"{service.PERIOD_LABELS[period]} · {first}" if first == last
+        else f"{service.PERIOD_LABELS[period]} · {first} to {last}"
+    )
+
+    def record(run: dict[str, Any]) -> None:
+        detail = {"backtest_run_id": run_id, "period": period, "from": first.isoformat(), "to": last.isoformat()}
+        if run.get("status") == "failed":
+            bots_repo.finish_run(
+                run_id, status="failed", reason_code="backtest_failed",
+                reason_text=f"{period_text}: {run.get('error')}", detail=detail,
+            )
+            return
+        # The replay's own events become the zip's action log; the row's trades are campaigns.
+        events = run.get("trades") or []
+        trades = card_trades(run.get("summary") or {})
+        summary = {**(run.get("summary") or {}), **card_totals(trades)}
+        run.update(summary=summary, trades=trades)
+        store.save_run(run)
+        _write_zip(user_id, run, events)
+        partial = run.get("status") == "partial"
+        run["headline"] = _headline(period_text, summary, partial)
+        bots_repo.finish_run(
+            run_id, status="completed",
+            reason_code="backtest_gaps" if partial else "backtest_complete",
+            reason_text=run["headline"],
+            detail={**detail, "summary": summary},
+        )
+
+    try:
+        return start(
+            user_id, config.campaign, first, last,
+            exit_action=config.exit_action, lots_per_tranche=config.lots_per_tranche,
+            run_id=run_id, period=period, notes=notes, on_finish=record,
+        )
+    except Exception as exc:
+        bots_repo.finish_run(
+            run_id, status="skipped",
+            reason_code="backtest_busy" if isinstance(exc, jobs.Busy) else "backtest_failed",
+            reason_text=str(exc),
+        )
+        raise
+
+
+def card_trades(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """One Activity trade per replayed campaign, in the shape the other bots' rows use.
+
+    A finished campaign's P&L is its ledger cash, every leg closed. One still open when the
+    period ends is marked at its last check -- what closing then would have left, closing
+    charges deducted -- and says so; its cash alone would count premium not yet earned."""
+    rows = []
+    for c in summary.get("campaigns") or []:
+        cycles = c.get("cycles") or []
+        open_now = not c.get("ended")
+        net = c.get("pnl_at_last_check") if open_now else c.get("pnl")
+        if net is None:
+            continue
+        charges = float(c.get("charges") or 0)
+        rows.append({
+            "entered_at": c.get("started"),
+            "exited_at": c.get("ended"),
+            "cycles": ", ".join(str(y.get("expiry")) for y in cycles) or "—",
+            "tranches": sum(int(y.get("tranches") or 0) for y in cycles),
+            "rolls": sum(int(y.get("rolls") or 0) for y in cycles),
+            "exit_reason": "open_at_period_end" if open_now else (c.get("end_reason") or ""),
+            "worst_pnl_at_check": c.get("worst_pnl_at_check"),
+            "gross_pnl": round(float(net) + charges, 2),
+            "friction": round(charges, 2),
+            "net_pnl": round(float(net), 2),
+        })
+    return rows
+
+
+def card_totals(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """`net_pnl` and `trades`, the two figures the card's "Last backtest" line and Activity read."""
+    return {"net_pnl": round(sum(t["net_pnl"] for t in trades), 2), "trades": len(trades)}
+
+
+def _headline(period_text: str, summary: dict[str, Any], partial: bool) -> str:
+    n = int(summary.get("trades") or 0)
+    pnl = float(summary.get("net_pnl") or 0)
+    head = f"{period_text}: {n} campaign(s), net ₹{pnl:,.0f}"
+    if summary.get("max_drawdown"):
+        head += f", max drawdown ₹{summary['max_drawdown']:,.0f}"
+    return head + (". Replayed in part: see the notes." if partial else ".")
+
+
+def _write_zip(user_id: str, run: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    """The row's download, as the other bots' rows have one: the run, its campaigns and every
+    action the replay took."""
+    import json
+
+    from icici_breeze_backend.app.db.bots_migrate import BOT_DYNAMIC_CONDOR
+    from icici_breeze_backend.audit import bot_audit
+
+    writer = bot_audit.BacktestZipWriter(user_id, BOT_DYNAMIC_CONDOR, run["id"])
+    try:
+        writer.add_all({
+            "run.json": json.dumps({k: v for k, v in run.items() if k != "trades"}, indent=2, default=str),
+            "campaigns.csv": run.get("trades") or [{"note": "no campaigns"}],
+            "actions.csv": [
+                {k: (json.dumps(v, default=str) if isinstance(v, (list, dict)) else v) for k, v in e.items()}
+                for e in events
+            ] or [{"note": "no actions"}],
+        })
+        writer.close()
+    except Exception:  # noqa: BLE001 -- the row stands without its download
+        writer.abandon()
+        _logger.warning("condor backtest: could not write the results zip for %s", run["id"])
+
 
 
 def _fetch_allowance(user_id: str, now: datetime.datetime, notes: list[str]) -> int:

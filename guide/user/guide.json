@@ -24,7 +24,7 @@
         { "slug": "basket-order", "title": "Basket Order", "summary": "Building and placing a multi-leg order with a combined payoff and margin." },
         { "slug": "strategy-builder", "title": "Strategy Builder", "summary": "Proposed option strategies for your outlook, with PoP, margin, payoff and one-click execution." },
         { "slug": "signals", "title": "Signals", "summary": "The NIFTY and SENSEX direction readings, their backtests and the 30-day gate." },
-        { "slug": "iron-condors", "title": "Iron Condors", "summary": "Dynamic Iron Condor campaigns: the checks, the rules, the ledger, settings and backtests." },
+        { "slug": "iron-condors", "title": "Iron Condors", "summary": "Dynamic Iron Condor campaigns: starting one, the checks, the rules, the ledger, settings and backtests." },
         { "slug": "bots", "title": "Bots", "summary": "The five automated strategies: modes, settings, runs and backtests." },
         { "slug": "settings-trading", "title": "Settings: trading setup", "summary": "Broker credentials, quantity limits, trading costs, liquidity checks and API usage." },
         { "slug": "settings-automation", "title": "Settings: automation and alerts", "summary": "Reference data loads, exchange calendar, Telegram alerts and engine settings." },

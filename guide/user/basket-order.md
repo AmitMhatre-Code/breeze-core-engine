@@ -36,8 +36,8 @@ Each leg is a row in the table:
 | **Price ₹** | The limit price, filled in from the market. The **lightning bolt** makes the leg an [aggressive order](place-order.md#aggressive-orders). |
 | **B:S** | Buy-to-sell ratio of the quantity waiting in the whole order book for this contract. It counts orders far from the current price too, so the ⚠ beside **Quantity** is the better guide to whether your size will fill. |
 | **Premium** | Premium received (+) or paid (−) for the leg. **No quote** means the contract has no market price yet: type a price, or pick another strike. |
-| **Δ** | The leg's [delta](glossary.md#delta) in units of the underlying: option delta × quantity, negative when sold. Blank until the leg has a strike and a quantity. Hover a value for its breakdown. |
-| **Margin** | The leg's margin on its own, once calculated. The **i** icon explains that it is approximate. |
+| **Δ** | The leg's [delta](glossary.md#delta): roughly how many rupees it makes or loses when the underlying moves 1 point. +40 gains about ₹40 for each point up; −40 gains about ₹40 for each point down. Blank until the leg has a strike and a quantity. Hover a number to see how it was worked out. |
+| **Margin** | The leg's margin, once calculated. While **Net against open positions** is ticked, it is the extra margin the leg would add to your open positions in the same underlying (see below). The **i** icon explains that it is approximate. |
 | Copy and delete icons | Duplicate the leg, or remove it. |
 
 Beneath the table:
@@ -46,15 +46,28 @@ Beneath the table:
 |---|---|
 | **Net premium** | Premium across all legs: received (+) or paid (−). A leg showing **No quote** is left out, and a note beside the total says how many legs were. The payoff figures below leave it out too, with the same note, and **Execute** stays disabled until the leg has a price (or is made aggressive). |
 | **Net Δ** | The legs' deltas added up: the units of the underlying the whole basket behaves like. |
-| **Net SPAN margin** | Margin for the whole basket calculated as one position. |
-| **Margin benefit** | How much less the basket needs than the legs would separately: the saving from hedging. |
+| **Net SPAN margin** | Margin for the whole basket calculated as one position. While **Net against open positions** is ticked, it is netted against your open option positions in the same underlying: the **extra** margin placing the basket would add. A basket that hedges what you already hold can need less than it would on its own, or even free margin up (a negative figure). If your positions could not be loaded, a note beneath says so and the figure is for the basket on its own. |
+| **Net against N open positions** | Appears beneath **Net SPAN margin** after you calculate, only when you hold open option positions in this underlying (any expiry). Ticked by default. Untick it to see the basket's margin on its own; the figures recalculate straight away. While ticked, a note beneath says how much less the basket needs because of those positions. |
+| **Margin benefit** | How much less the basket needs than its legs would separately: the saving from the legs hedging each other. It compares like with like: netted figures while **Net against open positions** is ticked, figures on their own when it is not. |
 | **Basket ELM** | The extreme loss margin buffer on top. For stock options it is an estimate at a flat 5% (5.25% if deep out of the money); the **i** icon explains. |
 | **Calculate Margins** | Works out the margins above for the current legs. Recalculate after changing legs or lots. |
 | **Execute basket · N legs** | Opens the order confirmation for every leg with a quantity above zero. See [Confirming an order](place-order.md#confirming-an-order). |
 
-Where the margins come from, the SPAN file or ICICI's margin calculator, is set in **Settings → Reference Data Loads**. See [Margins](margins.md).
+Where the margins come from, the SPAN file or ICICI's margin calculator, is set in **Settings → Reference Data Loads**. See [Margins](margins.md). With ICICI's calculator, open positions in every expiry of the underlying are included; with the SPAN file, only positions in the basket's own expiry are, because the SPAN-file calculation does not net across expiries. Futures positions are never included.
 
 When any leg is aggressive, an **Aggressive style** control appears to set the style and tolerance for all aggressive legs.
+
+### Managing it as a Dynamic Iron Condor campaign
+
+On a NIFTY basket (NSE), **Manage as a Dynamic Iron Condor campaign** appears under the legs. Ticked, **Execute** no longer opens the order confirmation. It opens **Start a Dynamic Iron Condor campaign** instead, listing the orders in the order they go out (wings first), and **Start campaign and place** starts a [campaign](iron-condors.md) with this basket as its first tranche:
+
+- The campaign uses the settings on the **Dynamic Iron Condor** bot card's gear.
+- The orders go out one at a time, wings first, each at a limit near the live bid or ask, not at the prices in the basket. Aggressive settings do not apply. The dialog shows each step as it fills; a step that does not fill stops the rest.
+- Every fill is booked to the campaign's ledger, and the campaign's card appears on its group in [Portfolio](portfolio.md#iron-condor-campaigns), where it suggests the remaining tranches, rolls and the exit.
+
+It is refused, before any order is sent, if another campaign already manages that expiry, if you already hold legs on that expiry, if a Profit Booking / Stop Loss rule is armed on it, or if a short leg would have no wing. See [Starting a campaign](iron-condors.md#starting-a-campaign).
+
+The play icon on the Dynamic Iron Condor bot card opens this page with the first tranche filled in and the box already ticked. A note at the top says how it was sized.
 
 ### Deploy target across basket
 
@@ -67,7 +80,7 @@ Scales the lots of every leg up or down together, keeping the basket's shape, to
 | **Include ELM** | Counts the ELM buffer against the margin budget. |
 | **Scale to margin** / **Scale to premium** | Sets the lots. |
 
-Margin does not grow in a straight line with quantity, so the app checks the scaled basket against real margin figures rather than simply multiplying. If some legs have no fixed price (aggressive legs), the premium is estimated from the last known mid-price and the actual fill may differ.
+The margin target is compared with **Net SPAN margin**, so while **Net against open positions** is ticked it is the extra margin on top of your open positions in the underlying. Margin does not grow in a straight line with quantity, so the app checks the scaled basket against real margin figures rather than simply multiplying. If some legs have no fixed price (aggressive legs), the premium is estimated from the last known mid-price and the actual fill may differ.
 
 ## 3. Payoff simulation
 

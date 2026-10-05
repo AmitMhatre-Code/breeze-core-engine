@@ -88,7 +88,7 @@ Underneath, **Max profit**, **Max loss**, **Breakevens** and **PoP** summarise t
 
 ### Iron Condor campaigns
 
-Below the actions of every NIFTY group is its **Dynamic Iron Condor** section. On a group no campaign manages, **Adopt as a campaign…** opens the campaign settings and turns the group into one (see [Iron Condors](iron-condors.md#starting-a-campaign)). The group's row then carries a **Condor** badge.
+Below the actions of every NIFTY group is its **Dynamic Iron Condor** section. On a group no campaign manages, **Adopt as a campaign…** opens the campaign settings and turns the group into one. A campaign can also be started from [Basket Order](basket-order.md#managing-it-as-a-dynamic-iron-condor-campaign) (see [Starting a campaign](iron-condors.md#starting-a-campaign)). The group's row then carries a **Condor** badge.
 
 ![A campaign's card on its Portfolio group](images/dark/portfolio-condor-card.png)
 
@@ -104,6 +104,7 @@ The campaign's card shows:
 | **Short \|Δ\| PE · CE**, **Net Δ per lot**, **Untested decay** | What the roll rules read, beside the thresholds they are compared with. |
 | **Evaluated now** | The rules run on today's prices, refreshed every 20 seconds. **Indicative** means some prices were stand-ins (outside market hours, closing prices are used): it is a reading, never a decision. When it suggests an action, **Execute this suggestion…** opens it as a ticket. |
 | **Last scheduled check** | What the last 10:30 or 15:31 check suggested. |
+| **Hand to the bot…** | On a campaign of your own: gives it to the Dynamic Iron Condor bot to manage. See [Handing a campaign to the bot](iron-condors.md#handing-a-campaign-to-the-bot). A campaign the bot manages is marked **Managed by the bot**. |
 | **Ledger**, **Executions**, **Check history**, **Settings** | Every fill, every ticket and how it went (including any warnings you overrode), every check, and the campaign's settings. **Stop managing…** ends the campaign and keeps its ledger. Nothing is traded and the legs stay open. |
 
 #### Adjusting a campaign

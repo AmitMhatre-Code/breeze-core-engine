@@ -192,7 +192,15 @@ def update_settings(campaign_id: str, body: dict, ctx: RequestContext = Depends(
     from icici_breeze_backend.app.repositories import condor as repo
 
     c = _campaign_or_404(campaign_id, ctx.user_id)
-    repo.update_settings(c.id, ctx.user_id, _settings(body))
+    settings = _settings(body)
+    if c.origin == "bot" and settings != c.settings:
+        # The bot runs only on its own settings (its evidence is matched on them, #66), so a
+        # campaign given other settings is no longer the bot's: it comes back to the user, as
+        # it does when the bot's own settings change (#68).
+        from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+        condor_bot.release(c, "settings_changed")
+    repo.update_settings(c.id, ctx.user_id, settings)
     return _campaign_json(_campaign_or_404(campaign_id, ctx.user_id))
 
 
@@ -350,7 +358,90 @@ def bot_overview(ctx: RequestContext = Depends(get_request_context)):
     record = bots_repo.get_or_create_bot(ctx.user_id, BOT_DYNAMIC_CONDOR)
     cfg = condor_bot.config_of(record.config)
     camp = repo.bot_campaign(ctx.user_id)
+    waiting = None
+    if record.enabled and not cfg.paused and camp is None:
+        from icici_breeze_backend.app.services.condor import live
+
+        _, waiting = condor_bot.waiting_reason(_proc(), ctx.user_id, cfg, datetime.datetime.now(live.IST).date())
     return {
         "eligibility": condor_bot.eligibility(ctx.user_id, cfg).as_dict(),
         "campaign": _campaign_json(camp) if camp else None,
+        "waiting": waiting,
     }
+
+
+def _bot_config(user_id: str):
+    from icici_breeze_backend.app.db.bots_migrate import BOT_DYNAMIC_CONDOR
+    from icici_breeze_backend.app.repositories import bots as bots_repo
+    from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+    return condor_bot.config_of(bots_repo.get_or_create_bot(user_id, BOT_DYNAMIC_CONDOR).config)
+
+
+@router.get("/bot/entry")
+def bot_entry(ctx: RequestContext = Depends(get_request_context)):
+    """The card's play button: a first tranche at the bot's saved settings, for Basket Orders to
+    pre-fill (#67). Lots are the saved lots per tranche, else today's margin, else one lot with a
+    note saying why; the user edits all of it before anything is placed."""
+    from icici_breeze_backend.app.services.condor import campaigns
+    from icici_breeze_backend.app.services.condor.backtest_job import SizingError, size_from_margin
+
+    cfg = _bot_config(ctx.user_id)
+    try:
+        out = campaigns.entry_proposal(_proc(), ctx.user_id, cfg.campaign)
+    except campaigns.Refused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    lots, sizing = cfg.lots_per_tranche, "lots per tranche from the bot's settings"
+    if not lots:
+        try:
+            lots, sizing = size_from_margin(cfg.campaign, ctx.user_id)["lots"], "sized from today's margin"
+        except SizingError as e:
+            lots, sizing = 1, f"one lot: {e}"
+        except Exception:  # noqa: BLE001 -- sizing is a convenience; the basket still opens
+            lots, sizing = 1, "one lot: today's margin could not size a tranche"
+    return {**out, "lots": lots, "sizing": sizing}
+
+
+class CampaignOpen(BaseModel):
+    expiry: str
+    orders: list[dict]
+    note: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/campaigns/open")
+def open_campaign(req: CampaignOpen, ctx: RequestContext = Depends(get_request_context)):
+    """Basket Orders' "Manage as a Dynamic Iron Condor campaign" (#67): a new manual campaign on
+    the bot's saved settings, whose first tranche is the basket, placed by the campaign executor
+    one order at a time, wings first. Poll the execution as the Adjust ticket does."""
+    from icici_breeze_backend.app.api.deps_license import require_trading_not_revoked
+    from icici_breeze_backend.app.services.condor import executor, tickets
+
+    require_trading_not_revoked()
+    try:
+        campaign, execution = executor.open_campaign(
+            _proc(), ctx.user_id, _bot_config(ctx.user_id).campaign, req.expiry, req.orders, note=req.note,
+        )
+    except (executor.Refused, tickets.Refused) as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {"campaign": _campaign_json(campaign), "execution": execution}
+
+
+@router.get("/campaigns/{campaign_id}/handover")
+def handover_preview(campaign_id: str, ctx: RequestContext = Depends(get_request_context)):
+    """What handing this campaign to the bot would change, and what still stops it (#68)."""
+    from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+    return condor_bot.handover_preview(_proc(), _campaign_or_404(campaign_id, ctx.user_id))
+
+
+@router.post("/campaigns/{campaign_id}/handover")
+def handover(campaign_id: str, ctx: RequestContext = Depends(get_request_context)):
+    """Hand a manual campaign to the bot. Nothing is traded: the bot acts from its next check, on
+    its own settings, in its current mode, and a manual ticket or switching it off hands it back."""
+    from icici_breeze_backend.app.services.condor import bot as condor_bot
+
+    try:
+        c = condor_bot.hand_over(_proc(), _campaign_or_404(campaign_id, ctx.user_id))
+    except condor_bot.Refused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return _campaign_json(c)
