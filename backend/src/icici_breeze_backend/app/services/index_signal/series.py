@@ -37,6 +37,7 @@ from icici_breeze_backend.app.services.index_signal.states import (
     REASON_OUTSIDE_SESSION,
     REASON_STALE,
     REASON_WARMING_UP,
+    REASON_WITHDRAWN,
     Evaluation,
 )
 
@@ -63,6 +64,8 @@ class SeriesEngine:
 
     def on_bar(self, bar: Bar) -> None:
         with self._lock:
+            if not self.key.published:
+                return  # a series the grid does not run reads nothing, live or replayed
             if self._last_fed_ts is not None and bar.ts <= self._last_fed_ts:
                 return  # out of order or a duplicate (a restart re-seeding today's bars)
             self._last_fed_ts = bar.ts
@@ -94,7 +97,9 @@ class SeriesEngine:
             last = self._last
             reason: Optional[str] = last.reason if last is not None else REASON_WARMING_UP
             today = bars_mod.trading_date(now)
-            if not session_open:
+            if not self.key.published:
+                reason = REASON_WITHDRAWN
+            elif not session_open:
                 reason = REASON_MARKET_CLOSED
             elif not bars_mod.reading_window_open(now):
                 reason = REASON_OUTSIDE_SESSION

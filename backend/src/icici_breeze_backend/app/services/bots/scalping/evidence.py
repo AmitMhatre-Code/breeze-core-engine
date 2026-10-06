@@ -65,6 +65,27 @@ def _strip(node: Any, prefix: str = "") -> Any:
     return out
 
 
+def _legacy_signal_shape(node: Any) -> Any:
+    """Drop a signal choice's `version` where it is the legacy version (#72).
+
+    `SignalChoice.version` arrived after paper evidence already existed. A choice on the legacy
+    version (Momentum v2, Volume expansion) decides exactly what it decided before, so it must
+    hash exactly as before -- otherwise every bot's evidence would be voided by a field that
+    changed nothing. A choice on any other version keeps it: a different definition is different
+    evidence."""
+    if isinstance(node, list):
+        return [_legacy_signal_shape(v) for v in node]
+    if not isinstance(node, dict):
+        return node
+    out = {k: _legacy_signal_shape(v) for k, v in node.items()}
+    if "mechanism" in out and "duration" in out and "version" in out:
+        from icici_breeze_backend.app.services.index_signal.mechanisms import LEGACY_VERSIONS
+
+        if out["version"] == LEGACY_VERSIONS.get(out["mechanism"]):
+            out.pop("version")
+    return out
+
+
 def material_config_hash(bot_type: str, config: Any) -> str:
     """Fingerprint the settings that decide what this bot does with money.
 
@@ -86,7 +107,7 @@ def material_config_hash(bot_type: str, config: Any) -> str:
     except Exception:  # noqa: BLE001 -- see docstring: unhashable config must not open a gate
         _logger.debug("evidence: config did not normalise for %s", bot_type, exc_info=True)
         normalised = raw
-    canonical = json.dumps(_strip(normalised), sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(_strip(_legacy_signal_shape(normalised)), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 

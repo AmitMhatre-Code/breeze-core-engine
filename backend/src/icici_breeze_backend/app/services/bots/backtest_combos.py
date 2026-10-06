@@ -4,12 +4,16 @@ A bot that reads a signal is replayed once per cell of the signal grid, so one r
 "which signal would have served this bot best?" rather than only "how did my setting do?". The
 gate never applies here: comparing is the point, and the gate only decides what a bot may *trade*.
 
-* Bot 3 (momentum scalper): every mechanism x duration x follow/fade -- twelve replays.
+Every running version of a mechanism is its own setting (#72): Volume expansion, Momentum v3, v2
+and v1 -- four signal choices while Momentum's versions run side by side.
+
+* Bot 3 (momentum scalper): every signal choice x duration x follow/fade -- twenty-four replays.
 * Bot 4 (iron fly): its settings without a signal filter (VIX filter kept if set), plus the fly
-  held by each mechanism x duration's quiet test -- seven replays.
-* CAS Bingo: its saved strategy on every mechanism x duration, and follow/fade for the debit
-  spread (the credit spread reads flips as published) -- twelve or six; the long strangle reads
-  no signal and is replayed once.
+  held by each signal choice x duration's quiet test -- thirteen replays.
+* CAS Bingo: its saved strategy on every signal choice x duration, and follow/fade for the debit
+  spread (the credit spread reads flips as published) -- twenty-four or twelve; the long strangle
+  reads no signal and is replayed once. Momentum v3 reads nothing on SENSEX, so a v3 setting
+  trades NIFTY only.
 * Bot 2 (expiry writer) reads no signal: one replay, as configured.
 
 Every other setting is the bot's saved one. The saved combination is marked, so the table can
@@ -22,7 +26,11 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from icici_breeze_backend.app.domain.bots import SignalChoice
-from icici_breeze_backend.app.services.index_signal.mechanisms import DURATIONS, MECHANISMS
+from icici_breeze_backend.app.services.index_signal.mechanisms import (
+    DURATIONS,
+    LEGACY_VERSIONS,
+    options,
+)
 
 DIRECTIONS = ("follow", "fade")
 
@@ -37,21 +45,30 @@ class Combo:
 
 
 def _choice_dict(choice: SignalChoice, *, direction: bool = True) -> dict[str, Any]:
-    out = {"mechanism": choice.mechanism, "duration": choice.duration}
+    out = {"mechanism": choice.mechanism, "version": choice.version, "duration": choice.duration}
     if direction:
         out["direction"] = choice.direction
     return out
 
 
+def _cell(m: str, v: int, d: int) -> str:
+    """`momentum-v3-1m`; the legacy version keeps its pre-#72 id (`momentum-15m`)."""
+    return f"{m}-{d}m" if v == LEGACY_VERSIONS[m] else f"{m}-v{v}-{d}m"
+
+
+def _same_cell(choice: SignalChoice, m: str, v: int, d: int) -> bool:
+    return choice.mechanism == m and choice.version == v and choice.duration == d
+
+
 def combos_for(bot: str, config: Any) -> list[Combo]:
     if bot == "momentum":
         out = []
-        for m in MECHANISMS:
+        for m, v in options():
             for d in DURATIONS:
                 for direction in DIRECTIONS:
-                    choice = SignalChoice(mechanism=m, duration=d, direction=direction)
+                    choice = SignalChoice(mechanism=m, version=v, duration=d, direction=direction)
                     out.append(Combo(
-                        id=f"{m}-{d}m-{direction}",
+                        id=f"{_cell(m, v, d)}-{direction}",
                         label=choice.label(),
                         config=config.model_copy(update={"signal": choice}),
                         signal=_choice_dict(choice),
@@ -69,35 +86,34 @@ def combos_for(bot: str, config: Any) -> list[Combo]:
             signal=None,
             is_saved=saved.kind != "signal_quiet",
         )]
-        for m in MECHANISMS:
+        for m, v in options():
             for d in DURATIONS:
-                choice = SignalChoice(mechanism=m, duration=d)
+                choice = SignalChoice(mechanism=m, version=v, duration=d)
                 out.append(Combo(
-                    id=f"quiet-{m}-{d}m",
+                    id=f"quiet-{_cell(m, v, d)}",
                     label=f"Only while {choice.label()} is quiet",
                     config=config.model_copy(update={
                         "entry_filter": saved.model_copy(update={"kind": "signal_quiet", "signal": choice})
                     }),
                     signal=_choice_dict(choice, direction=False),
-                    is_saved=(saved.kind == "signal_quiet" and saved.signal.mechanism == m
-                              and saved.signal.duration == d),
+                    is_saved=saved.kind == "signal_quiet" and _same_cell(saved.signal, m, v, d),
                 ))
         return out
     if bot == "cas" and config.strategy in ("debit_spread", "credit_spread"):
         # The credit spread reads flips as published, so only the debit spread has a direction.
         directions = DIRECTIONS if config.strategy == "debit_spread" else ("follow",)
         out = []
-        for m in MECHANISMS:
+        for m, v in options():
             for d in DURATIONS:
                 for direction in directions:
-                    choice = SignalChoice(mechanism=m, duration=d, direction=direction)
+                    choice = SignalChoice(mechanism=m, version=v, duration=d, direction=direction)
                     saved = config.signal
                     out.append(Combo(
-                        id=f"{m}-{d}m-{direction}",
+                        id=f"{_cell(m, v, d)}-{direction}",
                         label=choice.label(),
                         config=config.model_copy(update={"signal": choice}),
                         signal=_choice_dict(choice, direction=config.strategy == "debit_spread"),
-                        is_saved=(saved.mechanism == m and saved.duration == d
+                        is_saved=(_same_cell(saved, m, v, d)
                                   and (config.strategy != "debit_spread" or saved.direction == direction)),
                     ))
         return out

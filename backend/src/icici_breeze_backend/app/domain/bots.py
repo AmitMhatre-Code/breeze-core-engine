@@ -598,22 +598,51 @@ SignalDirection = Literal["follow", "fade"]
 class SignalChoice(BaseModel):
     """Which signal a bot trades on (docs/signals-streamline-plan.md section 7).
 
-    A cell of the fixed grid -- a mechanism and a duration -- plus the bot's own direction:
-    `follow` trades the call, `fade` trades against it. The duration is both the window the
-    signal reads and how long a call stands, so a bot trading a call holds it until the call
+    A cell of the fixed grid -- a mechanism, its version and a duration -- plus the bot's own
+    direction: `follow` trades the call, `fade` trades against it. The duration is both the window
+    the signal reads and how long a call stands, so a bot trading a call holds it until the call
     ends. The index is the bot's, not the signal's. A combination is usable only once a signal
-    backtest has covered 30 days (`index_signal.gate`), which the save and arm paths enforce.
+    backtest has covered 30 days on that version (`index_signal.gate`), which the save and arm
+    paths enforce.
+
+    `version` pins the definition (#72). A stored choice without one means the version that was
+    current before versions coexisted -- Momentum v2 -- so a saved bot keeps trading exactly what
+    it traded until the user re-picks. A mechanism with one running version takes that one.
     """
 
     mechanism: SignalMechanism = "expansion"
     duration: SignalDuration = 15
     direction: SignalDirection = "follow"
+    version: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _resolve_version(self) -> "SignalChoice":
+        from icici_breeze_backend.app.services.index_signal.mechanisms import LEGACY_VERSIONS, VERSIONS
+
+        running = VERSIONS[self.mechanism]
+        if len(running) == 1:
+            self.version = running[0]
+        elif self.version is None:
+            self.version = LEGACY_VERSIONS[self.mechanism]
+        elif self.version not in running:
+            raise ValueError(
+                f"Momentum has no version {self.version}; choose one of "
+                f"{', '.join(f'v{v}' for v in running)}."
+            )
+        return self
+
+    def series_key(self, index: str) -> Any:
+        from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
+
+        return SeriesKey(self.mechanism, int(self.duration), index.lower(), self.version)
 
     def series_id(self, index: str) -> str:
-        return f"{index.lower()}:{self.mechanism}:{self.duration}m"
+        return self.series_key(index).id
 
     def label(self) -> str:
-        name = {"expansion": "Volume expansion", "momentum": "Momentum"}[self.mechanism]
+        from icici_breeze_backend.app.services.index_signal.mechanisms import version_name
+
+        name = version_name(self.mechanism, int(self.version))
         return f"{name} {self.duration}m" + (" · fade" if self.direction == "fade" else "")
 
 
@@ -678,7 +707,14 @@ class TrailingLadderConfig(BaseModel):
         return self
 
 
-_BOT3_DEFAULT_SIGNAL = {"mechanism": "expansion", "duration": 15, "direction": "fade"}
+# What a pre-grid Bot 3 config with no recognisable signal maps to: the setting Bot 3 was running
+# when the grid replaced the variants (2026-09-19). Fixed history -- not the default for new bots.
+_BOT3_RETIRED_SIGNAL = {"mechanism": "expansion", "duration": 15, "direction": "fade"}
+# A new Bot 3's signal: Momentum v3's 1-minute reading, whose burst volume test is built for the
+# scalper's entries (#72). Followed, as a momentum entry is; the bot backtest compares fade too.
+_BOT3_DEFAULT_SIGNAL = {"mechanism": "momentum", "duration": 1, "direction": "follow", "version": 3}
+# A new Iron Fly's "only while quiet" signal: Momentum v3's 5-minute reading (#72).
+_FLY_DEFAULT_SIGNAL = {"mechanism": "momentum", "duration": 5, "version": 3}
 
 
 class MomentumLongScalperConfig(BaseModel):
@@ -693,9 +729,9 @@ class MomentumLongScalperConfig(BaseModel):
     expiry_preference: Literal["nearest_weekly"] = "nearest_weekly"
     trade_on_expiry_day: bool = False
     mode: ScalperMode = "paper"
-    # 09:35 by default. The signal itself is warm from the open (its volume ranking carries
-    # across the night); a 15-minute momentum reading needs nine of today's candles, so it
-    # first speaks at 11:30 whatever the window says.
+    # 09:35 by default. Most readings are warm from the first candle (baselines and, from
+    # Momentum v2, the trend line carry across the night); Momentum v1 needs nine of today's
+    # candles and v3 1m four, so they first speak later whatever the window says.
     sessions: List[SessionWindow] = Field(
         default_factory=lambda: [
             SessionWindow(start="09:35", end="11:30"),
@@ -725,9 +761,8 @@ class MomentumLongScalperConfig(BaseModel):
     # until the call that opened it ends -- the stop and the ladder still apply -- and it is one
     # trade per call.
     #
-    # Defaults to the 15-minute expansion FADE, the setting Bot 3 was running in Simulation
-    # when the grid replaced the variants (2026-09-19); the per-signal backtest now shows how
-    # every other cell would have done.
+    # Defaults to Momentum v3 1m, followed (#72); a saved bot keeps its own choice, and the
+    # per-signal backtest shows how every other cell would have done.
     signal: SignalChoice = Field(default_factory=lambda: SignalChoice(**_BOT3_DEFAULT_SIGNAL))
     exits: TrailingLadderConfig = Field(default_factory=TrailingLadderConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
@@ -745,7 +780,7 @@ class MomentumLongScalperConfig(BaseModel):
             return data
         out = {k: v for k, v in data.items() if k != "entry_signal"}
         if "entry_signal" in data or isinstance(signal, dict):
-            out["signal"] = _legacy_signal(data.get("entry_signal"), _BOT3_DEFAULT_SIGNAL)
+            out["signal"] = _legacy_signal(data.get("entry_signal"), _BOT3_RETIRED_SIGNAL)
         return out
 
     @model_validator(mode="after")
@@ -851,7 +886,7 @@ class IronFlyEntryFilterConfig(BaseModel):
     kind: IronFlyEntryFilterKind = "none"
     vix_lookback_minutes: int = Field(15, ge=1, le=120)
     vix_max_rise_pct: float = Field(2.0, ge=0, le=50)
-    signal: SignalChoice = Field(default_factory=SignalChoice)
+    signal: SignalChoice = Field(default_factory=lambda: SignalChoice(**_FLY_DEFAULT_SIGNAL))
 
     @model_validator(mode="before")
     @classmethod

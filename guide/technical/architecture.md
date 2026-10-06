@@ -265,7 +265,9 @@ Refreshing every possible option chain on every tick is wasteful on the modest E
 ## Signals (the grid)
 
 The app's NIFTY/SENSEX direction signals are a fixed grid: two mechanisms (volume expansion,
-momentum) × three durations (1, 5, 15 minutes) × two indices, twelve series. Every one is a pure
+momentum) × their running versions × three durations (1, 5, 15 minutes) × two indices. Momentum runs
+v1, v2 and v3 side by side until v3 has been judged (design-decisions.md #72), and v3 does not run on
+SENSEX, so the grid publishes 21 series: 12 on NIFTY, 9 on SENSEX. Every one is a pure
 function of the one-minute futures bars ICICI's `get_historical_data_v2` serves (OHLC, volume, OI),
 so any live reading can be reproduced by a backtest. Rationale is in design-decisions.md #39; the
 plan and every decision behind it are in `docs/signals-streamline-plan.md`. The flow is:
@@ -273,20 +275,21 @@ plan and every decision behind it are in `docs/signals-streamline-plan.md`. The 
 ```
 NIFTY futures ticks (NFO 4.1!)   BSESEN futures ticks (BFO 8.1!)   ← scalping/futures_feed.get_feed(index)
   → index_signal/bars.LiveBarBuilder   ── one-minute OHLCV+OI bars; flat bars for quiet minutes (≤5 min)
-  → index_signal/series.SeriesEngine   ── ×6 per index; mechanism = expansion.py | momentum.py; owns call lifetime
-  → index_signal/publisher             ── every P&L recompute interval → Redis signal:series:<index>:<mechanism>:<d>m
+  → index_signal/series.SeriesEngine   ── one per published series; mechanism = expansion.py | momentum.py; owns call lifetime
+  → index_signal/publisher             ── every P&L recompute interval → Redis signal:series:<series id>
+                                          (<index>:<mechanism>:<d>m for the legacy version, <index>:<mechanism>:v<N>:<d>m otherwise)
   → index_signal/reader                ── the only read path (navbar, Signals page, bots); judges valid_until
 ```
 
 - **Nothing about a reading is stored.** Redis holds only each series' current payload (with `valid_until`). What *is* kept is today's bars (`signal:bars:<index>:<date>`, until midnight), so a restart rebuilds every engine's day exactly. A live session's audit trail is a signal backtest of that day.
-- **Warm-up (`warmup.py`)**: each trading day the engines are rebuilt from the history cache's last two sessions plus today's bars — the same bars a replay of today warms on. If the cache lacks those sessions they are fetched (about one call per index, advisory, the only history call made in market hours). Levels (EMA, VWAP, a window's anchor) reset every session; only size rankings carry over, and no window may span the overnight break.
+- **Warm-up (`warmup.py`)**: each trading day the engines are rebuilt from the history cache's previous sessions plus today's bars — the same bars a replay of today warms on. NIFTY needs ten sessions, for Momentum v3's same-time-of-day volume baseline; SENSEX needs two (`mechanisms.warmup_sessions`). If the cache lacks those sessions they are fetched: up to about five calls per index, advisory, the only history call made in market hours. Size rankings and ATR carry over. From Momentum v2 on, the trend line carries over too, shifted by the overnight gap. VWAP and a window's anchor reset every session, and no window may span the overnight break.
 - **Replay (`series.replay_series`)** runs the same `SeriesEngine` over stored bars, snapshotting each bar at its close — the one loop the signal backtest scores and the bot backtests trade on (`bots/scalping/backtest_common.series_readings`).
-- **Signal backtest (`backtest.py`)**: one run replays all twelve series over a period (fetching missing NIFTY/BSESEN futures bars under #36's rules), scores each (`scoring.py`: calls judged against the Trading Costs breakeven from `breakeven.py`, horizon-apart 95% ranges, edge over the trend share, per-day correlation), and streams a zip (`README.txt`, `run.json`, `summary.csv`, per index `bars.csv`, per series `readings.csv`/`calls.csv`/`days.csv`) to `DATA_PATH/signals-backtest/`. Runs are rows in `signal_backtest_runs` (users.sqlite3; last 30 zips kept). Runs share the bot backtest job slot.
-- **The 30-day gate (`gate.py`)**: a mechanism is available to bots once a completed run's range spans ≥30 calendar days on its current version. `bots/signal_gate.py` says which signal each bot reads; the config route refuses to arm (or save an armed) bot on an unavailable one, and the runtimes stand down if the gate closes under them. Backtests are never gated.
-- **Settings (`settings.py`)**: one row, `signal_settings.navbar_mechanism`; the navbar shows that mechanism's 15-minute reading.
+- **Signal backtest (`backtest.py`)**: one run replays every published series over a period (fetching missing NIFTY/BSESEN futures bars under #36's rules), scores each (`scoring.py`: calls judged against the Trading Costs breakeven from `breakeven.py`, horizon-apart 95% ranges, edge over the trend share, per-day correlation), and streams a zip (`README.txt`, `run.json`, `summary.csv`, per index `bars.csv`, per series `readings.csv`/`calls.csv`/`days.csv`) to `DATA_PATH/signals-backtest/`. Runs are rows in `signal_backtest_runs` (users.sqlite3; last 30 zips kept), each recording the versions it replayed. Runs share the bot backtest job slot.
+- **The 30-day gate (`gate.py`)**: a mechanism *version* is available to bots once a completed run that replayed it spans ≥30 calendar days. `bots/signal_gate.py` says which signal each bot reads; the config route refuses to arm (or save an armed) bot on an unavailable one, and the runtimes stand down if the gate closes under them. Backtests are never gated.
+- **Settings (`settings.py`)**: one row, `signal_settings.navbar_mechanism`. The navbar shows that mechanism's 15-minute reading at the newest version bots may trade (`gate.navbar_version`).
 - **API** (`route_signals.py`, mounted at `/api/signals` so the `/signals` page is never proxied): `GET /api/signals` (sections, readings, last-run summaries, gate status, job), `PUT /api/signals/navbar`, `POST /api/signals/backtest`, `GET …/backtest/job`, `POST …/backtest/cancel`, `GET …/backtest/runs`, `GET …/backtest/runs/{id}/zip`.
 - **Navbar**: `/dashboard/index-quotes` carries `signals.{nifty,sensex}` from `reader.navbar_view()`, rendered as a ▲ BULL / ▼ BEAR / ● NEUT chip, a muted dash for `unavailable`.
-- **Bots**: Bot 3 trades a `SignalChoice` (mechanism, duration, follow/fade), held until its stop, its trailing stop, a call the other way (`signal.call_reversed`) or the square-off closes it — not until its call runs out (#40); Bot 4 can hold flies while a chosen series has a live call; CAS Bingo reads flips from its chosen series, recomputed for the day by `publisher.today_series`. Bot backtests replay every signal setting and write one zip per run (`bots/backtest_combos.py`).
+- **Bots**: Bot 3 trades a `SignalChoice` (mechanism, version, duration, follow/fade; a choice without a version is the legacy version), held until its stop, its trailing stop, a call the other way (`signal.call_reversed`) or the square-off closes it — not until its call runs out (#40); Bot 4 can hold flies while a chosen series has a live call; CAS Bingo reads flips from its chosen series, recomputed for the day by `publisher.today_series`. Bot backtests replay every signal setting and write one zip per run (`bots/backtest_combos.py`).
 - **Mock mode**: `MockBreezeSdk` streams synthetic futures ticks for NIFTY (NFO) and BSESEN (BFO), so the grid moves locally.
 
 ---

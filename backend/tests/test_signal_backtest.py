@@ -22,7 +22,7 @@ from icici_breeze_backend.app.services.bots import backtest_service as service
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.index_signal import backtest as bt
 from icici_breeze_backend.app.services.index_signal import gate
-from icici_breeze_backend.app.services.index_signal.mechanisms import VERSIONS, all_keys
+from icici_breeze_backend.app.services.index_signal.mechanisms import all_keys, versions_record
 
 D = datetime.date
 DAYS = (D(2026, 3, 9), D(2026, 3, 10), D(2026, 3, 11))
@@ -84,7 +84,7 @@ def test_one_run_replays_every_series_into_one_zip(env):
     assert state["status"] == "completed", state
     (run,) = bt.list_runs()
     assert run["status"] == "completed" and run["has_zip"]
-    assert run["versions"] == VERSIONS
+    assert run["versions"] == versions_record()
     assert set(run["summary"]) == {k.id for k in all_keys()}
     assert any("mode" in n for n in run["notes"]), "mock mode must say nothing was fetched"
 
@@ -97,7 +97,7 @@ def test_one_run_replays_every_series_into_one_zip(env):
         summary = zf.read("summary.csv").decode()
         assert len(summary.strip().splitlines()) == 1 + len(all_keys())
         meta = json.loads(zf.read("run.json"))
-        assert meta["from"] == DAYS[1].isoformat() and meta["versions"] == VERSIONS
+        assert meta["from"] == DAYS[1].isoformat() and meta["versions"] == versions_record()
         readings = zf.read("NIFTY/expansion-15m/readings.csv").decode().splitlines()
         # Two sessions of 09:15-15:14 readings; the day before the range only warms the engines.
         assert len(readings) == 1 + 2 * 360
@@ -115,7 +115,7 @@ def test_an_unknown_period_is_refused(env):
 
 def _completed(run_id: str, start: D, end: D, versions=None) -> None:
     bt.create_run(run_id, "u1", "custom", start, end)
-    bt.update_run(run_id, status="completed", versions=versions or VERSIONS)
+    bt.update_run(run_id, status="completed", versions=versions or versions_record())
 
 
 def test_the_gate_needs_thirty_calendar_days_on_the_current_version(env):
@@ -123,10 +123,29 @@ def test_the_gate_needs_thirty_calendar_days_on_the_current_version(env):
     assert not gate.mechanism_availability("expansion", fresh=True)["available"]
     assert "29" in gate.mechanism_availability("expansion", fresh=True)["reason"]
 
-    stale = {**VERSIONS, "momentum": VERSIONS["momentum"] + 1}
-    _completed("other-version", D(2026, 7, 1), D(2026, 8, 30), versions=stale)
+    # A run that replayed Momentum v2 only opens v2: each version earns its own gate (#72).
+    only_v2 = {"expansion": [3], "momentum": [2]}
+    _completed("other-version", D(2026, 7, 1), D(2026, 8, 30), versions=only_v2)
     assert gate.mechanism_availability("expansion", fresh=True)["available"]
-    assert not gate.mechanism_availability("momentum", fresh=True)["available"]
+    assert gate.mechanism_availability("momentum", 2, fresh=True)["available"]
+    assert not gate.mechanism_availability("momentum", 3, fresh=True)["available"]
+    assert not gate.mechanism_availability("momentum", 1, fresh=True)["available"]
+
+
+def test_a_run_from_before_versions_coexisted_counts_for_the_version_it_recorded(env):
+    """Pre-#72 runs stored one number per mechanism; a v1-era run opens v1, never v2."""
+    _completed("v1-era", D(2026, 7, 1), D(2026, 8, 30), versions={"expansion": 3, "momentum": 1})
+    assert gate.mechanism_availability("momentum", 1, fresh=True)["available"]
+    assert not gate.mechanism_availability("momentum", 2, fresh=True)["available"]
+    assert not gate.mechanism_availability("momentum", 3, fresh=True)["available"]
+
+
+def test_the_navbar_shows_v3_only_once_bots_may_trade_it(env):
+    assert gate.navbar_version("momentum") == 2
+    _completed("v3", D(2026, 7, 1), D(2026, 8, 30))
+    gate.invalidate()
+    assert gate.navbar_version("momentum") == 3
+    assert gate.navbar_version("expansion") == 3
 
     _completed("month", D(2026, 8, 1), D(2026, 8, 30))  # exactly 30 days
     assert gate.mechanism_availability("momentum", fresh=True)["available"]
@@ -173,14 +192,22 @@ def client(env, monkeypatch):
         yield c
 
 
-def test_the_overview_has_a_section_per_mechanism_with_six_series(client):
+def test_the_overview_has_a_section_per_version_with_six_series(client):
     body = client.get("/api/signals").json()
-    assert [m["id"] for m in body["mechanisms"]] == ["expansion", "momentum"]
+    assert [(m["id"], m["version"]) for m in body["mechanisms"]] == [
+        ("expansion", 3), ("momentum", 3), ("momentum", 2), ("momentum", 1)]
+    assert [m["latest"] for m in body["mechanisms"]] == [True, True, False, False]
     for m in body["mechanisms"]:
         assert len(m["series"]) == 6
         assert m["availability"]["available"] is False
         assert all(s["reading"]["state"] == "unavailable" for s in m["series"])
+    v3 = body["mechanisms"][1]
+    assert v3["name"] == "Momentum v3"
+    sensex = [s for s in v3["series"] if s["index"] == "sensex"]
+    assert sensex and all(not s["published"] and s["reading"]["reason"] == "withdrawn_for_index"
+                          for s in sensex)
     assert body["navbar_mechanism"] == "expansion" and body["navbar_duration"] == 15
+    assert body["navbar_version"] == 3
 
 
 def test_the_navbar_choice_is_saved(client):

@@ -13,6 +13,7 @@ import {
   CAS_BINGO_CREDIT_WARNING,
   CAS_BINGO_REGIME_NOTE,
   INDEX_LABEL,
+  signalKey,
   useSignalAvailability,
   useTodaysCycles,
   useTodaysRun,
@@ -21,6 +22,7 @@ import {
   type CasBingoConfig,
   type CasBingoStrategy,
 } from "@/lib/use-bots";
+import { LEGACY_VERSION, versionName } from "@/lib/signals";
 
 /** CAS Bingo's three modes (docs/bots-cas-bingo-plan.md section 1).
  *
@@ -49,8 +51,8 @@ export const CAS_STRATEGY_LABEL: Record<CasBingoStrategy, string> = {
 };
 
 function signalLabel(config: CasBingoConfig): string {
-  const sig = config.signal ?? { mechanism: "expansion", duration: 15, direction: "follow" };
-  const name = sig.mechanism === "momentum" ? "Momentum" : "Volume expansion";
+  const sig = config.signal ?? { mechanism: "expansion", duration: 15, direction: "follow", version: 3 };
+  const name = versionName(sig.mechanism, sig.version ?? LEGACY_VERSION[sig.mechanism]);
   const fade = config.strategy === "debit_spread" && sig.direction === "fade" ? " (faded)" : "";
   return `${name} ${sig.duration}m${fade}`;
 }
@@ -333,7 +335,14 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
       <AutonomousConfirm
         open={confirmOpen}
         config={config}
-        availability={availability?.[config.signal?.mechanism ?? "expansion"]}
+        availability={
+          availability?.[
+            signalKey(
+              config.signal?.mechanism ?? "expansion",
+              config.signal?.version ?? LEGACY_VERSION[config.signal?.mechanism ?? "expansion"],
+            )
+          ]
+        }
         pending={update.isPending}
         error={error}
         onConfirm={() => void applyMode("live")}

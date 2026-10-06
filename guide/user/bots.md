@@ -112,7 +112,7 @@ Catches short bursts of NIFTY movement by buying one at-the-money option on the 
 | Tab | Settings |
 |---|---|
 | **Schedule** | Trading windows (**Add window** / **Remove**; defaults 09:35–11:30 and 13:30–15:10), **Flat by (square-off)** (default 15:15) and **Trade on expiry day** (off by default). |
-| **Signal** | **Signal** (Volume expansion or Momentum), **Duration** (1, 5 or 15 min) and **Direction** (follow, or trade against the signal). It says if the chosen signal is not yet available to bots. **Premium outlay** (₹): capital per trade; lots = outlay ÷ option price. |
+| **Signal** | **Signal** (Volume expansion, Momentum v3, Momentum v2 or Momentum v1), **Duration** (1, 5 or 15 min) and **Direction** (follow, or trade against the signal). A new bot starts on Momentum v3 at 1 minute, followed; a bot saved before v3 existed keeps its own choice. It says if the chosen signal is not yet available to bots. **Premium outlay** (₹): capital per trade; lots = outlay ÷ option price. |
 | **Exits** | The trailing ladder, in option points, in the order the stop climbs it: **Initial stop**, **Level 1 trigger** / **Level 1 locks**, **Level 2 trigger** / **Level 2 locks**, **Runner trigger** (starts the trailing runner rather than taking profit) and **Runner trails by**. The example walks an option bought at ₹100 up the ladder. |
 | **Risk** | **Daily loss cap** (₹; hitting it closes the position and disables the bot until you re-enable it), **Consecutive losses** before a pause, **Cooldown** (min), and **Broker calls held back** (reserved so scalping can never starve your manual trading). |
 
@@ -145,7 +145,7 @@ Earns premium from a calm midday NIFTY market with a strictly limited worst case
 | **Structure** | **Wing width** (pts; default 150, always rounded outward), **Margin ceiling** (₹; default ₹25,000: the largest whole-lot fly that ICICI confirms fits, checked on all four legs), and **Widen above VIX** / **Widened wing width** (0 switches the rule off). |
 | **Exits** | **Book at credit decay of** % (default 15%), **Stop at credit loss of** % (default 20%), **Spot drift stop** % (default 0.35%; checked first, because once spot moves away from the short strikes losses accelerate), and **Hard stop** (₹; 0 switches it off). |
 | **Re-entry** | **Cooldown** (min; default 15) and **Range window** / **Spot must stay within** (default 10 minutes within 0.15%). Both must clear before another fly. |
-| **Entry filter** | **Filter**: **None — the re-entry gate only**, **India VIX not rising** (with **Look back** and **Skip if VIX rose more than**), or **Only while a signal is quiet** (the fly opens only while the chosen signal has no live call either way). Both filters fail closed: if VIX or the signal cannot be read, the fly waits. |
+| **Entry filter** | **Filter**: **None — the re-entry gate only**, **India VIX not rising** (with **Look back** and **Skip if VIX rose more than**), or **Only while a signal is quiet** (the fly opens only while the chosen signal has no live call either way; a new bot's choice is Momentum v3 at 5 minutes). Both filters fail closed: if VIX or the signal cannot be read, the fly waits. |
 | **Risk** | Daily loss cap, consecutive losses, cooldown and broker calls held back, as for the Long Scalper. |
 
 It places the **wings first**, then the short legs; if a wing will not fill, anything filled is unwound. Profit and loss are measured at what it would actually cost to close (shorts at the ask, wings at the bid). On exit it buys back the shorts first, then sells the wings. If a short leg has had no tick for a minute, even while other options are still ticking, it closes the fly.
@@ -159,7 +159,7 @@ Trades the exchange's **closing auction session (CAS)** on expiry days. Continuo
 | Tab | Settings |
 |---|---|
 | **Schedule** | The indices it trades (NIFTY, SENSEX; expiry days only) and two entry windows: pre-CAS (default 14:30–15:15) and CAS (default 15:15–15:29). At most one entry per index per day. |
-| **Strategy** | What Simulation and Autonomous deploy: **Credit spread**, **Debit spread** or **Long strangle**, plus the signal choice for the spreads. |
+| **Strategy** | What Simulation and Autonomous deploy: **Credit spread**, **Debit spread** or **Long strangle**, plus the signal choice for the spreads. Momentum v3 does not run on SENSEX: with SENSEX on, the settings warn and the bot cannot be switched on with it. |
 | **Credit** | **Margin to deploy** (lakh), **Move from open that arms it** %, **Inner (sold) leg from open** % and **Outer (bought) leg from open** %, **Gap beyond the indicative index** % and **Minimum credit** (% of width) for the in-auction version, **Profit target** and **Stop-loss** (% of credit). |
 | **Debit** | **Net premium to pay** (₹), **Sustained for** (min: how long the signal call must hold), **Inner (bought) leg from spot** % and **Outer (sold) leg from spot** %, **Profit target** and **Stop-loss** (% of debit). |
 | **Strangle** | **Premium to pay** (₹), **Entry time**, **CE distance from spot** % and **PE distance from spot** %, **Profit target** and **Stop-loss** (% of debit). |
@@ -241,6 +241,6 @@ The history icon on a card opens **Backtest**, which replays the bot's **saved**
 2. Click **Run backtest**. **Close — keeps running** lets you carry on while it works.
 3. Read the result in **Activity**.
 
-For bots that read a signal, the backtest replays **every signal setting side by side** (for example the Long Scalper twelve ways: two mechanisms × three durations × follow or fade), in a table of **Signal setting**, **Trades**, **Win rate**, **Net P&L**, **Max drawdown** and **Worst day**, with your saved setting marked. Each run also has a trade list (**Download trades CSV**) and a cumulative P&L chart.
+For bots that read a signal, the backtest replays **every signal setting side by side** (for example the Long Scalper twenty-four ways: Volume expansion and Momentum v3, v2 and v1 × three durations × follow or fade), in a table of **Signal setting**, **Trades**, **Win rate**, **Net P&L**, **Max drawdown** and **Worst day**, with your saved setting marked. Each run also has a trade list (**Download trades CSV**) and a cumulative P&L chart.
 
 A Dynamic Iron Condor backtest lists campaigns rather than trades, and compares 108 combinations of its roll and risk settings and exit action instead of signal settings (see [Comparing settings](iron-condors.md#comparing-settings)). The Holdings Option Writer has no backtest yet. See [Backtests](backtests.md) for how history is fetched, what the results mean and what backtests cannot tell you.

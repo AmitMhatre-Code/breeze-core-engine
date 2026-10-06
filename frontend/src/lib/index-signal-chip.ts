@@ -32,6 +32,7 @@ const REASON_TEXT: Record<string, string> = {
   volume_unavailable: "a candle's traded volume is unknown",
   vwap_unavailable: "no average traded price yet",
   not_published: "the signal is not running",
+  withdrawn_for_index: "this signal is not run on this index",
 };
 
 const DIRECTIONAL = {
@@ -41,7 +42,9 @@ const DIRECTIONAL = {
 } as const;
 
 function source(s: IndexSignalSummary): string {
-  const name = MECHANISM_NAME[s.mechanism ?? ""] ?? "Signal";
+  // Momentum runs several versions side by side (#72), so its name says which one this is.
+  const base = MECHANISM_NAME[s.mechanism ?? ""] ?? "Signal";
+  const name = s.mechanism === "momentum" && s.version ? `${base} v${s.version}` : base;
   const minutes = s.duration_minutes ? ` ${s.duration_minutes}m` : "";
   return `${name}${minutes}`;
 }

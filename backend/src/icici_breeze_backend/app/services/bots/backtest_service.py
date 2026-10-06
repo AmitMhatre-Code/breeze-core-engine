@@ -53,6 +53,7 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_options import (
     RealPricer,
 )
 from icici_breeze_backend.app.services.bots.scalping.spreads import spread_stats
+from icici_breeze_backend.app.services.index_signal.mechanisms import WARMUP_CALENDAR_DAYS
 
 _logger = logging.getLogger(__name__)
 
@@ -356,13 +357,13 @@ def _replay_cas(
 
 
 # Bars before the range that only warm a series' baselines, as the live warm-up does.
-_SIGNAL_WARMUP_DAYS = 10
+_SIGNAL_WARMUP_DAYS = WARMUP_CALENDAR_DAYS
 
 
 def _series_key(choice: Any, index: str) -> Any:
     from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
 
-    return SeriesKey(choice.mechanism, int(choice.duration), index)
+    return SeriesKey(choice.mechanism, int(choice.duration), index, choice.version)
 
 
 #: How many signal series a run's readings cache holds at once.

@@ -6,11 +6,11 @@ A run asks for a period and nothing else, like a bot card's backtest (#36):
    warm-up -- under the same rules as every backtest fetch: live broker only, never 09:00-15:45 on
    a trading day, within the day's call budget. A stopped fetch is a note, never a failure; the
    replay then runs on what is cached and the notes say so.
-2. **Replay all twelve series** through `series.replay_series` -- the same engine the live
+2. **Replay every series of the grid** -- each running version of each mechanism -- through `series.replay_series` -- the same engine the live
    publisher runs -- warmed on the sessions before the range, exactly as live warms each morning.
 3. **Score each series** (`scoring`) and stream its audit files into the run's zip, one series at
    a time so a six-month run never holds every reading in memory.
-4. **Record the run** in `signal_backtest_runs`: range, status, the mechanism versions replayed,
+4. **Record the run** in `signal_backtest_runs`: range, status, every mechanism version replayed,
    the per-series summaries and the zip's path. The 30-day availability gate reads these rows.
 
 Runs share the backtest job slot with the bot backtests (`bots/backtest_jobs`), so a signal run
@@ -39,10 +39,11 @@ from icici_breeze_backend.app.services.index_signal.mechanisms import (
     INDICES,
     MECHANISM_NAMES,
     STOCK_CODES,
-    VERSIONS,
+    WARMUP_CALENDAR_DAYS,
     SeriesKey,
     all_keys,
     params_dict,
+    versions_record,
 )
 from icici_breeze_backend.app.services.index_signal.series import replay_series, rollover_days
 
@@ -51,8 +52,9 @@ _logger = logging.getLogger(__name__)
 RUNS_SUBDIR = "signals-backtest"
 # Zips kept on disk. A run's row outlives its zip; an older zip is deleted, and its row says so.
 KEEP_ZIPS = 30
-# Calendar days of bars before the range that warm each series, as the live warm-up does.
-WARMUP_DAYS = 10
+# Calendar days of bars before the range that warm each series, as the live warm-up does --
+# enough for Momentum v3's ten-session slot baseline (#72).
+WARMUP_DAYS = WARMUP_CALENDAR_DAYS
 # Scored against this when the breakeven cannot be priced (no lot size or level yet).
 FALLBACK_MIN_MOVE_BPS = 5.0
 
@@ -106,7 +108,7 @@ def create_run(run_id: str, user_id: str, period: str, start: datetime.date, end
                (id, user_id, triggered_at, period, from_date, to_date, status, versions)
                VALUES (?, ?, ?, ?, ?, ?, 'running', ?)""",
             (run_id, user_id, now_ist().isoformat(timespec="seconds"), period,
-             start.isoformat(), end.isoformat(), json.dumps(VERSIONS)),
+             start.isoformat(), end.isoformat(), json.dumps(versions_record())),
         )
 
 
@@ -232,7 +234,9 @@ run.json
     notes (data gaps, days without bars).
 
 summary.csv
-    One row per index x mechanism x duration -- the headline numbers:
+    One row per index x mechanism x version x duration -- the headline numbers. Momentum runs
+    three versions side by side until v3 has been judged; SENSEX has no Momentum v3 (its futures
+    do not trade in about half the minutes):
     sessions_replayed      trading sessions that had bars to replay
     calls                  how many calls (bullish or bearish) the signal made
     right / wrong          calls where the index moved the called way / the other way by at least
@@ -278,9 +282,13 @@ summary.csv
     recomputed from these.
 
 <INDEX>/<mechanism>-<duration>/readings.csv
+    (<mechanism>-v<N>-<duration> for Momentum v1 and v3; momentum-<duration> is v2.)
     One row per minute of the session: the bar, the reading (state, reason, strength), the call it
     belonged to, every input the mechanism computed (c_* columns), and where the index was 1, 5,
-    15 and 30 minutes later (fwd_*_bps).
+    15 and 30 minutes later (fwd_*_bps). Momentum also records c_vwap_ex_preopen, the session
+    average without the 09:00-09:15 pre-open, beside the c_vwap it decides on -- for comparing
+    the two, never for deciding -- and v3 its ATR and how many ATRs the close sat from the
+    trend line (c_ema_distance_atr).
 
 <INDEX>/<mechanism>-<duration>/calls.csv
     One row per call: when it fired, which way, at what level, everything the mechanism read when
@@ -450,7 +458,7 @@ def run_backtest(
                 "warmup_from": warm_from.isoformat(),
                 "generated_at": now_ist().isoformat(timespec="seconds"),
                 "app_version": getattr(cfg, "APP_VERSION", None),
-                "versions": VERSIONS,
+                "versions": versions_record(),
                 "icici_calls_spent": calls,
                 # The bar every call in this run was judged against, and what it is made of. It
                 # depends on a setting, so a run that does not record it cannot be re-read later.

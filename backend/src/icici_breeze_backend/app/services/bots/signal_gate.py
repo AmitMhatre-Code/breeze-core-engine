@@ -8,8 +8,9 @@ the arm path, the runtime and the backtests can never disagree about it:
 * CAS Bingo reads one for its debit and credit spreads; the long strangle reads none.
 * Bots 1 and 2 read none.
 
-A signal is available to bots once a signal backtest has covered 30 days on its current version
-(`index_signal.gate`). The gate applies to Simulation and Live alike; backtests are never gated.
+A signal is available to bots once a signal backtest has covered 30 days on the version the bot
+picked (`index_signal.gate`, #72), and only on an index the grid runs it for -- Momentum v3 does
+not run on SENSEX. The gate applies to Simulation and Live alike; backtests are never gated.
 """
 from __future__ import annotations
 
@@ -35,14 +36,30 @@ def signal_in_use(bot_type: str, config: Any) -> Optional[Any]:
     return None
 
 
+def signal_indices(bot_type: str, config: Any) -> list[str]:
+    """The signal labels (`nifty`, `sensex`) the bot reads its signal on."""
+    if bot_type == BOT_CAS_BINGO:
+        from icici_breeze_backend.app.services.bots.cas_bingo import market
+
+        return [market.SIGNAL_LABEL[code] for code, idx in (getattr(config, "indices", None) or {}).items()
+                if getattr(idx, "enabled", True)]
+    return [str(getattr(config, "index", "NIFTY")).lower()]
+
+
 def refusal(bot_type: str, config: Any) -> Optional[str]:
     """None when the bot may act on its signal (or reads none); otherwise why not."""
     choice = signal_in_use(bot_type, config)
     if choice is None:
         return None
     from icici_breeze_backend.app.services.index_signal import gate
+    from icici_breeze_backend.app.services.index_signal.mechanisms import INDEX_NAMES
 
-    reason = gate.refusal(choice.mechanism)
+    withdrawn = [i for i in signal_indices(bot_type, config) if not choice.series_key(i).published]
+    if withdrawn:
+        names = " and ".join(INDEX_NAMES[i] for i in withdrawn)
+        return (f"{choice.label()} does not run on {names}. Pick another signal, or switch "
+                f"{names} off for this bot.")
+    reason = gate.refusal(choice.mechanism, choice.version)
     if reason is None:
         return None
     return f"{choice.label()} is not yet available to bots. {reason}"

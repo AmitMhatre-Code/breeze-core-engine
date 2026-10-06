@@ -4,7 +4,7 @@ A backtest replays history and asks: *what would this have done, exactly as it i
 
 | Kind | Where | What it replays |
 |---|---|---|
-| **Signal backtest** | [Signals](signals.md#backtest-every-signal) page, **Run backtest** | All twelve direction readings (two mechanisms × three durations × two indices), scoring every call. |
+| **Signal backtest** | [Signals](signals.md#backtest-every-signal) page, **Run backtest** | Every direction reading (two mechanisms, Momentum in three versions, × three durations × two indices; Momentum v3 runs on NIFTY only), scoring every call. |
 | **Bot backtest** | The history icon on a [bot card](bots.md#backtesting-a-bot) | One bot on its saved settings on real option prices: minute by minute, or for the Dynamic Iron Condor at its two daily checks on 5-minute prices (see [Backtest the rules](iron-condors.md#backtest-the-rules)). |
 
 This section covers what they have in common. The Signals and Bots sections explain the controls on each page.

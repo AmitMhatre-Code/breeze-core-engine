@@ -26,12 +26,17 @@ REASON_VOLUME_UNKNOWN = "volume_unavailable"
 REASON_ANCHOR_NOT_TRADED = "anchor_not_traded"
 REASON_VWAP_UNKNOWN = "vwap_unavailable"
 REASON_NOT_PUBLISHED = "not_published"
+# A series the grid deliberately does not run for this index (Momentum v3 on SENSEX, whose
+# futures do not trade in about half the minutes -- see `mechanisms.WITHDRAWN`).
+REASON_WITHDRAWN = "withdrawn_for_index"
 
 # A reading that did not call -- each of these publishes `neutral`.
 REASON_NO_EXPANSION = "no_expansion"
 REASON_UNWIND = "unwind"
 REASON_VOLUME_LOW = "volume_below_threshold"
 REASON_NO_CONFLUENCE = "no_confluence"
+# Momentum v3: on the right side of both lines, but not far enough past the trend line.
+REASON_MOVE_TOO_SMALL = "move_too_small"
 
 NO_READING_REASONS = frozenset(
     {
@@ -46,6 +51,7 @@ NO_READING_REASONS = frozenset(
         REASON_ANCHOR_NOT_TRADED,
         REASON_VWAP_UNKNOWN,
         REASON_NOT_PUBLISHED,
+        REASON_WITHDRAWN,
     }
 )
 

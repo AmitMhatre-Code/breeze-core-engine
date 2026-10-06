@@ -87,3 +87,18 @@ describe("what the page says about a backtested series", () => {
     expect(verdictTone(null)).toBe("muted");
   });
 });
+
+describe("versions side by side (#72)", () => {
+  it("names a Momentum version, but not expansion's only one", async () => {
+    const { versionName, reasonText } = await import("@/lib/signals");
+    expect(versionName("momentum", 3)).toBe("Momentum v3");
+    expect(versionName("expansion", 3)).toBe("Volume expansion");
+    expect(reasonText("withdrawn_for_index")).toBe("not run on this index");
+    expect(reasonText("move_too_small")).toBe("move too small");
+  });
+
+  it("keys availability by mechanism and version", async () => {
+    const { signalKey } = await import("@/lib/use-bots");
+    expect(signalKey("momentum", 1)).toBe("momentum-v1");
+  });
+});

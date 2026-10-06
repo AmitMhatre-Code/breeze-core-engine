@@ -57,10 +57,13 @@ def test_scalper_bots_are_created_lazily_with_policy_defaults(db_path):
     # Ships in paper mode: arming something that fires unattended orders is a deliberate act.
     assert bot.config["mode"] == "paper"
     assert bot.config["risk"]["cumulative_stop_inr"] == 10000.0
-    assert bot.config["signal"] == {"mechanism": "expansion", "duration": 15, "direction": "fade"}
+    # A new bot starts on Momentum v3 1m, followed (#72); saved bots keep their own choice.
+    assert bot.config["signal"] == {"mechanism": "momentum", "duration": 1, "direction": "follow", "version": 3}
 
     fly = repo.get_or_create_bot(USER, BOT_IRON_FLY_SCALPER)
     assert fly.config["structure"]["wing_width_points"] == 150.0
+    assert fly.config["entry_filter"]["signal"] == {
+        "mechanism": "momentum", "duration": 5, "direction": "follow", "version": 3}
     assert fly.config["reentry"]["cooldown_minutes"] == 15
 
 

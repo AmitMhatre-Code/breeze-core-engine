@@ -27,8 +27,24 @@ def test_bot3_defaults_match_agreed_policy():
     # 25,000, not the source conversation's 10,000: at 10,000 a single ATM lot is
     # unaffordable beyond ~3 days to expiry on a 75 lot (plan section 8.5).
     assert c.premium_outlay_inr == 25000.0
-    # The grid cell it was running in Simulation when the grid replaced the variants.
+    # Momentum v3's 1-minute reading, built for the scalper's entries (#72). A saved bot keeps
+    # its own choice; this is only what a new bot starts from.
+    assert (c.signal.mechanism, c.signal.version, c.signal.duration, c.signal.direction) == (
+        "momentum", 3, 1, "follow")
+
+
+def test_a_pre_grid_bot3_config_still_maps_to_the_cell_it_was_running():
+    """The retired-signal mapping is fixed history, not the new-bot default (#72)."""
+    c = MomentumLongScalperConfig.model_validate({"entry_signal": "no-such-variant", "signal": {"ema": 9}})
     assert (c.signal.mechanism, c.signal.duration, c.signal.direction) == ("expansion", 15, "fade")
+
+
+def test_a_saved_momentum_choice_without_a_version_stays_on_v2():
+    """Saved bots keep trading what they traded until the user re-picks (#72)."""
+    c = MomentumLongScalperConfig.model_validate(
+        {"signal": {"mechanism": "momentum", "duration": 5, "direction": "fade"}})
+    assert c.signal.version == 2 and c.signal.series_id("NIFTY") == "nifty:momentum:5m"
+    assert c.signal.label() == "Momentum v2 5m · fade"
     assert c.risk.consecutive_loss_limit == 3
     assert c.risk.api_budget_reserve_calls == 25
 

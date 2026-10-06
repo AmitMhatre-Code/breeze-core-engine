@@ -1,8 +1,10 @@
-"""Live signals: twelve series built from futures ticks, published as the current reading only.
+"""Live signals: every series of the grid built from futures ticks, published as the current
+reading only.
 
 docs/signals-streamline-plan.md section 3. Per index, one futures feed (NIFTY on NFO, BSESEN on
-BFO) supplies ticks; one `LiveBarBuilder` turns them into one-minute bars; six `SeriesEngine`s
-(two mechanisms x three durations) read those bars. Every publish interval each engine's snapshot
+BFO) supplies ticks; one `LiveBarBuilder` turns them into one-minute bars; a `SeriesEngine` per
+published (mechanism, version, duration) reads those bars -- twelve on NIFTY, nine on SENSEX,
+which does not run Momentum v3 (`mechanisms.WITHDRAWN`, #72). Every publish interval each engine's snapshot
 goes to Redis under `signal:series:<id>` with a `valid_until`, and that is the only thing the
 navbar, the Signals page and the bots read (through `reader`).
 

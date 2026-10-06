@@ -64,10 +64,20 @@ describe("warmupReadyAt", () => {
     expect(warmupReadyAt({ mechanism: "expansion", duration: 15 })).toBe("09:30");
   });
 
-  it("is nine of today's candles for momentum", () => {
-    expect(warmupReadyAt({ mechanism: "momentum", duration: 1 })).toBe("09:24");
-    expect(warmupReadyAt({ mechanism: "momentum", duration: 5 })).toBe("10:00");
-    expect(warmupReadyAt({ mechanism: "momentum", duration: 15 })).toBe("11:30");
+  it("is nine of today's candles for momentum v1, which rebuilds its trend line daily", () => {
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 1, version: 1 })).toBe("09:24");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 5, version: 1 })).toBe("10:00");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 15, version: 1 })).toBe("11:30");
+  });
+
+  it("is the first candle for v2 and v3, which carry their trend line overnight", () => {
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 15 })).toBe("09:30");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 5, version: 2 })).toBe("09:20");
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 15, version: 3 })).toBe("09:30");
+  });
+
+  it("is four minutes for v3 at one minute, whose burst test needs three of today's candles", () => {
+    expect(warmupReadyAt({ mechanism: "momentum", duration: 1, version: 3 })).toBe("09:19");
   });
 });
 
@@ -77,9 +87,13 @@ describe("warmupWarning", () => {
   });
 
   it("warns when a slower signal first reads after the first window opens", () => {
-    const warning = warmupWarning([w("09:35", "11:30")], { mechanism: "momentum", duration: 15 });
+    const warning = warmupWarning([w("09:35", "11:30")], { mechanism: "momentum", duration: 15, version: 1 });
     expect(warning).toMatch(/11:30/);
     expect(warning).toMatch(/15-minute candles/);
+  });
+
+  it("says nothing for momentum v2 at 15 minutes, which reads from its first candle", () => {
+    expect(warmupWarning([w("09:35", "11:30")], { mechanism: "momentum", duration: 15, version: 2 })).toBeNull();
   });
 
   it("says nothing for a bot with no signal, like the iron fly", () => {

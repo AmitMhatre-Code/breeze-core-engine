@@ -4,8 +4,9 @@ import { apiClient } from "@/lib/api-client";
 import type { BacktestPeriod } from "@/lib/bots-backtest";
 
 /** The Signals page (docs/signals-streamline-plan.md sections 4–6). Every signal is a cell of a
- *  fixed grid — mechanism × duration × index — and a pure function of the one-minute futures
- *  bars ICICI's history serves, so every live reading can be backtested. */
+ *  fixed grid — mechanism × version × duration × index — and a pure function of the one-minute
+ *  futures bars ICICI's history serves, so every live reading can be backtested. Momentum runs
+ *  v1, v2 and v3 side by side until v3 has been judged (design-decisions #72). */
 
 export type SignalMechanism = "expansion" | "momentum";
 export type SignalDuration = 1 | 5 | 15;
@@ -18,6 +19,16 @@ export const MECHANISM_LABEL: Record<SignalMechanism, string> = {
   momentum: "Momentum",
 };
 export const DURATIONS: SignalDuration[] = [1, 5, 15];
+
+/** Every running version, newest first — mirrors the backend's `mechanisms.VERSIONS`. */
+export const SIGNAL_VERSIONS: Record<SignalMechanism, number[]> = { expansion: [3], momentum: [3, 2, 1] };
+/** What a saved choice without a version means: the version current before versions coexisted. */
+export const LEGACY_VERSION: Record<SignalMechanism, number> = { expansion: 3, momentum: 2 };
+
+/** "Momentum v3", or just "Volume expansion" while a mechanism runs a single version. */
+export function versionName(mechanism: SignalMechanism, version: number): string {
+  return SIGNAL_VERSIONS[mechanism].length > 1 ? `${MECHANISM_LABEL[mechanism]} v${version}` : MECHANISM_LABEL[mechanism];
+}
 export const INDEX_LABEL: Record<SignalIndex, string> = { nifty: "NIFTY", sensex: "SENSEX" };
 
 export type SignalReading = {
@@ -100,6 +111,8 @@ export type SignalSeries = {
   version: number;
   uses_oi: boolean;
   thin_data: boolean;
+  /** False for a series the grid deliberately does not run (Momentum v3 on SENSEX). */
+  published: boolean;
   name: string;
   reading: SignalReading;
   last_backtest: SeriesBacktestSummary | null;
@@ -116,11 +129,17 @@ export type MechanismAvailability = {
   version: number;
 };
 
+/** One running version of a mechanism; the page has one section per version. */
 export type MechanismSection = {
   id: SignalMechanism;
+  /** `momentum-v3` — unique per section, unlike `id`. */
+  key: string;
   name: string;
   summary: string;
+  mechanism_summary: string;
   version: number;
+  /** The newest version; older ones are kept for comparison until it has been judged. */
+  latest: boolean;
   availability: MechanismAvailability;
   series: SignalSeries[];
 };
@@ -143,6 +162,8 @@ export type SignalJob = {
 export type SignalsOverview = {
   mechanisms: MechanismSection[];
   navbar_mechanism: SignalMechanism;
+  /** The version the navbar shows: the newest one bots may trade. */
+  navbar_version: number;
   navbar_duration: number;
   gate_days: number;
   cost_lots: number;
@@ -266,10 +287,12 @@ const REASON_TEXT: Record<string, string> = {
   anchor_not_traded: "nothing traded to measure from",
   vwap_unavailable: "no average price yet",
   not_published: "not running",
+  withdrawn_for_index: "not run on this index",
   no_expansion: "nothing unusual",
   unwind: "positions closing, not opening",
   volume_below_threshold: "trading too light",
   no_confluence: "no clear trend",
+  move_too_small: "move too small",
 };
 
 export function reasonText(reason: string | null | undefined): string {

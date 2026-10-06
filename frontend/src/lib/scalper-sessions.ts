@@ -30,17 +30,32 @@ function addMinutes(hhmm: string, minutes: number): string {
   return `${hh}:${mm}`;
 }
 
-/** When a signal can first read today (docs/signals-streamline-plan.md decision 15).
+type WarmupSignal = Pick<SignalChoice, "mechanism" | "duration"> & { version?: number };
+
+/** When a signal can first read today (docs/signals-streamline-plan.md decision 15, #72).
  *
- *  Levels reset every morning; only size rankings carry over from the previous sessions. So
- *  volume expansion reads once NIFTY's 15-minute open-interest window has filled (09:30), and
- *  momentum once nine of today's candles exist for its trend line: 09:24 at 1 minute, 10:00 at
- *  5, 11:30 at 15. A restart mid-session rebuilds the day from its stored bars, so it does not
- *  re-pay this.
+ *  Size rankings carry over from the previous sessions, and so, from Momentum v2 on, does the
+ *  trend line (shifted by the overnight gap). So volume expansion reads once NIFTY's 15-minute
+ *  open-interest window has filled (09:30); Momentum v2 and v3 at 5 or 15 minutes at their first
+ *  candle's close; Momentum v3 at 1 minute once three of today's candles exist for its burst test
+ *  (09:19); and Momentum v1, which rebuilds its trend line every morning, once nine of today's
+ *  candles exist: 09:24 at 1 minute, 10:00 at 5, 11:30 at 15. A restart mid-session rebuilds the
+ *  day from its stored bars, so it does not re-pay this.
  */
-export function warmupReadyAt(signal: Pick<SignalChoice, "mechanism" | "duration">): string {
-  if (signal.mechanism === "momentum") return addMinutes(MARKET_OPEN, 9 * signal.duration);
-  return addMinutes(MARKET_OPEN, 15);
+export function warmupReadyAt(signal: WarmupSignal): string {
+  if (signal.mechanism !== "momentum") return addMinutes(MARKET_OPEN, 15);
+  const version = signal.version ?? 2;
+  if (version === 1) return addMinutes(MARKET_OPEN, 9 * signal.duration);
+  if (version >= 3 && signal.duration === 1) return addMinutes(MARKET_OPEN, 4);
+  return addMinutes(MARKET_OPEN, signal.duration);
+}
+
+function warmupReason(signal: WarmupSignal): string {
+  if (signal.mechanism !== "momentum") return "its open-interest window needs 15 minutes of today's trading";
+  const version = signal.version ?? 2;
+  if (version === 1) return `its trend line needs nine of today's ${signal.duration}-minute candles`;
+  if (version >= 3 && signal.duration === 1) return "its volume test compares each candle with today's last three";
+  return `it reads when its first ${signal.duration}-minute candle closes`;
 }
 
 /** A non-blocking note when the chosen signal first reads after the first window opens.
@@ -50,18 +65,14 @@ export function warmupReadyAt(signal: Pick<SignalChoice, "mechanism" | "duration
  */
 export function warmupWarning(
   sessions: SessionWindow[],
-  signal: Pick<SignalChoice, "mechanism" | "duration"> | null,
+  signal: WarmupSignal | null,
 ): string | null {
   if (!signal || sessions.length === 0) return null;
   const ready = warmupReadyAt(signal);
   const earliest = sessions.map((w) => w.start).sort()[0];
   if (earliest >= ready) return null;
-  const why =
-    signal.mechanism === "momentum"
-      ? `its trend line needs nine of today's ${signal.duration}-minute candles`
-      : "its open-interest window needs 15 minutes of today's trading";
   return (
-    `This signal first reads at about ${ready} — ${why}. Trading before then will only log ` +
+    `This signal first reads at about ${ready} — ${warmupReason(signal)}. Trading before then will only log ` +
     `"warming up".`
   );
 }

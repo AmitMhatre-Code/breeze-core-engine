@@ -24,12 +24,13 @@ from icici_breeze_backend.app.services.index_signal.mechanisms import (
     DURATIONS,
     INDEX_NAMES,
     INDICES,
-    MECHANISM_NAMES,
     MECHANISM_SUMMARIES,
-    MECHANISMS,
     NAVBAR_DURATION,
-    VERSIONS,
+    VERSION_SUMMARIES,
     SeriesKey,
+    latest_version,
+    options,
+    version_name,
 )
 
 router = APIRouter()
@@ -79,38 +80,68 @@ def _job() -> Optional[dict[str, Any]]:
     return state
 
 
+def _run_summary(run: dict[str, Any], key: SeriesKey) -> Optional[dict[str, Any]]:
+    """This series' summary in `run`, if the run replayed its version.
+
+    A run from before versions coexisted (#72) recorded one version per mechanism and keyed its
+    series by the plain id (`nifty:momentum:15m`), whatever that version was -- so a v1-era run's
+    plain ids are v1's, never v2's."""
+    summary = run.get("summary") or {}
+    recorded = (run.get("versions") or {}).get(key.mechanism)
+    if isinstance(recorded, (list, tuple)):
+        s = summary.get(key.id) if key.version in recorded else None
+    elif recorded == key.version:
+        s = summary.get(f"{key.index}:{key.mechanism}:{key.duration}m")
+    else:
+        s = None
+    return s if isinstance(s, dict) else None
+
+
+def _latest_summary(runs: list[dict[str, Any]], key: SeriesKey) -> Optional[dict[str, Any]]:
+    for run in runs:  # newest first
+        s = _run_summary(run, key)
+        if s is not None:
+            return s
+    return None
+
+
 @router.get("")
 def signals_overview(ctx: RequestContext = Depends(get_request_context)) -> dict[str, Any]:
     from icici_breeze_backend.app.services.index_signal import publisher
 
     runs = signal_backtest.completed_runs()
     latest = runs[0] if runs else None
-    latest_summary = (latest or {}).get("summary") or {}
+    # One section per running version of each mechanism (#72): expansion, then Momentum v3, v2, v1.
     mechanisms = []
-    for mechanism in MECHANISMS:
+    for mechanism, version in options():
         series = []
         for duration in DURATIONS:
             for index in INDICES:
-                key = SeriesKey(mechanism, duration, index)
+                key = SeriesKey(mechanism, duration, index, version)
                 reading = reader.get_signal(key)
-                s = latest_summary.get(key.id)
+                s = _latest_summary(runs, key)
                 series.append({
                     **key.to_dict(),
                     "index_name": INDEX_NAMES[index],
                     "reading": {f: reading.get(f) for f in _READING_FIELDS},
-                    "last_backtest": _series_summary(s, duration) if isinstance(s, dict) else None,
+                    "last_backtest": _series_summary(s, duration) if s is not None else None,
                 })
         mechanisms.append({
             "id": mechanism,
-            "name": MECHANISM_NAMES[mechanism],
-            "summary": MECHANISM_SUMMARIES[mechanism],
-            "version": VERSIONS[mechanism],
-            "availability": gate.mechanism_availability(mechanism),
+            "key": f"{mechanism}-v{version}",
+            "name": version_name(mechanism, version),
+            "summary": VERSION_SUMMARIES.get((mechanism, version), MECHANISM_SUMMARIES[mechanism]),
+            "mechanism_summary": MECHANISM_SUMMARIES[mechanism],
+            "version": version,
+            "latest": version == latest_version(mechanism),
+            "availability": gate.mechanism_availability(mechanism, version),
             "series": series,
         })
+    navbar_mechanism = signal_settings.navbar_mechanism()
     return {
         "mechanisms": mechanisms,
-        "navbar_mechanism": signal_settings.navbar_mechanism(),
+        "navbar_mechanism": navbar_mechanism,
+        "navbar_version": gate.navbar_version(navbar_mechanism),
         "navbar_duration": NAVBAR_DURATION,
         "cost_lots": signal_settings.cost_lots(),
         "max_cost_lots": signal_settings.MAX_COST_LOTS,

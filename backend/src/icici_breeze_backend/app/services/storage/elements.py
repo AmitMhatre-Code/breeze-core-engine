@@ -17,8 +17,8 @@ Deletes are by IST calendar date, inclusive at both ends. What each date means:
 
 Guarded on purpose:
 
-* the two most recent sessions of futures bars, which the live navbar signal warms up from
-  (`index_signal.warmup.cached_bars`) -- deleting them only costs ICICI calls to fetch back;
+* the most recent sessions of futures bars the live signals warm up from -- ten while Momentum
+  v3 runs (`index_signal.warmup.cached_bars`) -- deleting them only costs ICICI calls to fetch back;
 * the log files the processes are writing to now, and today's bot audit file;
 * a bot backtest run that is still running;
 * signal backtest *rows*: only their zips go, because the 30-day bot gate reads the rows;
@@ -291,12 +291,13 @@ def invalidate_cache_memo() -> None:
 
 
 def protected_futures_from(today: Optional[datetime.date] = None) -> datetime.date:
-    """The first day of futures bars that deletion may not touch: the older of the two sessions
-    the live signal warms up from. Everything from it onward (today included) is kept."""
+    """The first day of futures bars that deletion may not touch: the oldest of the sessions the
+    live signals warm up from. Everything from it onward (today included) is kept."""
     from icici_breeze_backend.app.services.index_signal import warmup
+    from icici_breeze_backend.app.services.index_signal.mechanisms import INDICES, warmup_sessions
 
     today = today or now_ist().date()
-    sessions = warmup.previous_sessions(today)
+    sessions = warmup.previous_sessions(today, max(warmup_sessions(i) for i in INDICES))
     return sessions[0] if sessions else today
 
 

@@ -5,13 +5,16 @@ replay, the live engines must start from those same bars, so each trading day th
 from the history cache -- never from whatever the process happened to see yesterday, which can
 differ from ICICI's record wherever a tick went missing.
 
-What carries over is only ever a *size* ranking: expansion's move and volume percentiles and
-momentum's volume rank. Levels (EMA, VWAP, a window's anchor price) are rebuilt from today's bars,
-and no window may span the overnight break, so a gap at the open is never read as a move.
+What carries over is mostly *size* rankings -- expansion's move and volume percentiles, Momentum's
+volume baselines and v3's ATR -- plus Momentum's trend line from v2 on, carried in shifted by the
+overnight gap so the gap itself never reads as a move. VWAP and a window's anchor price are
+rebuilt from today's bars, and no window may span the overnight break.
 
-When the cache lacks the last two sessions, they are fetched: about one call per index a day,
-under the user's limiter and marked advisory (#24). It is the only history call made during
-market hours; the backtest fetcher still refuses 09:00-15:45 (#36).
+How many sessions is set by the most demanding series an index runs (`mechanisms.warmup_sessions`):
+two for every rolling baseline, ten on NIFTY for Momentum v3's same-time-of-day volume test (#72).
+When the cache lacks them they are fetched under the user's limiter and marked advisory (#24) --
+two sessions fit in one call, ten in about five. It is the only history call made during market
+hours; the backtest fetcher still refuses 09:00-15:45 (#36).
 """
 from __future__ import annotations
 
@@ -21,15 +24,17 @@ from typing import Optional
 
 from icici_breeze_backend.app.services.index_signal import bars as bars_mod
 from icici_breeze_backend.app.services.index_signal.bars import Bar
-from icici_breeze_backend.app.services.index_signal.mechanisms import STOCK_CODES
+from icici_breeze_backend.app.services.index_signal.mechanisms import (
+    STOCK_CODES,
+    WARMUP_CALENDAR_DAYS,
+    warmup_sessions,
+)
 
 _logger = logging.getLogger(__name__)
 
-WARMUP_SESSIONS = 2
-# Enough calendar days to find two sessions across a long weekend and a holiday.
-_LOOKBACK_DAYS = 12
-# History calls one warm-up fetch may spend (two sessions fit in one call per index).
-_MAX_CALLS = 4
+_LOOKBACK_DAYS = WARMUP_CALENDAR_DAYS
+# History calls one warm-up fetch may spend: ten sessions at ICICI's 1,000-bar cap, with room.
+_MAX_CALLS = 6
 
 
 def _holidays() -> set[datetime.date]:
@@ -39,7 +44,7 @@ def _holidays() -> set[datetime.date]:
 
 
 def previous_sessions(
-    today: datetime.date, n: int = WARMUP_SESSIONS, holidays: Optional[set[datetime.date]] = None
+    today: datetime.date, n: int, holidays: Optional[set[datetime.date]] = None
 ) -> list[datetime.date]:
     """The `n` trading days before `today`, oldest first."""
     from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
@@ -63,7 +68,7 @@ def missing_sessions(
     store.ensure_tables(cache_path)
     counts = store.day_bar_counts(stock_code=STOCK_CODES[index], table="futures_candles", path=cache_path)
     return [
-        d for d in previous_sessions(today, holidays=holidays)
+        d for d in previous_sessions(today, warmup_sessions(index), holidays=holidays)
         if counts.get(d, 0) < store.COMPLETE_DAY_BARS
     ]
 
@@ -75,14 +80,15 @@ def cached_bars(
     cache_path: Optional[str] = None,
     holidays: Optional[set[datetime.date]] = None,
 ) -> list[Bar]:
-    """The cached bars of the last two sessions before today, oldest first.
+    """The cached bars of the warm-up sessions before today, oldest first.
 
-    Two sessions cover every window a series keeps (expansion ranks the last 120 windows; a
-    15-minute momentum candle's volume is ranked against the last 20), so the engines reach the
-    same state as a replay warmed on ten days -- at a fraction of the work."""
+    Two sessions cover every rolling window a series keeps (expansion ranks the last 120 windows;
+    a 15-minute Momentum v2 candle's volume is ranked against the last 20), and ten cover
+    Momentum v3's slot baseline, so the engines reach the same state as the backtest's warm-up --
+    at a fraction of the work."""
     from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 
-    sessions = previous_sessions(today, holidays=holidays)
+    sessions = previous_sessions(today, warmup_sessions(index), holidays=holidays)
     if not sessions:
         return []
     store.ensure_tables(cache_path)

@@ -63,10 +63,7 @@ _seeded: dict[str, datetime.date] = {}
 
 
 def _series(config: CasBingoConfig, index_code: str) -> Any:
-    from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey
-
-    choice = config.signal
-    return SeriesKey(choice.mechanism, choice.duration, market.SIGNAL_LABEL[index_code])
+    return config.signal.series_key(market.SIGNAL_LABEL[index_code])
 
 
 def _direction(config: CasBingoConfig) -> str:

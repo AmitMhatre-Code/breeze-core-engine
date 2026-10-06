@@ -23,6 +23,8 @@ export type IndexSignalSummary = {
   reason: string | null;
   signal: number | null;
   mechanism?: "expansion" | "momentum" | null;
+  /** Which version of the mechanism this reading comes from (design-decisions #72). */
+  version?: number | null;
   duration_minutes?: number | null;
   computed_at: number | null;
   thin_data?: boolean | null;

@@ -38,7 +38,7 @@ export const BACKTEST_BOT_TYPE: Record<BacktestBot, BotType> = {
 export type ComparisonRow = {
   id: string;
   label: string;
-  signal: { mechanism: string; duration: number; direction?: string } | null;
+  signal: { mechanism: string; version?: number; duration: number; direction?: string } | null;
   is_saved: boolean;
   trades: number;
   win_rate_pct: number | null;

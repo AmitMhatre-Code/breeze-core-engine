@@ -207,12 +207,15 @@ export function useSignalAvailability(enabled = true) {
     enabled,
     staleTime: 60_000,
     queryFn: ({ signal }) => apiClient.get<SignalsOverview>("/api/signals", signal),
-    select: (d): Record<SignalMechanism, MechanismAvailability> =>
-      Object.fromEntries(d.mechanisms.map((m) => [m.id, m.availability])) as Record<
-        SignalMechanism,
-        MechanismAvailability
-      >,
+    // Keyed `momentum-v3`: each version earns the 30-day gate on its own (#72).
+    select: (d): Record<string, MechanismAvailability> =>
+      Object.fromEntries(d.mechanisms.map((m) => [signalKey(m.id, m.version), m.availability])),
   });
+}
+
+/** The availability key of one version of a mechanism, as `useSignalAvailability` returns it. */
+export function signalKey(mechanism: SignalMechanism, version: number): string {
+  return `${mechanism}-v${version}`;
 }
 
 export const SCALPER_BOT_TYPES: BotType[] = [
@@ -375,11 +378,14 @@ export type IronFlyScalperConfig = {
   risk: ScalperRiskConfig;
 };
 
-/** A cell of the signal grid, plus the bot's own direction (docs/signals-streamline-plan.md 7). */
+/** A cell of the signal grid, plus the bot's own direction (docs/signals-streamline-plan.md 7).
+ *  `version` pins the mechanism's definition (design-decisions #72); the server resolves a
+ *  missing one to the legacy version, so a stored choice always comes back with it. */
 export type SignalChoice = {
   mechanism: SignalMechanism;
   duration: SignalDuration;
   direction: SignalDirection;
+  version: number;
 };
 
 /** One scalper round trip. `friction` is a first-class field, not a derived one: at roughly

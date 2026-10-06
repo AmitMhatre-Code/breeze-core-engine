@@ -32,7 +32,8 @@ import {
 } from "@/lib/signals";
 
 /**
- * Signals (docs/signals-streamline-plan.md section 6): one section per mechanism, written for
+ * Signals (docs/signals-streamline-plan.md section 6): one section per mechanism version
+ * (Momentum runs v3, v2 and v1 side by side until v3 has been judged, design-decisions #72), written for
  * someone who is not a quant — what it watches, what it says now, what its last backtest says,
  * whether bots may use it — then one backtest button and the log of every backtest run.
  */
@@ -70,7 +71,7 @@ export function SignalsPage() {
         <>
           <BacktestPanel data={data} running={running} />
           {data.mechanisms.map((m) => (
-            <MechanismCard key={m.id} mechanism={m} navbar={data.navbar_mechanism === m.id} data={data} />
+            <MechanismCard key={m.key} mechanism={m} navbar={data.navbar_mechanism === m.id} data={data} />
           ))}
           <ActivityLog running={running} gateDays={data.gate_days} />
         </>
@@ -100,8 +101,9 @@ function BacktestPanel({ data, running }: { data: SignalsOverview; running: bool
         Backtest every signal
       </h2>
       <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted">
-        One run replays both signals at 1, 5 and 15 minutes on NIFTY and SENSEX and saves every reading, every
-        call and what followed it in one zip. Missing history is fetched from ICICI outside market hours.
+        One run replays every signal &mdash; Volume expansion and Momentum v3, v2 and v1 &mdash; at 1, 5 and 15
+        minutes on NIFTY and SENSEX and saves every reading, every call and what followed it in one zip. Each
+        version earns its place with bots separately. Missing history is fetched from ICICI outside market hours.
       </p>
       <CostLotsField data={data} />
       {running && job ? (
@@ -261,7 +263,11 @@ function MechanismCard({
   data: SignalsOverview;
 }) {
   const setNavbar = useSetNavbarMechanism();
-  const titleId = `signal-${m.id}-title`;
+  const titleId = `signal-${m.key}-title`;
+  // The navbar follows a mechanism, at the newest version bots may trade, so the choice sits on
+  // the newest version's card only.
+  const navbarNote =
+    m.latest && data.navbar_version !== m.version ? ` — shows v${data.navbar_version} until v${m.version} is available to bots` : "";
   const a = m.availability;
   const indices: SignalIndex[] = ["nifty", "sensex"];
   return (
@@ -270,6 +276,11 @@ function MechanismCard({
         <div>
           <h2 id={titleId} className="app-text-heading">
             {m.name}
+            {!m.latest ? (
+              <span className="ml-2 rounded-md border border-border-soft px-1.5 py-0.5 align-middle text-micro font-semibold text-muted">
+                Kept for comparison
+              </span>
+            ) : null}
           </h2>
           <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted">{m.summary}</p>
         </div>
@@ -282,17 +293,19 @@ function MechanismCard({
           >
             {a.available ? "Available to bots" : `Needs a ${data.gate_days}-day backtest`}
           </span>
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
-            <input
-              type="radio"
-              name="navbar-signal"
-              checked={navbar}
-              disabled={setNavbar.isPending}
-              onChange={() => setNavbar.mutate(m.id)}
-              className="accent-[var(--accent)]"
-            />
-            Show in navbar ({data.navbar_duration}m)
-          </label>
+          {m.latest ? (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+              <input
+                type="radio"
+                name="navbar-signal"
+                checked={navbar}
+                disabled={setNavbar.isPending}
+                onChange={() => setNavbar.mutate(m.id)}
+                className="accent-[var(--accent)]"
+              />
+              Show in navbar ({data.navbar_duration}m){navbarNote}
+            </label>
+          ) : null}
         </div>
       </div>
 
@@ -319,6 +332,16 @@ function MechanismCard({
                 {indices.map((i) => {
                   const s = seriesFor(m, d, i);
                   if (!s) return <td key={i} />;
+                  if (!s.published) {
+                    return (
+                      <td key={i} className="py-2 pr-3">
+                        <span className="text-hint text-faint">
+                          Not run on {INDEX_LABEL[i]}: its futures go untraded in about half of all minutes, so a
+                          single trade after a quiet spell would pass the volume test.
+                        </span>
+                      </td>
+                    );
+                  }
                   const tone = verdictTone(s.last_backtest?.best);
                   const detail = horizonDetail(s.last_backtest ?? null);
                   return (

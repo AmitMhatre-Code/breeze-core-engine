@@ -50,11 +50,34 @@ def session_bars(day: datetime.date, closes: list[float], volumes: list[float] |
 # --------------------------------------------------------------------------------------
 
 
-def test_grid_has_twelve_series_and_ids_round_trip():
+def test_grid_runs_twenty_one_series_and_ids_round_trip():
+    """Expansion and Momentum v1-v3 on both indices, less Momentum v3 on SENSEX (#72)."""
     keys = all_keys()
-    assert len(keys) == 12
-    for key in keys:
+    assert len(keys) == 21
+    assert len(all_keys(include_withdrawn=True)) == 24
+    for key in all_keys(include_withdrawn=True):
         assert SeriesKey.parse(key.id) == key
+
+
+def test_the_legacy_version_keeps_its_pre_versioning_id():
+    """Stored ids, Redis keys and saved bots keep meaning what they meant (#72)."""
+    assert SeriesKey("momentum", 15, "nifty").version == 2
+    assert SeriesKey("momentum", 15, "nifty", 2).id == "nifty:momentum:15m"
+    assert SeriesKey("momentum", 1, "nifty", 3).id == "nifty:momentum:v3:1m"
+    assert SeriesKey("momentum", 5, "nifty", 1).slug == "momentum-v1-5m"
+    assert SeriesKey("expansion", 15, "nifty").id == "nifty:expansion:15m"
+    assert SeriesKey.parse("nifty:momentum:15m").version == 2
+    with pytest.raises(ValueError):
+        SeriesKey("momentum", 1, "nifty", 4)
+
+
+def test_momentum_v3_does_not_run_on_sensex():
+    key = SeriesKey("momentum", 1, "sensex", 3)
+    assert not key.published
+    eng = SeriesEngine(key)
+    eng.seed(_wiggly_day(DAY))
+    snap = eng.snapshot(at(DAY, 10, 0, 5))
+    assert snap["state"] == "unavailable" and snap["reason"] == "withdrawn_for_index"
 
 
 def test_nifty_short_windows_read_oi_over_fifteen_minutes():
@@ -280,7 +303,9 @@ def _wiggly_day(day: datetime.date) -> list[Bar]:
 
 @pytest.mark.parametrize("key", all_keys(), ids=lambda k: k.id)
 def test_live_feed_and_replay_produce_identical_readings(key):
-    history = _wiggly_day(DAY - datetime.timedelta(days=1)) + _wiggly_day(DAY)
+    history = [
+        b for n in range(key.warmup_sessions, 0, -1) for b in _wiggly_day(DAY - datetime.timedelta(days=n))
+    ] + _wiggly_day(DAY)
     replayed = [snap for _b, snap in replay_series(history, key)]
     live = SeriesEngine(key)
     live_snaps = []
@@ -290,4 +315,4 @@ def test_live_feed_and_replay_produce_identical_readings(key):
             live_snaps.append(live.snapshot(b.close_ts))
     strip = lambda s: {k: v for k, v in s.items() if k != "computed_at"}  # noqa: E731
     assert [strip(s) for s in live_snaps] == [strip(s) for s in replayed]
-    assert any(s["state"] != "unavailable" for s in replayed[360:])
+    assert any(s["state"] != "unavailable" for s in replayed[-360:])

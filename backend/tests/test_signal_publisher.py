@@ -11,7 +11,7 @@ from icici_breeze_backend.app.core.timezone import IST
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.index_signal import bars as bars_mod
 from icici_breeze_backend.app.services.index_signal import publisher, reader, warmup
-from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey, all_keys
+from icici_breeze_backend.app.services.index_signal.mechanisms import SeriesKey, all_keys, warmup_sessions
 from icici_breeze_backend.app.services.index_signal.series import replay_series
 
 DAY = datetime.date(2026, 7, 15)  # a Wednesday far from any live session's keys
@@ -94,7 +94,7 @@ def test_todays_series_is_the_replay_of_the_warm_up_and_todays_bars(tmp_path):
     """CAS Bingo reads the day's history this way; it must equal what a backtest of today reads."""
     cache = str(tmp_path / "cache.sqlite3")
     store.ensure_tables(cache)
-    for k, d in enumerate(warmup.previous_sessions(DAY)):
+    for k, d in enumerate(warmup.previous_sessions(DAY, warmup_sessions("nifty"))):
         _store_session(cache, d, 25_000.0 + 30 * k)
     _feed_minutes("nifty", DAY, 40)
     now = at(DAY, 9, 55, 5)

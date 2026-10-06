@@ -556,9 +556,10 @@ class TestOneClickBacktest:
         # Mock mode: nothing fetched, and the row says so rather than pretending it did.
         assert any("mode" in n for n in row.detail["summary"]["notes"])
 
-        # Bot 3 is compared across every signal setting it could trade (plan section 8).
+        # Bot 3 is compared across every signal setting it could trade (plan section 8): four
+        # signal choices (expansion, Momentum v3, v2, v1 -- #72) x three durations x two ways.
         comparison = row.detail["summary"]["comparison"]
-        assert len(comparison) == 12 and sum(1 for c in comparison if c["is_saved"]) == 1
+        assert len(comparison) == 24 and sum(1 for c in comparison if c["is_saved"]) == 1
 
         # The row downloads one zip: the comparison, each setting's files, and the trail.
         import json
@@ -571,7 +572,7 @@ class TestOneClickBacktest:
             assert {"README.txt", "run.json", "summary.csv", "audit.jsonl"} <= names
             assert {"momentum-1m-follow/trades.csv", "momentum-1m-follow/daily.csv",
                     "momentum-1m-follow/decisions.csv"} <= names
-            assert len(zf.read("summary.csv").decode().strip().splitlines()) == 13
+            assert len(zf.read("summary.csv").decode().strip().splitlines()) == 25
             events = [json.loads(line)["event"] for line in zf.read("audit.jsonl").decode().splitlines()]
         assert events[0] == "backtest_started" and events[-1] == "backtest_finished"
 
@@ -604,8 +605,8 @@ class TestOneClickBacktest:
         assert state["status"] == "completed", state
 
         assert seen and all(phase == "replaying" and day == "2026-03-09" for phase, _s, day in seen)
-        assert [step for _p, step, _d in seen] == list(range(1, 13))
-        assert state["steps"] == 12 and state["phase"] == "recording"
+        assert [step for _p, step, _d in seen] == list(range(1, 25))
+        assert state["steps"] == 24 and state["phase"] == "recording"
         assert state["elapsed_seconds"] >= state["quiet_seconds"] >= 0
 
     def test_a_trail_belongs_to_its_user_and_rejects_traversal(self, env, audit):
@@ -669,7 +670,7 @@ class TestOneClickBacktest:
         assert _wait_for_job()["status"] == "completed"
 
         decisions = [m for m in written if m.endswith("/decisions.csv")]
-        assert len(decisions) == 12, written
+        assert len(decisions) == 24, written
         assert written.index(decisions[-1]) < written.index("summary.csv")
 
     def test_a_run_that_fails_leaves_no_zip_behind(self, env, audit, monkeypatch):
@@ -844,7 +845,7 @@ class TestTheReadingsCacheIsBounded:
         assert len(seen) > len(cache), f"{bot}: nothing was bounded, so this proves nothing"
 
     def test_a_real_run_builds_each_series_once(self, env, audit, monkeypatch):
-        """End to end: twelve settings, six series, six builds."""
+        """End to end: twenty-four settings, twelve series, twelve builds."""
         from icici_breeze_backend.app.services.bots.scalping import backtest_common
 
         built: list[str] = []
@@ -859,7 +860,7 @@ class TestTheReadingsCacheIsBounded:
 
         jobs.start_bot_backtest("u1", "momentum", "last_day")
         assert _wait_for_job()["status"] == "completed"
-        assert len(built) == 6 and len(set(built)) == 6, built
+        assert len(built) == 12 and len(set(built)) == 12, built
 
 
 class TestTheMemoryCeiling:
@@ -909,7 +910,7 @@ class TestTheMemoryCeiling:
         jobs.start_bot_backtest("u1", "momentum", "last_day")
         state = _wait_for_job()
         assert state["status"] == "failed"
-        assert "after 1 of 12 signal setting(s)" in state["error"]
+        assert "after 1 of 24 signal setting(s)" in state["error"]
 
         (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
         assert row.status == "failed" and row.reason_code == "backtest_failed"

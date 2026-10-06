@@ -262,6 +262,7 @@ export function CasBingoSettings({
               disabled={disabled}
               withDirection={config.strategy === "debit_spread"}
               directionHint="Fading buys the spread against the flip. The credit spread already sells against the move, so it has no direction to choose."
+              tradesSensex={Boolean(config.indices?.BSESEN?.enabled)}
               onChange={(signal) => onConfig({ signal })}
             />
           </div>

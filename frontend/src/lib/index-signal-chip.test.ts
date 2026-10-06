@@ -61,3 +61,13 @@ describe("indexSignalChip", () => {
     expect(indexSignalChip("NIFTY", undefined).visible).toBe(false);
   });
 });
+
+describe("the navbar names the Momentum version it shows (#72)", () => {
+  it("says v3 or v2 in the tooltip", () => {
+    const chip = indexSignalChip("NIFTY", {
+      state: "neutral", reason: "volume_below_threshold", signal: 0.4, mechanism: "momentum",
+      version: 3, duration_minutes: 15, computed_at: 0,
+    });
+    expect(chip.visible && chip.title).toMatch(/Momentum v3 15m/);
+  });
+});

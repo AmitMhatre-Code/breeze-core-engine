@@ -58,13 +58,28 @@ When each candle (1, 5 or 15 minutes, aligned to 09:15) completes, the reading c
 - **Value:** did it close above the day's VWAP (volume-weighted average price)?
 - **Participation:** is its volume in the top fifth of the last 20 candles?
 
-All three up is **Bullish**, all three down is **Bearish**, anything mixed is **Quiet**. The trend line carries over from the previous day, adjusted for the overnight gap, so the 15-minute reading is not blind all morning. VWAP starts fresh each day.
+All three up is **Bullish**, all three down is **Bearish**, anything mixed is **Quiet**. VWAP starts fresh each day.
 
-### Durations and the twelve readings
+Momentum runs in **three versions side by side**. Each is a fixed definition. The older two are kept so the newest can be compared with them, and they will be retired once it has been judged.
 
-Each mechanism runs at **1, 5 and 15 minutes**, for both indices: twelve readings in all. The duration is both the window a reading looks at and how long a call stands. A call extends if the next window fires the same way. Shorter durations fire more often and are noisier.
+| | v1 | v2 | v3 (newest) |
+|---|---|---|---|
+| **Trend line** | Rebuilt each morning, so nothing until nine of today's candles have closed (11:30 for the 15-minute reading) | Carried over from the previous day, adjusted for the overnight gap, so it reads from the first candle | As v2 |
+| **Participation** | Top fifth of the last 20 candles | As v1 | **1 minute:** more volume than each of the session's last three candles. **5 and 15 minutes:** top fifth of the same time of day over the last ten sessions |
+| **Minimum move** | None | None | The close must be at least half an ATR (average true range, a measure of how far prices typically move per candle) beyond the trend line |
+| **SENSEX** | Runs | Runs | **Not run** |
 
-The grid is fixed. There are no adjustable versions of a signal, because a signal that can be tweaked until it looks good on past data proves nothing. What is your choice is which reading a bot uses, and whether it **follows** the call or **fades** it (trades against it).
+Why v3 changes these:
+
+- **Time of day.** Index futures trade heavily at the open and close and lightly in the middle of the day. Comparing a candle with the last 20 candles meant the open was compared with yesterday's quieter afternoon, and a busy late morning with an even busier first hour. Comparing with the same time on previous days takes that pattern out.
+- **A clear move.** Under v1 and v2, a close a few paise above the line counts the same as a 50-point break. v3 needs a move that is large for the current market.
+- **SENSEX.** SENSEX futures go untraded in about half of all minutes, so after a quiet spell a single trade would pass the volume test. v3 does not run on SENSEX, and the Signals page says so in place of a reading.
+
+### Durations and the readings
+
+Each mechanism (and each Momentum version) runs at **1, 5 and 15 minutes**, for both indices. That is 21 readings while Momentum runs three versions: twelve on NIFTY and nine on SENSEX. The duration is both the window a reading looks at and how long a call stands. A call extends if the next window fires the same way. Shorter durations fire more often and are noisier.
+
+The grid is fixed. You cannot adjust a signal, because a signal that can be tweaked until it looks good on past data proves nothing. What you choose is which reading a bot uses (mechanism, version and duration), and whether it **follows** the call or **fades** it (trades against it).
 
 ## The page
 
@@ -74,20 +89,20 @@ The grid is fixed. There are no adjustable versions of a signal, because a signa
 |---|---|
 | **Trade size for costs** | How many lots you typically trade. A call only counts as useful if the index moved far enough to pay for one round trip. Most of that cost is a flat fee per order, so a bigger trade clears a smaller move. Takes effect on the next backtest. |
 | **Period** | **Last trading day**, **Last trading week**, **Last trading month** or **Custom range**. |
-| **Run backtest** | Replays all twelve readings over the period. While it runs, a progress line shows what it is doing, and **Stop** ends it early. Only one backtest (signal or bot) runs at a time. |
+| **Run backtest** | Replays every reading, every version, over the period. While it runs, a progress line shows what it is doing, and **Stop** ends it early. Only one backtest (signal or bot) runs at a time. |
 
 History that is not already stored on your server is downloaded from ICICI, **outside market hours only**. See [Backtests](backtests.md).
 
-### One section per mechanism
+### One section per version
 
-Each mechanism (**Volume expansion**, **Momentum**) has its own section:
+**Volume expansion**, **Momentum v3**, **Momentum v2** and **Momentum v1** each have their own section. The older Momentum versions are marked **Kept for comparison**.
 
 | Part | What it shows or does |
 |---|---|
-| Description | What the mechanism watches, in one paragraph. |
-| **Available to bots** / **Needs a 30-day backtest** | Whether bots may use this mechanism. See [The 30-day gate](#the-30-day-gate). Hover to see the period covered. |
-| **Show in navbar (15m)** | Choose which mechanism's 15-minute reading appears after NIFTY and SENSEX in the header bar. |
-| Table | One row per **Duration** (1, 5, 15 min) and one column per index. Each cell shows the live state (**Bullish**, **Bearish**, **Quiet**, **No reading**) with the reason for No reading, and one sentence summarising the last backtest. |
+| Description | What this version watches, in one paragraph. |
+| **Available to bots** / **Needs a 30-day backtest** | Whether bots may use this version. Each version earns this on its own. See [The 30-day gate](#the-30-day-gate). Hover to see the period covered. |
+| **Show in navbar (15m)** | On the newest version of each mechanism only. Choose which mechanism's 15-minute reading appears after NIFTY and SENSEX in the header bar. For Momentum, the header shows the newest version bots may use: v2 until v3 has passed the 30-day gate (the note beside the choice says so), then v3. SENSEX, where v3 does not run, stays on v2. |
+| Table | One row per **Duration** (1, 5, 15 min) and one column per index. Each cell shows the live state (**Bullish**, **Bearish**, **Quiet**, **No reading**) with the reason for No reading, and one sentence summarising the most recent backtest of that version. On Momentum v3, the SENSEX column explains why it is not run. |
 
 The backtest sentence has one of a few shapes. For example:
 
@@ -106,17 +121,17 @@ Every signal backtest, newest first:
 |---|---|
 | **Run** | When it ran. |
 | **Period** | The dates it covered. |
-| **Result** | How many calls it found across the twelve readings and how many stood out, following or fading, with any notes about missing data. |
+| **Result** | How many calls it found across all the readings and how many stood out, following or fading, with any notes about missing data. |
 | **For bots** | Whether the run covered enough days to open the 30-day gate. |
 | **Files** | **Download (.zip)**: a summary plus, for each index, every bar replayed, every minute's reading and every call with what the index did next. Any number on the page can be checked from it. |
 
 ## The 30-day gate
 
-A mechanism becomes **available to bots** only once a completed signal backtest has covered **at least 30 calendar days** on the mechanism's current version.
+A signal becomes **available to bots** only once a completed signal backtest has covered **at least 30 calendar days** on that version. Momentum v1, v2 and v3 each earn this separately: one backtest replays all three, so in practice one run of 30 days or more opens them together.
 
 - The gate is about **coverage, not merit**. It makes sure you have seen a month of evidence before you let a bot trade on a signal. It does not judge whether that evidence is good; the backtest sentence is there for you to judge.
 - It applies to practice (paper or simulation) and live bots alike.
-- Whenever a signal's formula is improved, its version changes and the gate closes again until a fresh 30-day backtest has run. Any bot using that signal stands down meanwhile, and its activity log says why.
+- An improved formula is a new version. It starts closed until a 30-day backtest has replayed it, while bots on the older version carry on. A bot uses the version picked in its settings, and never moves to a new one by itself.
 - Backtests themselves are never gated.
 
 ## How a signal is judged

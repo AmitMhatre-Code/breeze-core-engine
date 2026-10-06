@@ -31,6 +31,8 @@ The app is built to be **honest about what works**. Every signal can be replayed
 
 Both mechanisms were improved on 21 September 2026 (see 3.5 below). **A fresh 30-day signal backtest has not yet been run**, so signal-reading bots are currently standing down by design.
 
+On 6 October 2026, after an outside review, **Momentum v3** was added beside v1 and v2 (design-decisions.md #72). v3 judges volume against the same time of day (5m/15m) or the session's last three candles (1m), needs a close half an ATR past its trend line, and does not run on SENSEX. Each version earns the gate on its own. None of the findings below are about v3. The next signal backtest replays all three, and the Long Scalper's comparison now covers 24 signal settings.
+
 ---
 
 ## Part 3 — Backtest results
@@ -157,6 +159,7 @@ Before the backtests existed, Bots 3 and 4 ran in paper mode on live prices. Tho
 | 21 Sep | Momentum trend line carried overnight, gap-adjusted | 15-minute momentum blind until 11:30 every day (3.2) |
 | 21 Sep | A signal trade no longer closes just because its call lapsed | 89% of 1-minute calls simply lapsed after one minute, so the trailing stop never got a chance |
 | 23–24 Sep | Backtests bounded by memory and by the day's remaining ICICI allowance | Long runs being cut short (3.3) |
+| 6 Oct | Momentum v3 beside v1 and v2: time-of-day or burst volume test, ATR minimum move, no SENSEX | Outside review of v2: U-shaped volume, no magnitude test, SENSEX dead minutes |
 
 ### 3.6 What has not been tested yet
 

@@ -62,7 +62,7 @@ def test_defaults_hash_the_same_whether_spelled_out_or_omitted():
     sparse = {"index": "NIFTY"}
     spelled = {
         "index": "NIFTY",
-        "signal": {"mechanism": "expansion", "duration": 15, "direction": "fade"},
+        "signal": {"mechanism": "momentum", "version": 3, "duration": 1, "direction": "follow"},
     }
     assert ev.material_config_hash(BOT, sparse) == ev.material_config_hash(BOT, spelled)
 
