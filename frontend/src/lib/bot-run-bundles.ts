@@ -112,3 +112,40 @@ export function bundleRuns(runsNewestFirst: BotRun[]): BotRunBundle[] {
 export function bundleKey(b: BotRunBundle): string {
   return `${b.bot_type}|${b.trigger}|${b.status}|${b.first_started_at}|${b.last_started_at}|${b.latest.id}`;
 }
+
+/** The Activity columns with a value filter. Each is a field every run in a bundle shares, so a
+ *  bundle passes or fails whole and filtering never needs to re-bundle. */
+export type RunLogColumn = "bot_type" | "trigger" | "status";
+/** Each column's ticked values; a column left out (or null) shows every value. */
+export type RunLogFilters = Partial<Record<RunLogColumn, readonly string[] | null>>;
+
+function passes(bundle: BotRunBundle, filters: RunLogFilters, skip?: RunLogColumn): boolean {
+  return (Object.keys(filters) as RunLogColumn[]).every((col) => {
+    if (col === skip) return true;
+    const ticked = filters[col];
+    return !ticked || ticked.includes(bundle[col]);
+  });
+}
+
+export function filterBundles(bundles: BotRunBundle[], filters: RunLogFilters): BotRunBundle[] {
+  return bundles.filter((b) => passes(b, filters));
+}
+
+/** Runs (not rows) per value of one column, among the bundles every *other* column's filter lets
+ *  through — so a count says what ticking that value would show, as Excel's lists do. */
+export function columnCounts(
+  bundles: BotRunBundle[],
+  filters: RunLogFilters,
+  column: RunLogColumn,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const b of bundles) {
+    if (!passes(b, filters, column)) continue;
+    counts.set(b[column], (counts.get(b[column]) ?? 0) + b.count);
+  }
+  return counts;
+}
+
+export function isFiltered(filters: RunLogFilters): boolean {
+  return Object.values(filters).some((ticked) => ticked != null);
+}

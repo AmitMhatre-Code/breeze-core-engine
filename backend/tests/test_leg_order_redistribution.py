@@ -136,6 +136,40 @@ class TestPlanLegRedistribution:
         else:
             raise AssertionError("expected LegModifyValidationError")
 
+    def test_shrink_with_price_change_reprices_every_surviving_order(self):
+        # 2026-10-06 NIFTY 21400 PE buy: 15 open orders (14 x 1755 + 910) at 0.05,
+        # modified to 15275 open at 0.10. The quantity pass cancels six orders and
+        # trims a seventh; the other eight must still carry the new price, not be
+        # left resting at 0.05.
+        orders = [_order(f"late{i}", 1755, 1755) for i in range(5)]
+        orders.append(_order("late5", 910, 910))
+        orders.append(_order("trim", 1755, 1755))
+        orders += [_order(f"early{i}", 1755, 1755) for i in range(8)]
+        plan = plan_leg_redistribution(orders, 1755, 15275, price_changed=True)
+
+        assert plan.cancel_order_ids == [f"late{i}" for i in range(6)]
+        assert plan.place_new_quantities == []
+        by_id = {m["order_id"]: m["quantity"] for m in plan.modify}
+        assert by_id == {"trim": 1235, **{f"early{i}": 1755 for i in range(8)}}
+
+    def test_grow_with_price_change_reprices_orders_already_at_cap(self):
+        # "1" is already at the freeze cap so the quantity pass skips it; "2" grows.
+        # Both must reach the broker so the whole leg sits at the new price.
+        orders = [_order("1", 1800, 1800), _order("2", 900, 900)]
+        plan = plan_leg_redistribution(orders, 1800, 3000, price_changed=True)
+
+        assert plan.cancel_order_ids == []
+        assert plan.place_new_quantities == []
+        by_id = {m["order_id"]: m["quantity"] for m in plan.modify}
+        assert by_id == {"2": 1200, "1": 1800}
+
+    def test_quantity_change_without_price_change_leaves_other_orders_alone(self):
+        orders = [_order("1", 1800, 1800), _order("2", 900, 900)]
+        plan = plan_leg_redistribution(orders, 1800, 2000)
+        assert plan.cancel_order_ids == []
+        # Only the order the shed lands on is resubmitted; "2" is not touched.
+        assert plan.modify == [{"order_id": "1", "exchange_code": "NFO", "quantity": 1100}]
+
     def test_price_unchanged_stays_a_true_no_op(self):
         orders = [_order("1", 1000, 1000)]
         plan = plan_leg_redistribution(orders, 1800, 1000, price_changed=False)

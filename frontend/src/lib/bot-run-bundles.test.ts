@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   bundleRuns,
+  columnCounts,
   customRangeError,
+  filterBundles,
+  isFiltered,
   istToday,
   presetRange,
   rangeDays,
@@ -136,5 +139,43 @@ describe("date ranges", () => {
     expect(customRangeError({ from: today, to: "2026-09-16" }, today)).toMatch(/before/);
     expect(customRangeError({ from: today, to: "2026-09-18" }, today)).toMatch(/future/);
     expect(customRangeError({ from: "", to: today }, today)).toMatch(/both/);
+  });
+});
+
+describe("Activity filters", () => {
+  const bundles = bundleRuns(
+    newestFirst([
+      run(1, W, "2026-09-17 09:42:12"),
+      run(2, W, "2026-09-17 10:00:25"),
+      run(3, S, "2026-09-17 10:01:11", { trigger: "session", status: "completed" }),
+      run(4, W, "2026-09-17 10:16:27", { trigger: "manual", status: "failed" }),
+      run(5, S, "2026-09-17 10:24:33", { trigger: "backtest", status: "completed" }),
+    ]),
+  );
+
+  it("shows everything with no column ticked down", () => {
+    expect(filterBundles(bundles, {})).toEqual(bundles);
+    expect(filterBundles(bundles, { status: null })).toEqual(bundles);
+    expect(isFiltered({ status: null })).toBe(false);
+    expect(isFiltered({ status: ["failed"] })).toBe(true);
+  });
+
+  it("keeps a bundle only when every column's filter lets it through", () => {
+    const out = filterBundles(bundles, { bot_type: [W, S], status: ["skipped", "completed"] });
+    expect(out.map((b) => [b.bot_type, b.status, b.count])).toEqual([
+      [S, "completed", 1],
+      [S, "completed", 1],
+      [W, "skipped", 2],
+    ]);
+    expect(filterBundles(bundles, { bot_type: [S], trigger: ["backtest"] })).toHaveLength(1);
+  });
+
+  it("counts runs per value under every other column's filter, not its own", () => {
+    const filters = { bot_type: [W], status: ["failed"] };
+    expect(Object.fromEntries(columnCounts(bundles, filters, "status"))).toEqual({
+      skipped: 2,
+      failed: 1,
+    });
+    expect(Object.fromEntries(columnCounts(bundles, filters, "bot_type"))).toEqual({ [W]: 1 });
   });
 });

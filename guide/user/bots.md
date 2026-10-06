@@ -221,8 +221,10 @@ The **Activity** section at the bottom of the page lists every scan, order and s
 
 | Control or column | What it does |
 |---|---|
-| **Today** / **Week** / **Month** / **Custom** | The period shown. |
-| **Started**, bot, **Trigger**, **Outcome**, **Reason** | When the run started, which bot, what started it (schedule, you, Telegram), what happened, and why. |
+| **Started**, **Bot**, **Trigger**, **Outcome**, **Reason** | When the run started, which bot, what started it (schedule, you, Telegram, a backtest), what happened, and why. |
+| **Started** heading | Click it to pick the period: **Today**, **Week** (the last 7 days), **Month** (the last 30) or **Custom** (any **From** and **To** dates, up to 31 days). The period in use is shown beside the heading. |
+| **Bot**, **Trigger**, **Outcome** headings | Click one to filter that column, as in a spreadsheet: tick **Select all** or any mix of values, then **OK**. Each value shows how many runs it has in the period, given the other columns' filters; values with none are greyed but can still be ticked. A filtered column's funnel icon is filled in. |
+| **Clear filters** | Shown above the table while any column is filtered, with how many rows are showing. Filters (and the period) reset each time you open the page, so a filter you forgot can never hide a failed run. |
 | Bundles | Back-to-back runs with the same outcome are bundled; expand one to see each run. |
 | Expanded run | For the Long Scalper, Intraday Iron Fly and CAS Bingo: each cycle's **Contract**, **Lots**, **Gross** P&L, **Friction** (costs) and **Exit**. A CAS Bingo trade sits under the run that entered it, so a later "already entered today" run expands to nothing. |
 | Download | **Download full-day audit trail** for a scalper or CAS Bingo run, or **Download backtest results (.zip)** for a backtest. |

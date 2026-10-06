@@ -1,17 +1,23 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { BacktestProgress } from "@/components/bots/BacktestProgress";
 import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
+import { FilterPanelFooter, HeaderFilter, ValueFilterHeader } from "@/components/bots/ColumnFilter";
 import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
   bundleKey,
+  columnCounts,
   customRangeError,
+  filterBundles,
+  isFiltered,
   istToday,
   presetRange,
   type DateRange,
+  type RunLogColumn,
+  type RunLogFilters,
   type RunLogPreset,
 } from "@/lib/bot-run-bundles";
 import {
@@ -25,6 +31,7 @@ import {
   type BotRun,
   type BotRunBundle,
   type BotRunStatus,
+  type BotType,
   BOT_META,
 } from "@/lib/use-bots";
 
@@ -426,17 +433,146 @@ const PRESETS: readonly (readonly [RunLogPreset, string])[] = [
   ["custom", "Custom"],
 ];
 
+const TRIGGER_LABEL: Record<BotRun["trigger"], string> = {
+  schedule: "Schedule",
+  manual: "Manual",
+  session_arrival: "Session arrival",
+  session: "Session",
+  telegram: "Telegram",
+  backtest: "Backtest",
+};
+
+const STATUSES: readonly BotRunStatus[] = [
+  "running",
+  "completed",
+  "partial",
+  "proposed",
+  "skipped",
+  "failed",
+];
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function shortDate(iso: string): string {
+  return `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`;
+}
+
+/** The Started column's panel: one range, picked from the presets or two dates. */
+function RangePanel({
+  today,
+  preset,
+  custom,
+  onApply,
+}: {
+  today: string;
+  preset: RunLogPreset;
+  custom: DateRange;
+  onApply: (preset: RunLogPreset, custom: DateRange) => void;
+}) {
+  const [draftPreset, setDraftPreset] = useState(preset);
+  const [draftCustom, setDraftCustom] = useState(custom);
+  const error = draftPreset === "custom" ? customRangeError(draftCustom, today) : null;
+  const name = useId();
+
+  return (
+    <>
+      <fieldset>
+        <legend className="sr-only">Date range</legend>
+        {PRESETS.map(([value, label]) => (
+          <label
+            key={value}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-border-soft"
+          >
+            <input
+              type="radio"
+              name={name}
+              checked={draftPreset === value}
+              onChange={() => setDraftPreset(value)}
+              className="size-3.5 accent-[var(--accent-strong)]"
+            />
+            {label}
+          </label>
+        ))}
+      </fieldset>
+      {draftPreset === "custom" && (
+        <div className="mt-1 grid gap-2 px-2">
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-muted">From</span>
+            <input
+              type="date"
+              className="app-input py-1 text-xs"
+              value={draftCustom.from}
+              max={today}
+              onChange={(e) => setDraftCustom((c) => ({ ...c, from: e.target.value }))}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-muted">To</span>
+            <input
+              type="date"
+              className="app-input py-1 text-xs"
+              value={draftCustom.to}
+              max={today}
+              onChange={(e) => setDraftCustom((c) => ({ ...c, to: e.target.value }))}
+            />
+          </label>
+          {error && <span className="text-down">{error}</span>}
+        </div>
+      )}
+      <FilterPanelFooter
+        okDisabled={Boolean(error)}
+        onOk={() => onApply(draftPreset, draftCustom)}
+      />
+    </>
+  );
+}
+
 export function BotRunLog() {
   // Fixed for the page's life: a tab left open past midnight keeps the day it was opened on
   // until reloaded, rather than silently emptying under the user.
   const [today] = useState(istToday);
   const [preset, setPreset] = useState<RunLogPreset>("today");
   const [custom, setCustom] = useState<DateRange>(() => presetRange("week", today));
+  // Deliberately not remembered across visits: a filter left on from last week must never
+  // quietly hide today's failed run.
+  const [filters, setFilters] = useState<RunLogFilters>({});
 
-  const customError = preset === "custom" ? customRangeError(custom, today) : null;
-  const range: DateRange | null =
-    preset === "custom" ? (customError ? null : custom) : presetRange(preset, today);
+  const range: DateRange = preset === "custom" ? custom : presetRange(preset, today);
   const { data, isLoading, isError, error } = useBotRunBundles(range);
+  const rows = useMemo(() => (data ? filterBundles(data, filters) : []), [data, filters]);
+  const filtered = isFiltered(filters);
+
+  const options = (column: RunLogColumn, values: readonly { value: string; label: ReactNode }[]) => {
+    const counts = columnCounts(data ?? [], filters, column);
+    return values.map((v) => ({ ...v, count: counts.get(v.value) ?? 0 }));
+  };
+  const setColumn = (column: RunLogColumn) => (next: string[] | null) =>
+    setFilters((f) => ({ ...f, [column]: next }));
+
+  const rangeSummary =
+    preset === "custom"
+      ? custom.from === custom.to
+        ? shortDate(custom.from)
+        : `${shortDate(custom.from)} – ${shortDate(custom.to)}`
+      : PRESETS.find(([value]) => value === preset)?.[1];
+
+  let message: ReactNode = null;
+  if (isLoading) message = <span className="app-text-muted">Loading activity…</span>;
+  else if (isError) {
+    message = (
+      <span className="text-rose-600 dark:text-rose-400">
+        Could not load activity: {(error as Error)?.message ?? "unknown error"}
+      </span>
+    );
+  } else if (data && data.length === 0) {
+    message = (
+      <span className="app-text-muted">
+        No bot activity in this period. Runs appear here once a bot is enabled.
+      </span>
+    );
+  } else if (data && rows.length === 0) {
+    message = <span className="app-text-muted">No activity matches these filters.</span>;
+  }
 
   return (
     <section className="app-card p-4">
@@ -444,92 +580,97 @@ export function BotRunLog() {
       <p className="app-text-muted mt-1 text-xs">
         Every scan, order, and skip across all bots — including the days nothing happened,
         and why. Backtests are listed here too, marked, with their trades and audit trail.
-        Back-to-back runs with the same outcome are bundled; expand one to see each run.
+        Back-to-back runs with the same outcome are bundled; expand one to see each run. Use
+        the column headings to pick the dates and filter by bot, trigger or outcome.
       </p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        <div
-          role="group"
-          aria-label="Date range"
-          className="inline-flex rounded-[9px] border border-border bg-panel2 p-[3px]"
-        >
-          {PRESETS.map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={preset === value}
-              onClick={() => setPreset(value)}
-              className={[
-                "rounded-[6px] px-3 py-1 font-mono text-xs font-semibold transition",
-                preset === value
-                  ? "bg-accent-strong text-accent-ink"
-                  : "text-muted hover:text-foreground",
-              ].join(" ")}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {preset === "custom" && (
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <label className="flex items-center gap-1.5">
-              <span className="text-muted">From</span>
-              <input
-                type="date"
-                className="app-input py-1 text-xs"
-                value={custom.from}
-                max={today}
-                onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))}
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              <span className="text-muted">To</span>
-              <input
-                type="date"
-                className="app-input py-1 text-xs"
-                value={custom.to}
-                max={today}
-                onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))}
-              />
-            </label>
-            {customError && <span className="text-down">{customError}</span>}
-          </div>
-        )}
-      </div>
-
-      {isLoading && range && <p className="app-text-muted mt-4 text-sm">Loading activity…</p>}
-      {isError && (
-        <p className="mt-4 text-sm text-rose-600 dark:text-rose-400">
-          Could not load activity: {(error as Error)?.message ?? "unknown error"}
+      {filtered && data && (
+        <p className="mt-3 text-xs text-muted">
+          Showing {rows.length} of {data.length} row{data.length === 1 ? "" : "s"}.{" "}
+          <button
+            type="button"
+            onClick={() => setFilters({})}
+            className="text-accent underline underline-offset-2 hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+          >
+            Clear filters
+          </button>
         </p>
       )}
 
-      {data && data.length === 0 && (
-        <p className="app-text-muted mt-4 text-sm">
-          No bot activity in this period. Runs appear here once a bot is enabled.
-        </p>
-      )}
-
-      {data && data.length > 0 && (
-        <div className="app-table-wrap mt-4">
-          <table className="w-full text-left">
-            <thead className="app-table-head">
+      {/* Always drawn, even with nothing to list: the date range and filters live in its
+          headings, so hiding it would leave no way out of an empty view. */}
+      <div className="app-table-wrap mt-4">
+        <table className="w-full text-left">
+          <thead className="app-table-head">
+            <tr>
+              <th className="px-3 py-2 text-xs font-medium">
+                <HeaderFilter label="Started" summary={rangeSummary} active={false}>
+                  <RangePanel
+                    today={today}
+                    preset={preset}
+                    custom={custom}
+                    onApply={(p, c) => {
+                      setPreset(p);
+                      if (p === "custom") setCustom(c);
+                    }}
+                  />
+                </HeaderFilter>
+              </th>
+              <th className="px-3 py-2 text-xs font-medium">
+                <ValueFilterHeader
+                  label="Bot"
+                  selected={filters.bot_type ?? null}
+                  onApply={setColumn("bot_type")}
+                  options={options(
+                    "bot_type",
+                    (Object.keys(BOT_META) as BotType[]).map((t) => ({
+                      value: t,
+                      label: BOT_META[t].title,
+                    })),
+                  )}
+                />
+              </th>
+              <th className="px-3 py-2 text-xs font-medium">
+                <ValueFilterHeader
+                  label="Trigger"
+                  selected={filters.trigger ?? null}
+                  onApply={setColumn("trigger")}
+                  options={options(
+                    "trigger",
+                    (Object.keys(TRIGGER_LABEL) as BotRun["trigger"][]).map((t) => ({
+                      value: t,
+                      label: TRIGGER_LABEL[t],
+                    })),
+                  )}
+                />
+              </th>
+              <th className="px-3 py-2 text-xs font-medium">
+                <ValueFilterHeader
+                  label="Outcome"
+                  selected={filters.status ?? null}
+                  onApply={setColumn("status")}
+                  options={options(
+                    "status",
+                    STATUSES.map((s) => ({ value: s, label: <StatusBadge status={s} /> })),
+                  )}
+                />
+              </th>
+              <th className="px-3 py-2 text-xs font-medium">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {message ? (
               <tr>
-                <th className="px-3 py-2 text-xs font-medium">Started</th>
-                <th className="px-3 py-2 text-xs font-medium">Bot</th>
-                <th className="px-3 py-2 text-xs font-medium">Trigger</th>
-                <th className="px-3 py-2 text-xs font-medium">Outcome</th>
-                <th className="px-3 py-2 text-xs font-medium">Reason</th>
+                <td colSpan={5} className="px-3 py-4 text-sm">
+                  {message}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {data.map((bundle) => (
-                <BundleRow key={bundleKey(bundle)} bundle={bundle} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            ) : (
+              rows.map((bundle) => <BundleRow key={bundleKey(bundle)} bundle={bundle} />)
+            )}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

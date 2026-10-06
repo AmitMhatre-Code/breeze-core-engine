@@ -120,18 +120,24 @@ def plan_leg_redistribution(
 
     plan = LegRedistributionPlan(cancel_order_ids=[], modify=[], place_new_quantities=[])
 
-    if target_open_total == current_open_total:
-        if price_changed:
-            # Quantity is unchanged, so the redistribution logic below would
-            # otherwise return a totally empty plan — but a price-only change
-            # still needs to reach the broker, so re-submit every open order
-            # at its current open quantity purely to carry the new price.
-            if not open_orders:
-                raise LegModifyValidationError(
-                    "Cannot change price: this leg has no open quantity left "
-                    "to modify (already fully filled)."
-                )
-            for o in open_orders:
+    if target_open_total == current_open_total and price_changed and not open_orders:
+        raise LegModifyValidationError(
+            "Cannot change price: this leg has no open quantity left "
+            "to modify (already fully filled)."
+        )
+
+    _redistribute_quantity(plan, open_orders, qty_per_order, target_open_total, current_open_total)
+
+    if price_changed:
+        # The quantity pass only touches the orders it has to resize, so every
+        # other surviving open order still sits at the old price. Re-submit each
+        # one at its current open quantity purely to carry the new price —
+        # otherwise a combined quantity+price change leaves part of the leg
+        # resting at the old price (a 2026-10-06 NIFTY buy left 8 of 9
+        # surviving orders at 0.05 after a 0.05→0.10 modify).
+        touched = set(plan.cancel_order_ids) | {m["order_id"] for m in plan.modify}
+        for o in open_orders:
+            if o.order_id not in touched:
                 plan.modify.append(
                     {
                         "order_id": o.order_id,
@@ -139,7 +145,22 @@ def plan_leg_redistribution(
                         "quantity": o.pending_quantity,
                     }
                 )
-        return plan
+
+    return plan
+
+
+def _redistribute_quantity(
+    plan: LegRedistributionPlan,
+    open_orders: list[LegOrderState],
+    qty_per_order: int,
+    target_open_total: int,
+    current_open_total: int,
+) -> None:
+    """Fill `plan` with the cancels/modifies/placements that move the leg's open
+    quantity from `current_open_total` to `target_open_total`. Price is not
+    considered here — see `plan_leg_redistribution`."""
+    if target_open_total == current_open_total:
+        return
 
     if target_open_total < current_open_total:
         to_shed = current_open_total - target_open_total
@@ -160,7 +181,7 @@ def plan_leg_redistribution(
                     }
                 )
                 to_shed = 0
-        return plan
+        return
 
     # Growing: fill existing open orders up to the freeze-aligned cap first.
     to_grow = target_open_total - current_open_total
@@ -188,5 +209,3 @@ def plan_leg_redistribution(
         plan.place_new_quantities = [qty_per_order] * iterations
         if remainder:
             plan.place_new_quantities.append(remainder)
-
-    return plan
