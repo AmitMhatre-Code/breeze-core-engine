@@ -1,17 +1,13 @@
 "use client";
 
-import { useId, useState } from "react";
-import Link from "next/link";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { BacktestButton } from "@/components/bots/BacktestButton";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
-import { LastBacktestRow } from "@/components/bots/LastBacktestRow";
 import { PriorityPill } from "@/components/bots/PriorityPill";
 import type { CondorBotConfig } from "@/components/bots/CondorSettings";
-import { CampaignCard } from "@/components/condor/CondorCampaignPanel";
-import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import type { CondorCampaign } from "@/lib/condor";
@@ -25,7 +21,10 @@ import { BOT_META, useUpdateBot, type Bot } from "@/lib/use-bots";
  *  stay `paper` and `telegram`.
  *
  *  The header is every bot's (#67): play opens Basket Orders on a first tranche at these
- *  settings, the clock backtests them into Activity, the gear opens the settings drawer. */
+ *  settings, the clock backtests them into Activity, the gear opens the settings drawer.
+ *
+ *  The campaign itself is not on the card (#73): it is one row in Activity, running for as long
+ *  as the campaign is open, restated at each check and expanding into the campaign card. */
 
 type Overview = {
   eligibility: {
@@ -98,7 +97,6 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
   const update = useUpdateBot();
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [paperOpen, setPaperOpen] = useState(false);
   // The same query Bots 1 and 2 read: Semi-auto asks on Telegram, so without a linked chat it
   // could only propose into the void.
   const telegram = useQuery({ queryKey: TELEGRAM_STATUS_QUERY_KEY, queryFn: fetchTelegramStatus });
@@ -195,29 +193,11 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
           ) : null}
           <dl className="mt-3 grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-hint">
-              <dt className="text-faint">Campaign</dt>
-              <dd className="m-0 font-mono tabular-nums text-text">
-                {!camp ? (
-                  "—"
-                ) : camp.mode === "paper" ? (
-                  // A Simulation campaign owns no Portfolio row, so its card opens here.
-                  <button type="button" className="app-link" onClick={() => setPaperOpen(true)}>
-                    simulation · {camp.cycle?.expiry ?? "—"}
-                  </button>
-                ) : (
-                  <Link className="app-link" href="/portfolio">
-                    live · {camp.cycle?.expiry ?? "—"}
-                  </Link>
-                )}
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 text-hint">
               <dt className="text-faint">Simulation cycles · approved</dt>
               <dd className="m-0 font-mono tabular-nums text-text">
                 {e?.paper_cycles ?? 0} · {e?.approved_executions ?? 0}
               </dd>
             </div>
-            <LastBacktestRow botType={bot.bot_type} />
             <div className="flex items-baseline justify-between gap-3 text-hint">
               <dt className="text-faint">Backtest of these settings</dt>
               <dd
@@ -274,39 +254,6 @@ export function CondorBotCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }
         {error && <p className="mt-2 text-hint text-down">{error}</p>}
       </section>
       <BotSettingsDrawer bot={bot} open={settingsOpen} readOnly={readOnly} onClose={() => setSettingsOpen(false)} />
-      {camp && camp.mode === "paper" ? (
-        <PaperCampaignDrawer campaign={camp} open={paperOpen} onClose={() => setPaperOpen(false)} />
-      ) : null}
     </>
-  );
-}
-
-/** The bot's Simulation campaign: the same card a live one shows on its Portfolio group. */
-function PaperCampaignDrawer({ campaign, open, onClose }: { campaign: CondorCampaign; open: boolean; onClose: () => void }) {
-  const titleId = useId();
-  return (
-    <Modal open={open} onClose={onClose} variant="drawer" drawerSide="right" drawerWidthClass="w-[min(100%,52rem)]" titleId={titleId}>
-      <div className="flex items-start justify-between gap-3 border-b border-border p-4">
-        <div>
-          <h2 id={titleId} className="text-subtitle font-bold">
-            Simulation campaign · NIFTY {campaign.cycle?.expiry ?? "—"}
-          </h2>
-          <p className="app-text-muted mt-1 text-hint">Filled at live prices in Simulation. Nothing here is placed.</p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close simulation campaign"
-          className="rounded p-1 text-faint transition hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="flex-1 overflow-auto p-4">
-        <CampaignCard campaign={campaign} request={null} />
-      </div>
-    </Modal>
   );
 }

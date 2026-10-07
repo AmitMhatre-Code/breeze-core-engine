@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AttentionMarker } from "@/components/bots/AttentionMarker";
 import { BacktestButton } from "@/components/bots/BacktestButton";
 import { LastBacktestRow } from "@/components/bots/LastBacktestRow";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
@@ -8,7 +9,7 @@ import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { LiveConfirmDialog } from "@/components/bots/LiveConfirmDialog";
 import { PriorityPill } from "@/components/bots/PriorityPill";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
-import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
+import { describeFeed } from "@/lib/scalper-audit";
 import {
   BOT_META,
   isScalper,
@@ -227,8 +228,7 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
     <>
       {/* `h-full` + the grid's default stretch — matches BotCard so all four cards in a row
           share one height. The mode-switch cluster is `mt-auto`-pinned to the bottom so it
-          lines up with the writer cards' even though this card carries an extra feed-status
-          line they don't. */}
+          lines up with the writer cards'. */}
       <section className="app-card flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -273,7 +273,12 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
           </p>
           <dl className="mt-3 grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-hint">
-              <dt className="text-faint">Cycles today</dt>
+              {/* The feed's state ("Warming up…", "Futures feed quiet…") is on today's session
+                  row in Activity; the card only flags it, so every card keeps one height (#73). */}
+              <dt className="flex items-center gap-1.5 text-faint">
+                Cycles today
+                <AttentionMarker botType={bot.bot_type} summary={feed} />
+              </dt>
               <dd className="m-0 font-mono tabular-nums text-text">{(cycles ?? []).length}</dd>
             </div>
             {/* P&L and friction on one line: friction is roughly a hundred rupees a cycle and
@@ -296,20 +301,10 @@ export function ScalperCard({ bot, readOnly }: { bot: Bot; readOnly: boolean }) 
             </div>
             <LastBacktestRow botType={bot.bot_type} />
           </dl>
-          {feed && (
-            /* Why nothing is happening. Sits below the stats, not above them, so the
-               Cycles / Net P&L rows start at the same Y as the writer cards' Expiry /
-               Indices rows — this line has no counterpart there, so it can only go where
-               the writer cards carry slack: after the shared block. A scalper can sit at
-               `not_warm` for a whole session and look healthy otherwise; this is the line
-               that says whether it is filling or was never subscribed. */
-            <p className={`mt-2 font-mono text-hint ${feedToneClass(feed.tone)}`}>{feed.text}</p>
-          )}
         </div>
 
         {/* `mt-auto`: the mode-switch cluster is pinned to the bottom so it lines up with
-            the writer cards' regardless of the feed-status line above, which the writers
-            have no counterpart for. See BotCard for the full reasoning. */}
+            the writer cards'. See BotCard for the full reasoning. */}
         <div className="mt-auto pt-4">
           <ModePill
             mode={mode}

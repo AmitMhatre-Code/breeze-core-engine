@@ -32,7 +32,11 @@ BotType = Literal[
 # "has this bot already acted today?" -- see `repositories/bots.LIVE_RUNS_ONLY` (#35).
 # "telegram" is a HITL approval tapped on a phone rather than in the app -- see
 # `services/bots/proposals.approve`'s `trigger` docstring.
-BotRunTrigger = Literal["schedule", "manual", "session_arrival", "session", "backtest", "telegram"]
+# "campaign" is the Dynamic Iron Condor's: one row per campaign the bot runs, `running` for the
+# days the campaign is open, its reason restated at each check -- see `condor/activity.py` (#73).
+BotRunTrigger = Literal[
+    "schedule", "manual", "session_arrival", "session", "backtest", "telegram", "campaign"
+]
 
 # Terminal run states. `proposed` is Bot 1 finishing successfully with something for the
 # user to approve -- distinct from `completed`, which means orders were actually placed.

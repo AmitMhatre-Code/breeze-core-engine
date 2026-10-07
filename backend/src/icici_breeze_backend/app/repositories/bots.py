@@ -215,6 +215,11 @@ def bot_owner(bot_id: str) -> Optional[str]:
 # rather than at each call site (#35).
 LIVE_RUNS_ONLY = "AND trigger != 'backtest'"
 
+# What the stale-run reaper may close. A condor campaign row is `running` for as long as the
+# campaign is open -- days, across restarts and weekends -- and is ended only by its campaign
+# ending (`condor/activity.sync`), never by its age or by the process that wrote it dying (#73).
+REAPABLE_RUNS = "AND trigger NOT IN ('backtest', 'campaign')"
+
 
 def has_terminal_run_today(user_id: str, bot_type: str) -> bool:
     """Has this bot already resolved today, either way?
@@ -502,7 +507,7 @@ def reap_stale_runs(*, older_than_minutes: int | None = None) -> int:
     # bot mid-trade; ageing it from its heartbeat still catches one that has hung.
     sql = (
         "UPDATE bot_runs SET status = 'failed', reason_code = ?, reason_text = ?, "
-        f"finished_at = ? WHERE status = 'running' {LIVE_RUNS_ONLY}"
+        f"finished_at = ? WHERE status = 'running' {REAPABLE_RUNS}"
     )
     args: list[Any] = [
         "interrupted",
@@ -537,6 +542,12 @@ def list_runs(
     """Newest first. `limit=None` is for bounded queries only -- a date range or a bundle's
     exact `started_at` window -- where the bound is the range, not a row count.
 
+    A date range selects every run that was **active** in it, not only those that started in
+    it: started on or before its last day, and still running or finished on or after its first.
+    A condor campaign row runs for days, so "Today" has to show the one that opened last week
+    and is still working (#73). `started_from`/`started_to` stay a pure start window: they are
+    a bundle's exact members.
+
     Dates and timestamps compare as text: every stored stamp is `YYYY-MM-DD HH:MM:SS` IST, so
     lexical order is time order and the `(user_id, started_at)` index still applies."""
     sql = "SELECT * FROM bot_runs WHERE user_id = ?"
@@ -551,8 +562,8 @@ def list_runs(
         sql += " AND status = ?"
         args.append(status)
     if date_from:
-        sql += " AND started_at >= ?"
-        args.append(date_from)
+        sql += " AND (started_at >= ? OR status = 'running' OR finished_at >= ?)"
+        args.extend([date_from, date_from])
     if date_to:
         # `< next day` rather than `<= date_to 23:59:59` so a fractional stamp can't slip out.
         sql += " AND started_at < date(?, '+1 day')"
@@ -666,6 +677,42 @@ def open_session_run(user_id: str, bot_type: str) -> str:
         )
         conn.commit()
     return run_id
+
+
+def open_campaign_run(
+    user_id: str, bot_type: str, *, reason_code: str, reason_text: str, detail: dict[str, Any]
+) -> str:
+    """A `campaign` row for a condor campaign the bot has just taken on (#73).
+
+    `detail` must carry `campaign_id`: it is how `running_campaign_runs` ties the row back to
+    its campaign, and every later `update_run_reason` on the row rewrites `detail` whole."""
+    run_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO bot_runs (id, user_id, bot_type, trigger, status, reason_code, "
+            "reason_text, detail, started_at) VALUES (?, ?, ?, 'campaign', 'running', ?, ?, ?, ?)",
+            (run_id, user_id, bot_type, reason_code, reason_text, json.dumps(detail), ist_timestamp()),
+        )
+        conn.commit()
+    return run_id
+
+
+def running_campaign_runs(bot_type: str) -> list[dict[str, Any]]:
+    """Every user's open `campaign` rows: id, user, the campaign they follow, and detail."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id, detail FROM bot_runs WHERE bot_type = ? AND trigger = 'campaign' "
+            "AND status = 'running'",
+            (bot_type,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        detail = _json_or({}, r["detail"]) or {}
+        out.append({
+            "id": str(r["id"]), "user_id": str(r["user_id"]),
+            "campaign_id": detail.get("campaign_id"), "detail": detail,
+        })
+    return out
 
 
 def stamp_session_config(run_id: str, config_hash: str, mode: str) -> None:

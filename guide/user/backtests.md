@@ -60,7 +60,7 @@ Backtests use only data ICICI serves as history: one-minute bars of price, volum
 
 **Download backtest results (.zip)** saves everything for the run. A signal backtest's zip holds every bar replayed, every minute's reading and every call with what the index did next, so any number can be checked independently.
 
-The card's **Last backtest** figure is always labelled as a backtest, so it can never be mistaken for money the bot made.
+The card's **Last backtest** figure (**Backtest of these settings** on the Dynamic Iron Condor) is always labelled as a backtest, so it can never be mistaken for money the bot made.
 
 ## What a backtest cannot tell you
 

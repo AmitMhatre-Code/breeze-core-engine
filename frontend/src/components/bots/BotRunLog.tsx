@@ -1,10 +1,12 @@
 "use client";
 
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import { BacktestProgress } from "@/components/bots/BacktestProgress";
 import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
+import { CondorCampaignRun } from "@/components/bots/CondorCampaignRun";
 import { FilterPanelFooter, HeaderFilter, ValueFilterHeader } from "@/components/bots/ColumnFilter";
+import { ACTIVITY_FOCUS_EVENT, ACTIVITY_SECTION_ID, type ActivityFocusDetail } from "@/lib/bot-attention";
 import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
 import { describeFeed, feedToneClass } from "@/lib/scalper-audit";
 import {
@@ -235,7 +237,11 @@ function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
   const isBacktest = run.trigger === "backtest";
   const backtestBot = isBacktest ? BACKTEST_SLUG[run.bot_type] : undefined;
   const runningBacktest = isBacktest && run.status === "running";
+  // A condor campaign row (#73) expands into its campaign.
+  const campaignId =
+    run.trigger === "campaign" ? ((run.detail as { campaign_id?: string } | null)?.campaign_id ?? null) : null;
   const expandable =
+    Boolean(campaignId) ||
     (isScalper(run.bot_type) && run.trigger === "session") ||
     (run.bot_type === BOT_CAS_BINGO && (run.trigger === "session" || run.trigger === "manual")) ||
     runningBacktest ||
@@ -257,7 +263,7 @@ function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
         <td className="px-3 py-2 text-xs">
           {expandable ? (
             <ExpandToggle expanded={expanded} onToggle={toggle}>
-              {nested ? (runningBacktest ? "Progress" : isBacktest ? "Trades" : "Cycles") : title}
+              {nested ? (runningBacktest ? "Progress" : isBacktest ? "Trades" : campaignId ? "Campaign" : "Cycles") : title}
             </ExpandToggle>
           ) : nested ? null : (
             title
@@ -298,6 +304,8 @@ function RunRow({ run, nested = false }: { run: BotRun; nested?: boolean }) {
           <td colSpan={5} className="bg-panel2 p-0">
             {runningBacktest ? (
               <BacktestProgress runId={run.id} />
+            ) : campaignId ? (
+              <CondorCampaignRun campaignId={campaignId} running={run.status === "running"} />
             ) : isBacktest && backtestBot ? (
               <BacktestRunTrades runId={run.id} bot={backtestBot} />
             ) : (
@@ -440,6 +448,7 @@ const TRIGGER_LABEL: Record<BotRun["trigger"], string> = {
   session: "Session",
   telegram: "Telegram",
   backtest: "Backtest",
+  campaign: "Campaign",
 };
 
 const STATUSES: readonly BotRunStatus[] = [
@@ -536,6 +545,19 @@ export function BotRunLog() {
   // Deliberately not remembered across visits: a filter left on from last week must never
   // quietly hide today's failed run.
   const [filters, setFilters] = useState<RunLogFilters>({});
+  const sectionRef = useRef<HTMLElement>(null);
+
+  // A card's warning triangle (#73) opens this table on that bot: today, just its rows.
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const { botType } = (e as CustomEvent<ActivityFocusDetail>).detail;
+      setPreset("today");
+      setFilters({ bot_type: [botType] });
+      sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener(ACTIVITY_FOCUS_EVENT, onFocus);
+    return () => window.removeEventListener(ACTIVITY_FOCUS_EVENT, onFocus);
+  }, []);
 
   const range: DateRange = preset === "custom" ? custom : presetRange(preset, today);
   const { data, isLoading, isError, error } = useBotRunBundles(range);
@@ -575,13 +597,16 @@ export function BotRunLog() {
   }
 
   return (
-    <section className="app-card p-4">
+    <section ref={sectionRef} id={ACTIVITY_SECTION_ID} className="app-card scroll-mt-4 p-4">
       <h2 className="app-text-heading">Activity</h2>
       <p className="app-text-muted mt-1 text-xs">
         Every scan, order, and skip across all bots — including the days nothing happened,
-        and why. Backtests are listed here too, marked, with their trades and audit trail.
-        Back-to-back runs with the same outcome are bundled; expand one to see each run. Use
-        the column headings to pick the dates and filter by bot, trigger or outcome.
+        and why. A running session says what it is doing now; a Dynamic Iron Condor campaign is
+        one row for as long as it runs, and expands into the campaign. Backtests are listed here
+        too, marked, with their trades and audit trail. A date range shows every run active in
+        it, so a campaign that started last week is under Today. Back-to-back runs with the same
+        outcome are bundled; expand one to see each run. Use the column headings to pick the
+        dates and filter by bot, trigger or outcome.
       </p>
 
       {filtered && data && (

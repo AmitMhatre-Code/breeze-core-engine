@@ -104,11 +104,30 @@ def run_check(
             out["bot"] = bot.act(proc, campaign, kind, out, decision_id)
         except Exception as exc:  # noqa: BLE001 -- recorded and alerted, never silent
             _logger.exception("condor: bot failed to act on %s", campaign.id)
+            out["bot"] = f"failed: {exc}"
             _notify(campaign.user_id, f"{alert_text(campaign, kind, d)}\nThe bot could not act on it: {exc}")
+    _note_activity(campaign, kind, now, out)
+    if campaign.origin == "bot" and d["action"] in _ACTIONABLE:
         return out
     if d["action"] in _ACTIONABLE or d["action"] == "unavailable":
         _notify(campaign.user_id, alert_text(campaign, kind, d))
     return out
+
+
+def _note_activity(campaign: repo.Campaign, kind: str, now: datetime.datetime, out: dict[str, Any]) -> None:
+    """The check's verdict on the bot campaign's Activity row (#73). Never raises."""
+    from icici_breeze_backend.app.services.condor import activity
+
+    activity.note_check(campaign, kind, now, out)
+
+
+def _sync_activity() -> None:
+    from icici_breeze_backend.app.services.condor import activity
+
+    try:
+        activity.sync()
+    except Exception:  # noqa: BLE001 -- the Activity rows trail the campaigns; never stop a tick
+        _logger.exception("condor: Activity sync failed")
 
 
 def tick(proc: Any, now: Optional[datetime.datetime] = None) -> None:
@@ -116,9 +135,13 @@ def tick(proc: Any, now: Optional[datetime.datetime] = None) -> None:
 
     now = now or now_ist()
     if not is_trading_day(now):
+        # Rows still follow campaigns on a holiday: one switched off on Saturday ends today.
+        _sync_activity()
         return
     day = now.date()
     _ensure_bot_campaigns(proc, day)
+    # Before the checks, so a campaign opened this tick has its row for its first check to note.
+    _sync_activity()
     for campaign in repo.list_active_all():
         cycle = campaign.cycle
         if cycle is None:

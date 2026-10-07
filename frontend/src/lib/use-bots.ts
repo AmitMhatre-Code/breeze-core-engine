@@ -444,8 +444,9 @@ export type BotRun = {
   bot_type: BotType;
   /** `session` is the scalpers': one row covering a whole trading day, with its round
    *  trips in `bot_cycles` beneath it — a different unit of work, not a fourth way to
-   *  start a run. */
-  trigger: "schedule" | "manual" | "session_arrival" | "session" | "telegram" | "backtest";
+   *  start a run. `campaign` is the Dynamic Iron Condor's: one row per campaign, running for
+   *  the days it is open (#73). */
+  trigger: "schedule" | "manual" | "session_arrival" | "session" | "telegram" | "backtest" | "campaign";
   status: BotRunStatus;
   reason_code: string | null;
   reason_text: string | null;
@@ -664,9 +665,14 @@ export function useBotRunBundles(range: DateRange | null) {
       return apiClient.get<BotRunBundle[]>(`/bots/runs/bundles?${qs.toString()}`, signal);
     },
     // While a backtest shows as running, keep checking: its row turns into the outcome --
-    // finished, failed, or interrupted -- on its own, without anyone opening it.
-    refetchInterval: (q) =>
-      q.state.data?.some((b) => b.trigger === "backtest" && b.status === "running") ? 5_000 : false,
+    // finished, failed, or interrupted -- on its own, without anyone opening it. A running
+    // session or campaign restates its reason here rather than on its card (#73), so it is
+    // re-read on the backend's own once-a-minute cadence.
+    refetchInterval: (q) => {
+      const running = (q.state.data ?? []).filter((b) => b.status === "running");
+      if (running.some((b) => b.trigger === "backtest")) return 5_000;
+      return running.length ? 60_000 : false;
+    },
   });
 }
 

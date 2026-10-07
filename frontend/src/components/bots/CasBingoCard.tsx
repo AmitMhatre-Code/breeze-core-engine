@@ -1,12 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { AttentionMarker } from "@/components/bots/AttentionMarker";
 import { BacktestButton } from "@/components/bots/BacktestButton";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { CasBingoSheet } from "@/components/bots/CasBingoSheet";
 import { PriorityPill } from "@/components/bots/PriorityPill";
 import { Modal } from "@/components/ui/Modal";
+import { casBingoAttention } from "@/lib/bot-attention";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import {
   BOT_META,
@@ -232,7 +234,6 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
             <p className="app-text-muted mt-1 line-clamp-2 min-h-[2lh] text-hint">{meta.blurb}</p>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
-            <BacktestButton botType={bot.bot_type} className={HEADER_ICON_BTN} />
             <button
               type="button"
               aria-label={`Start a run for ${meta.title}`}
@@ -242,6 +243,7 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
             >
               <PlayIcon />
             </button>
+            <BacktestButton botType={bot.bot_type} className={HEADER_ICON_BTN} />
             <button
               type="button"
               aria-label={`${meta.title} settings`}
@@ -262,7 +264,12 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
           <p className="line-clamp-2 min-h-[2lh] font-mono text-hint text-muted">{scheduleSummary(config)}</p>
           <dl className="mt-3 grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-hint">
-              <dt className="text-faint">Positions today</dt>
+              {/* The session's verdict is on its row in Activity; the card only flags a verdict
+                  that needs the user (#73). */}
+              <dt className="flex items-center gap-1.5 text-faint">
+                Positions today
+                <AttentionMarker botType={bot.bot_type} summary={casBingoAttention(todaysRun)} />
+              </dt>
               <dd className="m-0 font-mono tabular-nums text-text">
                 {(cycles ?? []).length}
                 {open.length ? <span className="text-faint"> · {open.length} open</span> : null}
@@ -279,11 +286,6 @@ export function CasBingoCard({ bot, readOnly }: { bot: Bot; readOnly: boolean })
               </dd>
             </div>
           </dl>
-          {todaysRun?.reason_text && (
-            <p className="mt-2 line-clamp-2 font-mono text-hint text-muted" title={todaysRun.reason_text}>
-              {todaysRun.reason_text}
-            </p>
-          )}
         </div>
 
         <div className="mt-auto pt-4">

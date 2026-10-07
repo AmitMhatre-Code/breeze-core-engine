@@ -1,6 +1,6 @@
 # Iron Condors
 
-A **Dynamic Iron Condor campaign** manages one NIFTY iron condor for you over weeks: it checks the position twice a day, suggests when to add a tranche, roll a side or exit, and keeps a ledger of every rupee in and out across all of it. Each campaign's card sits on its group in [Portfolio](portfolio.md#iron-condor-campaigns). Its settings, backtest and a quick way to start one by hand are on the **Dynamic Iron Condor** card on the [Bots](bots.md#dynamic-iron-condor) page.
+A **Dynamic Iron Condor campaign** manages one NIFTY iron condor for you over weeks: it checks the position twice a day, suggests when to add a tranche, roll a side or exit, and keeps a ledger of every rupee in and out across all of it. Each campaign's card sits on its group in [Portfolio](portfolio.md#iron-condor-campaigns). A campaign the bot runs is also one row in the Bots page's [Activity](bots.md#activity) for as long as it is open, and a Simulation campaign, which holds nothing at the broker, is found only there. Its settings, backtest and a quick way to start one by hand are on the **Dynamic Iron Condor** card on the [Bots](bots.md#dynamic-iron-condor) page.
 
 Campaigns are **NIFTY only** for now. You act on a suggestion from the campaign's card with **Execute this suggestion…**, or make your own change with **Adjust…** (see [Portfolio](portfolio.md#adjusting-a-campaign)). Nothing is traded without you pressing Execute, unless you hand a campaign to the [Dynamic Iron Condor bot](bots.md#dynamic-iron-condor).
 

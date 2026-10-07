@@ -26,6 +26,7 @@ import {
   useLeaveOutDifference,
   useUpdateCampaignSettings,
   type CondorCampaign,
+  type CondorCampaignDetail,
   type CondorDecision,
   type CondorDifference,
   type CondorSettings,
@@ -359,37 +360,7 @@ export function CampaignCard({
         </p>
       ) : null}
 
-      <details className="rounded-lg border border-border bg-panel p-3">
-        <summary className="cursor-pointer text-sm font-medium">Ledger ({detail.data?.fills.length ?? 0} fills)</summary>
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="text-muted">
-              <tr>
-                <th className="text-left font-normal">When</th>
-                <th className="text-left font-normal">Leg</th>
-                <th className="text-left font-normal">Kind</th>
-                <th className="text-right font-normal">Price</th>
-                <th className="text-right font-normal">Charges</th>
-                <th className="text-right font-normal">Cash</th>
-              </tr>
-            </thead>
-            <tbody className="font-mono">
-              {(detail.data?.fills ?? []).map((f) => (
-                <tr key={f.id} title={f.note ?? undefined}>
-                  <td>{f.filled_at}</td>
-                  <td>
-                    {f.side} {f.quantity} × {f.strike} {f.right === "Call" ? "CE" : "PE"}
-                  </td>
-                  <td>{f.kind}</td>
-                  <td className="text-right">{f.price.toFixed(2)}</td>
-                  <td className="text-right">{f.charges.toFixed(2)}</td>
-                  <td className={`text-right ${toneOf(f.cash)}`}>{formatInr(f.cash, 2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
+      <CampaignLedger fills={detail.data?.fills} />
 
       <details className="rounded-lg border border-border bg-panel p-3">
         <summary className="cursor-pointer text-sm font-medium">
@@ -408,21 +379,65 @@ export function CampaignCard({
         </ul>
       </details>
 
-      <details className="rounded-lg border border-border bg-panel p-3">
-        <summary className="cursor-pointer text-sm font-medium">Check history</summary>
-        <ul className="mt-2 space-y-1 text-xs">
-          {(detail.data?.decisions ?? []).map((d) => (
-            <li key={d.id}>
-              <span className="font-mono text-muted">{d.at}</span> · {checkKindLabel(d.check_kind)} ·{" "}
-              <strong>{actionLabel(d.action)}</strong> — {d.text}
-            </li>
-          ))}
-          {detail.data && !detail.data.decisions.length ? <li className="text-muted">None yet.</li> : null}
-        </ul>
-      </details>
+      <CampaignChecks decisions={detail.data?.decisions} />
 
       <SettingsEditor campaign={campaign} />
     </div>
+  );
+}
+
+/** Every fill on the campaign's ledger. Shared by the campaign card and the bot's Activity row. */
+export function CampaignLedger({ fills }: { fills: CondorCampaignDetail["fills"] | undefined }) {
+  return (
+    <details className="rounded-lg border border-border bg-panel p-3">
+      <summary className="cursor-pointer text-sm font-medium">Ledger ({fills?.length ?? 0} fills)</summary>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-muted">
+            <tr>
+              <th className="text-left font-normal">When</th>
+              <th className="text-left font-normal">Leg</th>
+              <th className="text-left font-normal">Kind</th>
+              <th className="text-right font-normal">Price</th>
+              <th className="text-right font-normal">Charges</th>
+              <th className="text-right font-normal">Cash</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {(fills ?? []).map((f) => (
+              <tr key={f.id} title={f.note ?? undefined}>
+                <td>{f.filled_at}</td>
+                <td>
+                  {f.side} {f.quantity} × {f.strike} {f.right === "Call" ? "CE" : "PE"}
+                </td>
+                <td>{f.kind}</td>
+                <td className="text-right">{f.price.toFixed(2)}</td>
+                <td className="text-right">{f.charges.toFixed(2)}</td>
+                <td className={`text-right ${toneOf(f.cash)}`}>{formatInr(f.cash, 2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+/** Every scheduled check the campaign has had, newest first. */
+export function CampaignChecks({ decisions }: { decisions: CondorCampaignDetail["decisions"] | undefined }) {
+  return (
+    <details className="rounded-lg border border-border bg-panel p-3">
+      <summary className="cursor-pointer text-sm font-medium">Check history</summary>
+      <ul className="mt-2 space-y-1 text-xs">
+        {(decisions ?? []).map((d) => (
+          <li key={d.id}>
+            <span className="font-mono text-muted">{d.at}</span> · {checkKindLabel(d.check_kind)} ·{" "}
+            <strong>{actionLabel(d.action)}</strong> — {d.text}
+          </li>
+        ))}
+        {decisions && !decisions.length ? <li className="text-muted">None yet.</li> : null}
+      </ul>
+    </details>
   );
 }
 

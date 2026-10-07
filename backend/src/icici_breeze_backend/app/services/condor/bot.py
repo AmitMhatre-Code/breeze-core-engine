@@ -38,7 +38,7 @@ from icici_breeze_backend.app.db.bots_migrate import BOT_DYNAMIC_CONDOR
 from icici_breeze_backend.app.domain.condor import DynamicCondorBotConfig
 from icici_breeze_backend.app.repositories import condor as repo
 from icici_breeze_backend.app.services.bots.charges import load_charges
-from icici_breeze_backend.app.services.condor import campaigns, executor, live, tickets
+from icici_breeze_backend.app.services.condor import activity, campaigns, executor, live, tickets
 from icici_breeze_backend.app.services.condor.strikes import cycle_expiry
 
 _logger = logging.getLogger(__name__)
@@ -568,6 +568,10 @@ def handle_approval(user_id: str, proposal_id: str, action: str, ask: Optional[d
         hitl._retire(ask, f"❌ *Rejected at {stamp}* — nothing was placed.")  # noqa: SLF001
         if decision:
             repo.update_decision(decision["id"], outcome="rejected")
+            rejected = repo.get_campaign(decision["campaign_id"], user_id)
+            if rejected is not None:
+                activity.note(rejected, reason_code="approval_rejected",
+                              reason_text=f"You rejected the ask at {stamp}. Nothing was placed; the next check decides again.")
         _notify(user_id, "Rejected — nothing was placed. The next check will decide again.")
         return
     if action != "a":
@@ -598,5 +602,7 @@ def handle_approval(user_id: str, proposal_id: str, action: str, ask: Optional[d
         return
     final = repo.get_execution(ex["id"], campaign.id) or ex
     repo.update_decision(decision["id"], outcome=f"approved_{final.get('status')}")
+    activity.note(campaign, reason_code=f"approved_{final.get('status')}",
+                  reason_text=f"You approved the ask at {stamp}. {final.get('message') or 'Ticket ' + str(final.get('status')) + '.'}")
     hitl._edit_ask(ask, f"☑️ *Approved at {stamp}* — the result is in the message below.")  # noqa: SLF001
     _notify(user_id, final.get("message") or f"Ticket {final.get('status')}.")
