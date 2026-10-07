@@ -155,7 +155,28 @@ def test_dead_futures_pauses_signal_bots_but_does_not_claim_positions_unmonitore
     world["futures"]["nifty"] = feed_alerts.FUTURES_DOWN_SECONDS
     _pass(world)
     assert world["sent"] == [
-        ("down", {"paused": ["Long Scalper"], "unmonitored": [], "hold_minutes": 5})
+        ("down", {"paused": ["Long Scalper (Live)"], "unmonitored": [], "hold_minutes": 5})
+    ]
+
+
+def test_a_paused_paper_bot_is_tagged_separately_from_a_paused_live_one(world):
+    """A paper-mode bot holds no real legs, so its pause is not the same news as a live one's
+    -- the message must not let the two read the same."""
+    world["bots"] = [
+        _bot("momentum_long_scalper", {"mode": "paper"}),
+        _bot("cas_bingo", {"indices": {"NIFTY": {}}}),
+    ]
+    world["futures"]["nifty"] = feed_alerts.FUTURES_DOWN_SECONDS
+    _pass(world)
+    assert world["sent"] == [
+        (
+            "down",
+            {
+                "paused": ["CAS Bingo (Live)", "Long Scalper (Simulation)"],
+                "unmonitored": [],
+                "hold_minutes": 5,
+            },
+        )
     ]
 
 
@@ -182,7 +203,7 @@ def test_dead_index_spot_pauses_the_expiry_writer_for_its_enabled_index(world):
     _pass(world, NOW + feed_alerts.SPOT_DOWN_SECONDS - 5)
     assert world["sent"] == []
     _pass(world, NOW + feed_alerts.SPOT_DOWN_SECONDS)
-    assert world["sent"][0][1]["paused"] == ["Expiry-Day Index Writer"]
+    assert world["sent"][0][1]["paused"] == ["Expiry-Day Index Writer (Live)"]
 
 
 def test_stale_quotes_under_a_live_position_make_it_unmonitored(world):
@@ -193,8 +214,8 @@ def test_stale_quotes_under_a_live_position_make_it_unmonitored(world):
         (
             "down",
             {
-                "paused": ["Intraday Iron Fly"],
-                "unmonitored": ["Intraday Iron Fly"],
+                "paused": ["Intraday Iron Fly (Live)"],
+                "unmonitored": ["Intraday Iron Fly (Live)"],
                 "hold_minutes": 5,
             },
         )
@@ -206,7 +227,7 @@ def test_dead_nifty_spot_leaves_an_open_iron_fly_unmonitored(world):
     world["cycles"] = [_cycle("iron_fly_scalper")]
     world["spot"]["nifty"] = None
     _pass(world, OPEN + feed_alerts.SPOT_DOWN_SECONDS)
-    assert world["sent"][0][1]["unmonitored"] == ["Intraday Iron Fly"]
+    assert world["sent"][0][1]["unmonitored"] == ["Intraday Iron Fly (Live)"]
 
 
 def test_a_paper_position_is_not_reported(world):
@@ -274,7 +295,7 @@ def test_entries_going_down_during_a_positions_incident_adds_no_message(world):
     world["futures"]["nifty"] = 600.0
     _pass(world, NOW + 15)
     assert [k for k, _ in world["sent"]] == ["down"]
-    assert world["sent"][0][1]["unmonitored"] == ["Intraday Iron Fly"]
+    assert world["sent"][0][1]["unmonitored"] == ["Intraday Iron Fly (Live)"]
 
 
 def test_a_position_closed_mid_outage_is_dropped_silently(world):

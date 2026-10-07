@@ -57,6 +57,13 @@ def campaign_mode_label(mode: str) -> str:
     return "simulation" if mode == "paper" else mode
 
 
+def _mode_tag(mode: str) -> str:
+    """Prefix for a bot message so a Simulation-mode decision is never read as a real one.
+    Paper-only, matching `simulate()`'s own "Simulation:" lines below — live stays untagged,
+    the existing convention every other bot message already relies on."""
+    return "Simulation: " if mode == "paper" else ""
+
+
 class Refused(ValueError):
     pass
 
@@ -283,10 +290,14 @@ def hand_over(proc: Any, campaign: repo.Campaign) -> repo.Campaign:
 def pause(user_id: str, reason: str) -> None:
     bots_repo = _bots_repo()
     record = bots_repo.get_or_create_bot(user_id, BOT)
-    if config_of(record.config).paused:
+    cfg = config_of(record.config)
+    if cfg.paused:
         return
     bots_repo.update_bot(user_id, BOT, config={"paused": True, "paused_reason": reason})
-    _notify(user_id, f"Paused: {reason} It decides nothing until you resume it on its card.")
+    _notify(
+        user_id,
+        f"{_mode_tag(cfg.mode)}Paused: {reason} It decides nothing until you resume it on its card.",
+    )
 
 
 def waiting_reason(proc: Any, user_id: str, cfg: DynamicCondorBotConfig, today: datetime.date) -> tuple[Optional[str], Optional[str]]:
@@ -324,7 +335,7 @@ def ensure_campaign(proc: Any, user_id: str, record: Any, today: datetime.date) 
         key = (user_id, display, why)
         if key not in _waiting_told:
             _waiting_told.add(key)
-            _notify(user_id, f"Waiting: {why}")
+            _notify(user_id, f"{_mode_tag(cfg.mode)}Waiting: {why}")
         return None
     mode = "paper" if cfg.mode == "paper" else "live"
     try:
@@ -427,12 +438,15 @@ def act(proc: Any, campaign: repo.Campaign, check_kind: str, out: dict[str, Any]
     if not record.enabled:
         return None
     if cfg.paused:
-        _notify(campaign.user_id, f"{d['text']}\nNot acted on: the bot is paused ({cfg.paused_reason or 'by you'}).")
+        _notify(
+            campaign.user_id,
+            f"{d['text']}\n{_mode_tag(cfg.mode)}Not acted on: the bot is paused ({cfg.paused_reason or 'by you'}).",
+        )
         return "paused"
     ticket, why = _ticket(proc, campaign, d, cfg)
     if ticket is None:
         repo.update_decision(decision_id, outcome="skipped")
-        _notify(campaign.user_id, f"{d['text']}\nSkipped: {why}")
+        _notify(campaign.user_id, f"{d['text']}\n{_mode_tag(cfg.mode)}Skipped: {why}")
         return f"skipped: {why}"
     kind = _ticket_kind(ticket["kind"], ticket["orders"])
     if campaign.mode == "paper":

@@ -695,7 +695,7 @@ def _resolve_sg_conflict(proc: Any, user_id: str, bot_type: str, context: Any) -
         _logger.exception("scalping[%s]: PB/SL conflict check failed", bot_type)
         return
     if conflict is not None:
-        guards.disarm_conflicting_rule(user_id, conflict)
+        guards.disarm_conflicting_rule(user_id, conflict, paper=bool(cycle.paper) if cycle is not None else False)
 
 
 def _finalise_if_day_is_over(

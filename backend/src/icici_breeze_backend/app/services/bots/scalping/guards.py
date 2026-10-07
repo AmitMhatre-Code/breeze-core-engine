@@ -66,7 +66,7 @@ def find_sg_conflict(
     )
 
 
-def disarm_conflicting_rule(user_id: str, conflict: SgConflict) -> None:
+def disarm_conflicting_rule(user_id: str, conflict: SgConflict, *, paper: bool) -> None:
     """Clear the rule and tell the user exactly what was disarmed.
 
     **This disarms a protection the user set up**, which is why the alert is not optional and
@@ -78,11 +78,16 @@ def disarm_conflicting_rule(user_id: str, conflict: SgConflict) -> None:
     whole `(stock_code, expiry)` group, so if the user holds other positions on that expiry
     -- a Strategy Builder trade, say -- those lose their stop too. `other_legs` is how the
     message says so.
+
+    `paper` is required for the same reason `disarm_bot` requires it: a Paper-mode bot holds
+    no real legs, so this can fire purely because the bot's *simulated* position shares the
+    rule's group -- a real rule disarmed over a paper position is not the loss this alert
+    otherwise implies.
     """
     from icici_breeze_backend.app.repositories import squareoff_rules as sq_repo
     from icici_breeze_backend.app.services import strategy_group_lifecycle as sg
     from icici_breeze_backend.app.services.portfolio_pnl_engine import clear_group_rule
-    from icici_breeze_backend.app.services.telegram_alerts import _notify
+    from icici_breeze_backend.app.services.telegram_alerts import _notify, mode_banner
 
     clear_group_rule(user_id, INDEX_STOCK_CODE, conflict.expiry_display)
     # Written through to the row, not only cleared from memory (B-29). A memory-only clear
@@ -128,7 +133,7 @@ def disarm_conflicting_rule(user_id: str, conflict: SgConflict) -> None:
         "arm the rule.",
     ]
     try:
-        _notify(user_id, "\n".join(lines), kind="scalping_sg_conflict")
+        _notify(user_id, mode_banner(paper) + "\n".join(lines), kind="scalping_sg_conflict")
     except Exception:  # noqa: BLE001 -- an unreachable user must not stop the bot trading
         _logger.exception("scalping: could not send the PB/SL disarm alert")
 
@@ -196,19 +201,15 @@ def disarm_bot(user_id: str, bot_type: str, reason_text: str, *, paper: bool) ->
     stop, so this alert can fire for a bot that has placed no real orders at all. A silent
     default here is exactly how a Paper-mode loss reads as real money.
     """
-    from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify
+    from icici_breeze_backend.app.services.telegram_alerts import _BOT_LABEL, _notify, mode_banner
 
     if not switch_off(user_id, bot_type, f"daily loss limit: {reason_text}"):
         return
     display_name = _BOT_LABEL.get(bot_type, bot_type)
-    banner = (
-        "\U0001f9ea *SIMULATION (Paper mode) — no real money is involved.*\n\n"
-        if paper else ""
-    )
     try:
         _notify(
             user_id,
-            f"{banner}"
+            f"{mode_banner(paper)}"
             "🛑 *Scalping bot stopped*\n\n"
             f"*{display_name}* hit its cumulative daily loss limit and has been "
             f"*disabled*.\n\n{reason_text}\n\n"

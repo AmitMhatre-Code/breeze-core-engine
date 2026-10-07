@@ -354,6 +354,13 @@ def bot_label(bot_type: str) -> str:
     return _BOT_LABEL.get(bot_type, bot_type.replace("_", " ").title())
 
 
+def mode_banner(paper: bool) -> str:
+    """Prefix for a bot alert so a Simulation-mode message can never be mistaken for real
+    money. Paper-only on purpose: every other alert's silence on mode already reads as live,
+    so marking live too would just repeat that by default."""
+    return "\U0001f9ea *SIMULATION (Paper mode) — no real money is involved.*\n\n" if paper else ""
+
+
 def _format_bot_feed_down_message(
     paused: list[str], unmonitored: list[str], *, hold_minutes: int
 ) -> str:

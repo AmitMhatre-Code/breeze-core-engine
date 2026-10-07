@@ -97,7 +97,7 @@ def test_disarming_clears_the_rule_and_alerts_the_user(db, sent):
     engine.set_group_rule(USER, "r1", stock_code="NIFTY", expiry_display=EXPIRY, stop_loss_pnl=-500.0)
     conflict = guards.find_sg_conflict(FakeProc(), USER)
 
-    guards.disarm_conflicting_rule(USER, conflict)
+    guards.disarm_conflicting_rule(USER, conflict, paper=False)
 
     assert engine.group_rule_for(USER, "NIFTY", EXPIRY) is None
     assert len(sent) == 1
@@ -105,6 +105,7 @@ def test_disarming_clears_the_rule_and_alerts_the_user(db, sent):
     assert kind == "scalping_sg_conflict"
     assert EXPIRY in text
     assert "stop the scalping bot first" in text.lower()
+    assert "SIMULATION" not in text
 
 
 def test_the_alert_names_other_positions_left_unprotected(db, sent, monkeypatch):
@@ -122,9 +123,19 @@ def test_the_alert_names_other_positions_left_unprotected(db, sent, monkeypatch)
     conflict = guards.find_sg_conflict(FakeProc(), USER, bot_leg_count=1)
     assert conflict.other_legs == 4
 
-    guards.disarm_conflicting_rule(USER, conflict)
+    guards.disarm_conflicting_rule(USER, conflict, paper=False)
     assert "unprotected" in sent[0][1].lower()
     assert "4 other leg" in sent[0][1]
+
+
+def test_the_alert_is_marked_simulated_when_the_bot_is_paper(db, sent):
+    """A paper-mode bot's position is not real, so disarming a real rule over it must say so."""
+    engine.set_group_rule(USER, "r1", stock_code="NIFTY", expiry_display=EXPIRY, stop_loss_pnl=-500.0)
+    conflict = guards.find_sg_conflict(FakeProc(), USER)
+
+    guards.disarm_conflicting_rule(USER, conflict, paper=True)
+    assert "SIMULATION" in sent[0][1]
+    assert "no real money" in sent[0][1]
 
 
 def test_an_unreachable_user_does_not_stop_the_disarm(db, monkeypatch):
@@ -133,7 +144,7 @@ def test_an_unreachable_user_does_not_stop_the_disarm(db, monkeypatch):
         "icici_breeze_backend.app.services.telegram_alerts._notify",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("telegram down")),
     )
-    guards.disarm_conflicting_rule(USER, guards.find_sg_conflict(FakeProc(), USER))
+    guards.disarm_conflicting_rule(USER, guards.find_sg_conflict(FakeProc(), USER), paper=False)
     assert engine.group_rule_for(USER, "NIFTY", EXPIRY) is None  # still disarmed
 
 
@@ -403,7 +414,7 @@ def test_the_disarm_is_written_to_the_rule_so_it_does_not_come_back(db, sent, mo
     )
     engine.set_group_rule(USER, record.id, stock_code="NIFTY", expiry_display=EXPIRY, stop_loss_pnl=-500.0)
 
-    guards.disarm_conflicting_rule(USER, guards.find_sg_conflict(FakeProc(), USER))
+    guards.disarm_conflicting_rule(USER, guards.find_sg_conflict(FakeProc(), USER), paper=False)
 
     stored = sq_repo.get_rule(record.id)
     assert stored.status == "reset"

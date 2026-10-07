@@ -237,10 +237,20 @@ def _parse_ist(raw: Optional[str]) -> Optional[float]:
 # --------------------------------------------------------------------------------------
 
 
-def _bot_names(bot_types: Iterable[str]) -> list[str]:
+def _bot_mode_tag(bot_type: str, by_type: dict[str, Any]) -> str:
+    """"Simulation" for a paper/simulation-mode bot, "Live" otherwise -- including a bot with
+    no paper axis at all (Expiry Writer), which always places real orders, and a bot_type not
+    found here at all, which only happens for `unmonitored` and is live by construction
+    (`_live_cycles_by_user` only ever returns non-paper cycles)."""
+    bot = by_type.get(bot_type)
+    mode = (bot.config or {}).get("mode") if bot is not None else None
+    return "Simulation" if mode in ("paper", "simulation") else "Live"
+
+
+def _bot_names(bot_types: Iterable[str], by_type: dict[str, Any]) -> list[str]:
     from icici_breeze_backend.app.services.telegram_alerts import bot_label
 
-    return sorted({bot_label(t) for t in bot_types})
+    return sorted({f"{bot_label(t)} ({_bot_mode_tag(t, by_type)})" for t in bot_types})
 
 
 def check_bot_feeds(now: float, floor: float) -> None:
@@ -259,6 +269,7 @@ def check_bot_feeds(now: float, floor: float) -> None:
     for user_id in sorted(set(enabled) | set(cycles) | _users_with_incidents()):
         entries_key, positions_key = f"{user_id}|entries", f"{user_id}|positions"
         bots = enabled.get(user_id, [])
+        by_type = {b.bot_type: b for b in bots}
         paused = {b.bot_type for b in bots if _entry_feeds(b) & down_feeds}
         user_cycles = cycles.get(user_id, [])
         unmonitored = _unmonitored_bots(user_cycles, spot, floor, now)
@@ -281,14 +292,14 @@ def check_bot_feeds(now: float, floor: float) -> None:
             _logger.warning("feed alerts: bot positions unmonitored for user=%s: %s", user_id, sorted(unmonitored))
             telegram_alerts.notify_bot_feed_down(
                 user_id,
-                paused=_bot_names(paused | unmonitored),
-                unmonitored=_bot_names(unmonitored),
+                paused=_bot_names(paused | unmonitored, by_type),
+                unmonitored=_bot_names(unmonitored, by_type),
                 hold_minutes=hold_minutes,
             )
         elif entries == "down" and not _incidents.is_down(positions_key):
             _logger.warning("feed alerts: bots paused for user=%s: %s", user_id, sorted(paused))
             telegram_alerts.notify_bot_feed_down(
-                user_id, paused=_bot_names(paused), unmonitored=[], hold_minutes=hold_minutes
+                user_id, paused=_bot_names(paused, by_type), unmonitored=[], hold_minutes=hold_minutes
             )
 
         if positions == "back" or entries == "back":

@@ -56,7 +56,10 @@ def _label(kind: str) -> str:
 
 def alert_text(campaign: repo.Campaign, kind: str, decision: dict[str, Any]) -> str:
     expiry = campaign.cycle.expiry if campaign.cycle else "—"
-    head = f"Iron Condor · NIFTY {expiry} · {_label(kind)} check"
+    # A paper campaign holds nothing at the broker (bot.py), so its checks are not about real
+    # money -- said here, not left to the mode-silent default every other message reads as live.
+    mode_tag = "Simulation · " if campaign.mode == "paper" else ""
+    head = f"{mode_tag}Iron Condor · NIFTY {expiry} · {_label(kind)} check"
     if decision["action"] == "unavailable":
         return f"{head}\nCould not decide: {decision['text']}"
     pnl = (decision.get("metrics") or {}).get("campaign_pnl_inr")
