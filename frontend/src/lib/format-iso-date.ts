@@ -45,6 +45,54 @@ export function formatIsoDateDdMmmYyyy(iso: string): string {
   return formatYmdParts(p.y, p.m, p.d) ?? iso.trim();
 }
 
+const MONTH_BY_NAME: ReadonlyMap<string, number> = new Map(
+  [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ].flatMap((name, i) => [
+    [name, i + 1],
+    [name.slice(0, 3), i + 1],
+    ...(name === "september" ? [["sept", 9] as [string, number]] : []),
+  ]),
+);
+
+function realDateIso(y: number, m: number, d: number): string | null {
+  if (y < 1000 || m < 1 || m > 12 || d < 1) return null;
+  if (d > new Date(y, m, 0).getDate()) return null;
+  return toIsoDate(y, m, d);
+}
+
+/**
+ * A date typed into a date field → `YYYY-MM-DD`, or null when it is not a real date.
+ *
+ * Accepts the app's own `dd-MMM-yyyy` (any case, full or short month name, `-`, `/`,
+ * `.` or space between parts), ISO `yyyy-mm-dd`, and numeric `dd-mm-yyyy` — day first,
+ * as dates are written in India, never the US month-first reading. The year must have
+ * four digits so a half-typed `202` is never taken for the year 202.
+ */
+export function parseTypedDate(text: string): string | null {
+  const parts = text.trim().replace(/,/g, " ").split(/[\s\-/.]+/).filter(Boolean);
+  if (parts.length !== 3) return null;
+  const [a, b, c] = parts;
+  if (/^\d{4}$/.test(a) && /^\d{1,2}$/.test(b) && /^\d{1,2}$/.test(c)) {
+    return realDateIso(Number(a), Number(b), Number(c));
+  }
+  if (!/^\d{1,2}$/.test(a) || !/^\d{4}$/.test(c)) return null;
+  const month = /^\d{1,2}$/.test(b) ? Number(b) : MONTH_BY_NAME.get(b.toLowerCase());
+  if (month == null) return null;
+  return realDateIso(Number(c), month, Number(a));
+}
+
 /** `YYYY-MM-DD` or `YYYYMMDD` (e.g. NSE SPAN archive) → `dd-MMM-yyyy`. */
 export function formatSourceFileDate(input: string | null | undefined): string {
   if (!input) return "—";

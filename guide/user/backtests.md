@@ -20,6 +20,8 @@ Both use the same period choices:
 | **Last trading month** | From the same date a month back to the last closed session. |
 | **Custom range** | Any **From** and **To** dates. A range reaching into today while the market is open stops at the last closed session. |
 
+Type a **From** or **To** date straight into the field (for example `01-Jan-2020`), or pick it from the calendar, where clicking the month name and then the year jumps back years in a few clicks. See [Entering dates](finding-your-way.md#entering-dates).
+
 A signal needs a completed backtest covering **at least 30 calendar days** before a bot may use it (the [30-day gate](signals.md#the-30-day-gate)), so run a month or longer when that is your aim.
 
 ## Where the history comes from

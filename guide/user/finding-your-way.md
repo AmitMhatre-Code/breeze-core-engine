@@ -77,6 +77,13 @@ Banners appear across the top of every page, under the header, when something af
 | **Setting up market connection…** | The live NIFTY and SENSEX feeds are starting, usually for a few seconds after the market opens or after you sign in. |
 | **Get instant Stop-Loss / Profit Booking alerts** | An invitation to link Telegram for alerts. Scan the QR code, or click **Maybe later**. Tick **Do not show this message again** to stop it appearing. See [Telegram Alerts](settings-automation.md#telegram-alerts). |
 
+## Entering dates
+
+Every date field in the app (backtest periods, the Order Book range, the Activity **Started** range, Storage deletes and exchange holidays) works the same way.
+
+- **Type it.** Click into the field and type the date, then press **Enter** or click away. `01-Jan-2020`, `1 jan 2020`, `01/01/2020` and `2020-01-01` all work. Numbers are read day first, so `03/04/2022` is 3 April. A date that does not exist, or one the field does not allow (such as a future date in Activity), turns the field red; clicking away puts the previous date back.
+- **Pick it.** Click the calendar icon. To go back months or years, click the month name at the top to see the twelve months, then click the year to see twelve years at a time; the arrows page through them. So January 2020 is three clicks away. Dates the field does not allow are greyed out. **Escape** closes just the calendar.
+
 ## Help and keyboard shortcuts
 
 Press **?** anywhere (except while typing in a field) to open **Help**. It has two tabs:

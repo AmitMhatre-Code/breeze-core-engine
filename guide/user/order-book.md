@@ -30,7 +30,7 @@ Your orders at ICICI for a date range, grouped by contract and side.
 
 | Control | What it does |
 |---|---|
-| **Date range** | Choose a start and end date. It opens on today. |
+| **Date range** | Choose a start and end date. It opens on today. Type a date or pick it from the calendar; see [Entering dates](finding-your-way.md#entering-dates). |
 | **Fetch orders** | Loads orders for the chosen range from ICICI. |
 
 Each row is one contract and side (for example all your sell orders for one strike), which is how a large order split into several chunks stays together:

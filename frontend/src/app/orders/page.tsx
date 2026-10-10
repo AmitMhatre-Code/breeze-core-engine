@@ -18,13 +18,13 @@ import { AppShell } from "@/components/layout/AppShell";
 import { HelpLink } from "@/components/help/HelpLink";
 import { useLicenseRestrictions } from "@/components/license/LicenseRestrictionProvider";
 import type { ExecutionPreviewLeg } from "@/components/shared/order/OrderExecutionConfirmDialog";
-import { OrderBookDatePopover } from "@/components/order/OrderBookDatePopover";
 import { useOrderConfirm } from "@/components/shared/order/OrderConfirmProvider";
 import { OptionTypeBadge } from "@/components/shared/badges/OptionTypeBadge";
 import { OrderSideBadge } from "@/components/shared/badges/OrderSideBadge";
 import { PrefilledOrderCard } from "@/components/shared/order/PrefilledOrderCard";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Modal } from "@/components/ui/Modal";
 import { apiClient } from "@/lib/api-client";
 import { fetchBreakChunkDefaults } from "@/lib/break-chunk-defaults";
@@ -2062,18 +2062,22 @@ function OrdersBody() {
           <div className="flex flex-col gap-3 border-b border-border-soft px-[18px] py-3.5 sm:flex-row sm:flex-wrap sm:items-center">
             <span className="text-table text-muted">Date range</span>
             <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-visible sm:flex-row sm:items-center sm:gap-3">
-              <OrderBookDatePopover
+              <DatePicker
                 id="order-book-start"
-                label="Start date"
+                ariaLabel="Start date"
+                size="compact"
+                className="self-start sm:self-auto"
                 value={inputStart}
                 onChange={setDraftStart}
               />
               <span className="shrink-0 text-center text-xs text-faint" aria-hidden>
                 to
               </span>
-              <OrderBookDatePopover
+              <DatePicker
                 id="order-book-end"
-                label="End date"
+                ariaLabel="End date"
+                size="compact"
+                className="self-start sm:self-auto"
                 value={inputEnd}
                 onChange={setDraftEnd}
               />

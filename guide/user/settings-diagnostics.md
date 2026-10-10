@@ -52,6 +52,6 @@ How full your server's data disk is, what is using it, and deleting data you no 
 | **Data volume** | A bar showing how much of the disk is used. It turns amber past your threshold. |
 | **Threshold (% used)** and **Save** | When usage reaches this, every page shows a **Storage is N% full** banner, new backtests are refused, and a running backtest stops downloading or writing data. Keep some room spare: tidying up the backtest cache after a delete needs free space about the size of the cache. |
 | Groups | What occupies the disk, each item with its size and the dates it covers: **Backtest history** (downloaded market data), **Backtest results**, **Logs**, and **Kept by the app** (listed so the figures add up; these cannot be deleted here). |
-| **Delete …** | On each deletable item: pick a **From** and **To** date and click **Delete**. The app deletes the data for that range and then compacts the file to reclaim the space, showing progress as it goes. |
+| **Delete …** | On each deletable item: pick a **From** and **To** date (type them or use the calendar; see [Entering dates](finding-your-way.md#entering-dates)) and click **Delete**. The app deletes the data for that range and then compacts the file to reclaim the space, showing progress as it goes. |
 
 Records of your orders, square-offs and bot events are never deletable here.

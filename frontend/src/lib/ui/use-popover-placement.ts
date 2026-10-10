@@ -1,49 +1,68 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+
+/** Keeps a popover this far inside the viewport's left and right edges. */
+const EDGE = 8;
 
 /**
- * Flips an anchored popover above its trigger when there isn't room below.
+ * Places an anchored popover with `position: fixed`, below its anchor or above it when
+ * there isn't room below.
  *
- * Both date pickers hard-coded `top: 100%`, so on a phone a trigger in the lower
- * half of the page opened a calendar that ran off the bottom of the viewport (the
- * Order Book date range spanned y 628→1001 in an 812px viewport). Tablets had room
- * and never showed it, which is why it reads as phone-specific.
+ * Fixed rather than absolute because the date picker sits inside containers that clip:
+ * the Storage delete dialog scrolls (`overflow-y-auto`), so an absolutely positioned
+ * calendar inside it was cut off and had to be scrolled to within the dialog. The
+ * popover stays in the DOM under its picker, so outside-click checks still see it as
+ * inside. Callers must not sit under a `transform`, which would re-anchor `fixed`.
  *
- * Measures after paint, so the popover's real height is known rather than assumed.
+ * The flip exists because a hard-coded downward calendar on a phone ran off the bottom
+ * of the viewport (the Order Book date range spanned y 628→1001 in an 812px viewport).
+ * Measures before paint, so the popover's real size is known rather than assumed, and
+ * re-measures on scroll and resize so it follows its anchor.
  */
 export function usePopoverPlacement(
   open: boolean,
-  triggerRef: RefObject<HTMLElement | null>,
-  gap = 8,
+  anchorRef: RefObject<HTMLElement | null>,
+  gap = 6,
 ) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [placeAbove, setPlaceAbove] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useLayoutEffect(() => {
     if (!open) return;
-    // No reset on close: `measure()` below runs inside a layout effect, i.e. before the
-    // browser paints, so a stale value from the previous open can never be shown.
     const measure = () => {
-      const trigger = triggerRef.current;
+      const anchor = anchorRef.current;
       const popover = popoverRef.current;
-      if (!trigger || !popover) return;
-      const rect = trigger.getBoundingClientRect();
+      if (!anchor || !popover) return;
+      const rect = anchor.getBoundingClientRect();
       const height = popover.offsetHeight;
+      const width = popover.offsetWidth;
       const roomBelow = window.innerHeight - rect.bottom - gap;
       const roomAbove = rect.top - gap;
       // Only flip when below genuinely can't fit AND above fits better — otherwise
       // keep the conventional downward placement.
-      setPlaceAbove(height > roomBelow && roomAbove > roomBelow);
+      const above = height > roomBelow && roomAbove > roomBelow;
+      setPos({
+        top: above ? rect.top - gap - height : rect.bottom + gap,
+        left: Math.max(EDGE, Math.min(rect.left, window.innerWidth - width - EDGE)),
+      });
     };
     measure();
     window.addEventListener("resize", measure);
     window.addEventListener("orientationchange", measure);
+    // Capture, so scrolling any container (a dialog, a panel) moves the popover too.
+    window.addEventListener("scroll", measure, true);
     return () => {
       window.removeEventListener("resize", measure);
       window.removeEventListener("orientationchange", measure);
+      window.removeEventListener("scroll", measure, true);
     };
-  }, [open, triggerRef, gap]);
+  }, [open, anchorRef, gap]);
 
-  return { popoverRef, placeAbove };
+  // Hidden until measured; the measurement runs before paint, so nothing flashes.
+  const style: CSSProperties = pos
+    ? { position: "fixed", top: pos.top, left: pos.left }
+    : { position: "fixed", top: 0, left: 0, visibility: "hidden" };
+
+  return { popoverRef, style };
 }

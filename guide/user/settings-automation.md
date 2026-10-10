@@ -61,7 +61,7 @@ Holidays and session hours. The app uses them to decide whether the market is op
 |---|---|
 | **Source** | **Local** (edited here) or **Breeze Console Admin Settings** (synced). |
 | **Regular session (IST)**: **Market open**, **Market close** | Normal trading hours. |
-| **Exchange holidays** | A **Date** and **Holiday name** per holiday. Add rows, or **Remove** them. |
+| **Exchange holidays** | A **Date** and **Holiday name** per holiday. Add rows, or **Remove** them. Type the date or pick it from the calendar; see [Entering dates](finding-your-way.md#entering-dates). |
 | **Save local calendar** | Saves your edits. |
 | **Sync from Breeze Console** | Replaces this calendar with the one maintained centrally at breeze-ui.com. It asks **Overwrite local calendar?** first; click **Continue** to confirm. |
 

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { SettingsScreenHeader } from "@/components/settings/SettingsScreenHeader";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Modal } from "@/components/ui/Modal";
 import {
   STORAGE_INVENTORY_KEY,
@@ -407,20 +408,18 @@ function DeleteDialog({
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <label className="flex items-center gap-1.5">
             <span className="text-muted">From</span>
-            <input
-              type="date"
-              className="app-input py-1 text-xs"
+            <DatePicker
+              size="compact"
               value={range.from}
-              onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+              onChange={(v) => setRange((r) => ({ ...r, from: v }))}
             />
           </label>
           <label className="flex items-center gap-1.5">
             <span className="text-muted">To</span>
-            <input
-              type="date"
-              className="app-input py-1 text-xs"
+            <DatePicker
+              size="compact"
               value={range.to}
-              onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+              onChange={(v) => setRange((r) => ({ ...r, to: v }))}
             />
           </label>
         </div>

@@ -5,6 +5,7 @@ import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in"
 import { BacktestProgress } from "@/components/bots/BacktestProgress";
 import { BacktestRunTrades } from "@/components/bots/BacktestTrades";
 import { CondorCampaignRun } from "@/components/bots/CondorCampaignRun";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { FilterPanelFooter, HeaderFilter, ValueFilterHeader } from "@/components/bots/ColumnFilter";
 import { ACTIVITY_FOCUS_EVENT, ACTIVITY_SECTION_ID, type ActivityFocusDetail } from "@/lib/bot-attention";
 import { BACKTEST_SLUG, backtestAuditHref } from "@/lib/bots-backtest";
@@ -507,22 +508,20 @@ function RangePanel({
         <div className="mt-1 grid gap-2 px-2">
           <label className="flex items-center justify-between gap-2">
             <span className="text-muted">From</span>
-            <input
-              type="date"
-              className="app-input py-1 text-xs"
+            <DatePicker
+              size="compact"
               value={draftCustom.from}
               max={today}
-              onChange={(e) => setDraftCustom((c) => ({ ...c, from: e.target.value }))}
+              onChange={(v) => setDraftCustom((c) => ({ ...c, from: v }))}
             />
           </label>
           <label className="flex items-center justify-between gap-2">
             <span className="text-muted">To</span>
-            <input
-              type="date"
-              className="app-input py-1 text-xs"
+            <DatePicker
+              size="compact"
               value={draftCustom.to}
               max={today}
-              onChange={(e) => setDraftCustom((c) => ({ ...c, to: e.target.value }))}
+              onChange={(v) => setDraftCustom((c) => ({ ...c, to: v }))}
             />
           </label>
           {error && <span className="text-down">{error}</span>}

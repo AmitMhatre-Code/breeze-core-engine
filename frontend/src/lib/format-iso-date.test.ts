@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { formatApiDateTime } from "./format-iso-date";
+import { formatApiDateTime, parseTypedDate } from "./format-iso-date";
 
 const ORIGINAL_TZ = process.env.TZ;
 
@@ -46,5 +46,39 @@ describe("formatApiDateTime", () => {
     expect(formatApiDateTime(null)).toBe("—");
     expect(formatApiDateTime(undefined)).toBe("—");
     expect(formatApiDateTime("")).toBe("—");
+  });
+});
+
+describe("parseTypedDate", () => {
+  it("reads the app's own dd-MMM-yyyy in any case and separator", () => {
+    expect(parseTypedDate("01-Jan-2020")).toBe("2020-01-01");
+    expect(parseTypedDate("1 jan 2020")).toBe("2020-01-01");
+    expect(parseTypedDate("15/MAR/2021")).toBe("2021-03-15");
+    expect(parseTypedDate("  7 September 2024 ")).toBe("2024-09-07");
+    expect(parseTypedDate("7 Sept 2024")).toBe("2024-09-07");
+  });
+
+  it("reads ISO and day-first numeric dates", () => {
+    expect(parseTypedDate("2020-01-31")).toBe("2020-01-31");
+    expect(parseTypedDate("2020/1/5")).toBe("2020-01-05");
+    // Day first, as written in India: 03/04 is 3 April, never 4 March.
+    expect(parseTypedDate("03/04/2022")).toBe("2022-04-03");
+    expect(parseTypedDate("3.4.2022")).toBe("2022-04-03");
+  });
+
+  it("refuses dates that do not exist", () => {
+    expect(parseTypedDate("31-Feb-2021")).toBeNull();
+    expect(parseTypedDate("29-Feb-2023")).toBeNull();
+    expect(parseTypedDate("29-Feb-2024")).toBe("2024-02-29");
+    expect(parseTypedDate("13/13/2020")).toBeNull();
+    expect(parseTypedDate("0-Jan-2020")).toBeNull();
+  });
+
+  it("refuses half-typed and garbled text", () => {
+    expect(parseTypedDate("")).toBeNull();
+    expect(parseTypedDate("01-Jan-202")).toBeNull();
+    expect(parseTypedDate("01-Jan")).toBeNull();
+    expect(parseTypedDate("01-Foo-2020")).toBeNull();
+    expect(parseTypedDate("Jan 2020")).toBeNull();
   });
 });
