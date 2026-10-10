@@ -332,6 +332,12 @@ export function DatePicker({
           aria-label="Choose date"
           ref={popoverRef}
           style={popoverStyle}
+          // Most pickers sit inside a <label>. A click on a button that the click itself
+          // removes (a year or month in the grids, the heading as it switches) reaches the
+          // label from a detached target, and Safari then treats it as a click on the label
+          // and forwards it to the calendar toggle, closing the calendar mid-pick. Cancelling
+          // the default stops the label acting; the buttons here have no default of their own.
+          onClick={(e) => e.preventDefault()}
           className="z-50 w-72 max-w-[calc(100vw-1rem)] rounded-[10px] border border-border bg-elevated p-3 font-sans text-sm shadow-pop"
         >
           <div className="mb-2 flex items-center justify-between gap-1">
