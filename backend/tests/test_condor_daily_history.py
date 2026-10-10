@@ -259,3 +259,81 @@ def test_no_smile_no_estimate(tmp_path):
                      "AND strike NOT IN (12000, 12050)")
     source = DailySource(D(2020, 1, 1), D(2020, 1, 3), reference_spot=24_000.0, path=path)
     assert source.option((D(2020, 2, 27), 10_500.0, "Put"), datetime.datetime(2020, 1, 2, 15, 31)) == ("stale", None)
+
+
+# --- a cycle always ends at its expiry ----------------------------------------------------
+
+
+def _replay(path, start, end, exit_action="close"):
+    """Held to expiry (exit at 0 DTE), as the 2020-2025 run that stalled was."""
+    source = DailySource(start, end, reference_spot=24_000.0, path=path)
+    replay = CondorReplay(
+        CondorSettings(margin_ceiling_inr=60_00_000, exit_dte=0), start, end, lots_per_tranche=2,
+        exit_action=exit_action, source=source, charges=ChargesModel(), spread=SPREAD, holidays=set(),
+        checks=("eod",),
+    )
+    assert replay.run() == []
+    return replay
+
+
+def _cycles(replay):
+    return [cy for c in replay.summary()["campaigns"] for cy in c["cycles"]]
+
+
+def test_on_its_expiry_day_an_untraded_contract_is_worth_its_intrinsic_value(tmp_path):
+    """2020-03-26: the far legs did not trade on their last day and no smile can be read with no
+    time left, so the exit at 0 DTE could not be priced and the campaign stayed open for good."""
+    import sqlite3
+
+    path = str(tmp_path / "cache.sqlite3")
+    _seed(path, D(2020, 1, 27), D(2020, 1, 31))
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM nse_daily_options WHERE session = '2020-01-30' AND expiry = '2020-01-30'")
+    source = DailySource(D(2020, 1, 27), D(2020, 1, 31), reference_spot=24_000.0, path=path)
+    at = datetime.datetime(2020, 1, 30, 15, 31)
+    assert source.option((D(2020, 1, 30), 12_500.0, "Put"), at) == ("ok", 500.0)
+    assert source.option((D(2020, 1, 30), 11_500.0, "Put"), at) == ("ok", 0.05)
+
+
+def test_a_cycle_follows_an_expiry_the_exchange_moved(tmp_path):
+    """June 2023: NSE moved NIFTY's expiry from the 29th to the 28th, and its files re-date the
+    contracts on the 28th itself. Here February 2020's 27th becomes the 26th."""
+    import sqlite3
+
+    path = str(tmp_path / "cache.sqlite3")
+    start, end = D(2020, 1, 1), D(2020, 4, 30)
+    _seed(path, start, end)
+    with sqlite3.connect(path) as conn:
+        # Re-dated, and closing on the 26th as expiring contracts do: at intrinsic value.
+        conn.execute("UPDATE nse_daily_options SET expiry = '2020-02-26', close = MAX(0.05, CASE right "
+                     "WHEN 'Call' THEN 12000 - strike ELSE strike - 12000 END) "
+                     "WHERE session = '2020-02-26' AND expiry = '2020-02-27'")
+        for table in ("nse_daily_options", "nse_daily_index"):
+            conn.execute(f"DELETE FROM {table} WHERE session = '2020-02-27'")
+    replay = _replay(path, start, end)
+    assert any(e["action"] == "expiry_moved" and e["expiry"] == "2020-02-26" for e in replay.events)
+    feb = next(cy for cy in _cycles(replay) if cy["expiry"] == "2020-02-26")
+    assert feb["close_reason"] == "exit_dte" and feb["closed"].startswith("2020-02-26")
+    assert replay.summary()["skipped"].get("leg_unpriced") is None
+
+
+@pytest.mark.parametrize("exit_action", ["close", "time_roll"])
+def test_legs_still_held_after_their_expiry_settle_at_the_index_close(tmp_path, exit_action):
+    """No session on the expiry day and nothing re-dated: the legs settle at the last close
+    before it, and the campaign carries on instead of staying open to the end of the period."""
+    import sqlite3
+
+    path = str(tmp_path / "cache.sqlite3")
+    start, end = D(2020, 1, 1), D(2020, 4, 30)
+    _seed(path, start, end)
+    with sqlite3.connect(path) as conn:
+        for table in ("nse_daily_options", "nse_daily_index"):
+            conn.execute(f"DELETE FROM {table} WHERE session = '2020-02-27'")
+    replay = _replay(path, start, end, exit_action)
+    settled = [e for e in replay.events if e["reason"] == "expired"]
+    assert len(settled) == 1 and settled[0]["at"].startswith("2020-02-28")
+    assert "settled at NIFTY 12,000.00" in settled[0]["text"]
+    assert all(o["price"] is None for o in settled[0]["orders"])  # every leg out of the money: 0
+    feb = next(cy for cy in _cycles(replay) if cy["expiry"] == "2020-02-27")
+    assert feb["close_reason"] == "expired"
+    assert any(cy["expiry"] > "2020-02-27" and cy["tranches"] for cy in _cycles(replay)), "the replay carried on"

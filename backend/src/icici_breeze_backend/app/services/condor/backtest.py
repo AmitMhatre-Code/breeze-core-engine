@@ -36,7 +36,7 @@ from __future__ import annotations
 import datetime
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Literal, Optional, Protocol
 
 from icici_breeze_backend.app.domain.condor import CondorSettings
@@ -45,12 +45,14 @@ from icici_breeze_backend.app.services.bots.scalping import backtest_regime as r
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import Need, OptionKey
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
+from icici_breeze_backend.app.services.condor import orders as order_ops
 from icici_breeze_backend.app.services.condor.engine import decide, entry_orders, entry_strikes, premium_refusal
 from icici_breeze_backend.app.services.condor.model import (
     CampaignState,
     Decision,
     Leg,
     MarketSnapshot,
+    Metrics,
     OrderLeg,
 )
 from icici_breeze_backend.app.services.condor.pricing import ChainRow, Quote, Right, build_greeks_model
@@ -84,6 +86,9 @@ BARS_KEPT = 400
 #: Traded out-of-the-money contracts an expiry needs on a session before an untraded one is priced
 #: off their smile (`DailySource`). Fewer, and the smile is a guess.
 MIN_SMILE_POINTS = 3
+#: How far an exchange may move an expiry it has already listed (a holiday declared late) for
+#: the replay to follow it as the same contracts. Weekly expiries are at least five days apart.
+MOVED_EXPIRY_DAYS = 3
 
 ExitAction = Literal["time_roll", "close"]
 Status = Literal["ok", "missing", "stale", "unlisted"]
@@ -103,6 +108,10 @@ class PriceSource(Protocol):
     def needs(self, contract: Contract, at: datetime.datetime, until: datetime.date) -> list[Need]: ...
 
     def refresh(self) -> None: ...
+
+
+def _intrinsic(right: Right, strike: float, spot: float) -> float:
+    return max(0.0, spot - strike) if right == "Call" else max(0.0, strike - spot)
 
 
 def _right_api(right: Right) -> str:
@@ -260,7 +269,8 @@ class DailySource:
     Without it a far wing that did not trade had no price and a due tranche could not go in --
     54 of 122 sessions in Jan-Jun 2020 -- which is not what the live bot does: it buys the wing at
     its quote. NSE prices untraded contracts the same way. A traded close always wins; with fewer
-    than `MIN_SMILE_POINTS` traded contracts on the expiry there is no estimate (`stale`).
+    than `MIN_SMILE_POINTS` traded contracts on the expiry there is no estimate (`stale`). On its
+    expiry day an untraded contract is priced at what it settles at, its intrinsic value.
     Every estimate used is counted (`estimated`) and the run says how many.
 
     `notional_scale` sizes a cycle to today's money: today's NIFTY over NIFTY when it opens, so a
@@ -333,6 +343,12 @@ class DailySource:
         spot = self._index.get(day)
         if not spot or expiry < day:
             return None
+        if expiry == day:
+            # At its expiry-day close a contract is worth what it settles at: the index close
+            # against its strike. No smile can be read with no time left, and without this a
+            # far leg that did not trade on its last day had no price, so the cycle's exit
+            # could not be decided and its campaign stayed open for good (2020-03-26).
+            return max(0.05, round(_intrinsic(right, strike, spot), 2))
         smile = self._smile(day, expiry, spot)
         if not smile:
             return None
@@ -587,6 +603,10 @@ class CondorReplay:
             return []
         camp = self.campaign
         cycle = camp.cycle if camp else None
+        if cycle is not None:
+            self._follow_moved_expiry(cycle, day, kind, ts, spot)
+            if cycle.legs and day > cycle.expiry:
+                return self._settle(cycle, day, kind, ts, spot)
         if cycle is not None and not cycle.legs and (cycle.expiry - day).days < self.settings.tranche_cutoff_dte:
             # The cycle passed its cut-off without a single tranche going in.
             cycle.closed, cycle.close_reason = ts.isoformat(), "never_entered"
@@ -616,6 +636,62 @@ class CondorReplay:
         self._act(decision, market, kind, ts, day, plan)
         self._mark(decision)
         return []
+
+    def _follow_moved_expiry(self, cycle: _Cycle, day: datetime.date, kind: str, ts: datetime.datetime,
+                             spot: float) -> None:
+        """Follow an expiry the exchange moved after listing it. NSE moved June 2023's NIFTY
+        expiry from the 29th to the 28th (Bakri Id) and its files re-date the contracts on the
+        28th itself, so a cycle still keyed to the 29th lost every leg's price on its last day."""
+        listed = self.listed_expiries(day)
+        if not listed or cycle.expiry in listed:
+            return
+        near = [e for e in listed if e >= day and abs((e - cycle.expiry).days) <= MOVED_EXPIRY_DAYS]
+        if len(near) != 1:
+            return
+        moved_from, cycle.expiry = cycle.expiry, near[0]
+        self._event(ts, kind, spot, None, "expiry_moved", reason="expiry_moved",
+                    text=f"The exchange moved this cycle's expiry from {moved_from:%d-%b-%Y} to {cycle.expiry:%d-%b-%Y}.")
+
+    def _settle(self, cycle: _Cycle, day: datetime.date, kind: str, ts: datetime.datetime,
+                spot: float) -> list[Need]:
+        """Legs still held after their expiry settle at the index's close on that expiry's last
+        session, as the exchange settles them. The engine closes a cycle at its exit DTE, but only
+        on a check that can price every leg; one that could not must not leave the campaign open
+        for the rest of the period."""
+        level = self._settlement_level(cycle.expiry)
+        if level is None:
+            self._skip("no_settlement_level")
+            return []
+        plan = None
+        if self.exit_action == "time_roll":
+            plan = self._plan_roll(cycle.expiry, ts, spot, day)
+            if isinstance(plan, list):
+                return plan
+        orders = tuple(
+            replace(o, price=_intrinsic(o.right, o.strike, level))
+            for o in order_ops.diff_orders(order_ops.net_position(cycle.leg_tuple()), {})
+        )
+        value = sum((o.price if o.action == "Sell" else -o.price) * o.quantity for o in orders)
+        decision = Decision(
+            action="exit_or_roll", reason="expired",
+            text=f"The {cycle.expiry:%d-%b-%Y} cycle expired with legs held: settled at NIFTY {level:,.2f}.",
+            orders=orders,
+            metrics=Metrics(dte=(cycle.expiry - day).days, campaign_pnl_inr=self.campaign.cash + value),
+        )
+        market = MarketSnapshot(now=ts.replace(tzinfo=IST), spot=spot, spot_live=True, feeds_ok=True, chain=())
+        self._act(decision, market, kind, ts, day, plan)
+        self._mark(decision)
+        return []
+
+    def _settlement_level(self, expiry: datetime.date) -> Optional[float]:
+        """The index close on the last session on or before `expiry`."""
+        d = expiry
+        for _ in range(10):
+            level = self.source.spot(datetime.datetime.combine(d, datetime.time(15, 30)))
+            if level:
+                return level
+            d -= datetime.timedelta(days=1)
+        return None
 
     # -- building a check's chain --------------------------------------------------------
 
@@ -710,15 +786,16 @@ class CondorReplay:
 
     # -- acting --------------------------------------------------------------------------
 
-    def _fill(self, cycle: _Cycle, orders: Iterable[OrderLeg]) -> tuple[float, float]:
-        """Apply orders at their decision price plus adverse slippage. Returns (cash, charges)."""
+    def _fill(self, cycle: _Cycle, orders: Iterable[OrderLeg], *, settle: bool = False) -> tuple[float, float]:
+        """Apply orders at their decision price plus adverse slippage. Returns (cash, charges).
+        A settlement at expiry crosses no spread and, as in the ledger, carries no charges."""
         cash = fees = 0.0
-        frac = float(self.charges.slippage_spread_fraction)
+        frac = 0.0 if settle else float(self.charges.slippage_spread_fraction)
         for o in orders:
             base = float(o.price or 0.0)
             slip = frac * self.spread.spread_for(base) if base > 0 else 0.0
             price = base + slip if o.action == "Buy" else max(0.0, base - slip)
-            leg_fee = self.charges.leg_charges(price, o.quantity, is_buy=o.action == "Buy")
+            leg_fee = 0.0 if settle else self.charges.leg_charges(price, o.quantity, is_buy=o.action == "Buy")
             cash += (price if o.action == "Sell" else -price) * o.quantity - leg_fee
             fees += leg_fee
             key = (float(o.strike), o.right)
@@ -791,7 +868,7 @@ class CondorReplay:
                         roll_credit=round(d.roll_credit_points, 2), orders=self._orders_json(d.orders))
             return
         if d.action in ("close_all", "exit_or_roll"):
-            cash, fees = self._fill(cycle, d.orders)
+            cash, fees = self._fill(cycle, d.orders, settle=d.reason == "expired")
             camp.cash += cash
             camp.charges += fees
             cycle.closed, cycle.close_reason = ts.isoformat(), d.reason

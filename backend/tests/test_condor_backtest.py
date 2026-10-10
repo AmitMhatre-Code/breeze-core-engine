@@ -120,8 +120,8 @@ def test_trend_forces_rolls_and_never_leaves_a_naked_short():
     replay, source = _replay(trend_up)
     original_fill = replay._fill
 
-    def checked_fill(cycle, orders):
-        out = original_fill(cycle, orders)
+    def checked_fill(cycle, orders, **kw):
+        out = original_fill(cycle, orders, **kw)
         position = {k: int(v[0]) for k, v in cycle.legs.items()}
         assert not unhedged_rights(position), position
         return out

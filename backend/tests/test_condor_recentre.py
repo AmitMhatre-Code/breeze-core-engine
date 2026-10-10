@@ -167,8 +167,8 @@ def test_a_replay_with_recentre_on_counts_its_recentres_and_never_leaves_a_naked
     replay, source = _bt_replay(whipsaw, settings=ON)
     original_fill = replay._fill
 
-    def checked_fill(cycle, orders):
-        out = original_fill(cycle, orders)
+    def checked_fill(cycle, orders, **kw):
+        out = original_fill(cycle, orders, **kw)
         assert not unhedged_rights({k: int(v[0]) for k, v in cycle.legs.items()})
         return out
 
