@@ -454,6 +454,8 @@ class _Cycle:
     close_reason: Optional[str] = None
     tranches: int = 0
     rolls: int = 0
+    # Of `rolls`, how many were re-centres of both sides (#80).
+    recentres: int = 0
     # (strike, right) -> [signed quantity, average price of what is held]
     legs: dict[tuple[float, Right], list[float]] = field(default_factory=dict)
 
@@ -769,6 +771,7 @@ class CondorReplay:
             return
         if d.action == "no_action":
             if d.reason in ("roll_credit_below_min", "roll_near_exit", "roll_unpriced", "tranche_unpriced", "roll_no_wing",
+                            "recentre_near_exit", "recentre_unpriced", "recentre_no_wing",
                             "premium_not_rich", "premium_unreadable"):
                 self._skip(d.reason)
                 self._event(ts, kind, spot, d, "skipped", roll_credit=d.roll_credit_points)
@@ -776,13 +779,16 @@ class CondorReplay:
         if d.action == "enter_tranche":
             self._enter(cycle, d.tranche_strikes, market, kind, ts, d)
             return
-        if d.action == "roll_untested":
+        if d.action in ("roll_untested", "recentre"):
             cash, fees = self._fill(cycle, d.orders)
             camp.cash += cash
             camp.charges += fees
+            # A re-centre is a roll of both sides (#80): it counts as one, and its log line says which.
             cycle.rolls += 1
-            self._event(ts, kind, spot, d, "roll", cash=round(cash, 2), roll_credit=round(d.roll_credit_points, 2),
-                        orders=self._orders_json(d.orders))
+            if d.action == "recentre":
+                cycle.recentres += 1
+            self._event(ts, kind, spot, d, "recentre" if d.action == "recentre" else "roll", cash=round(cash, 2),
+                        roll_credit=round(d.roll_credit_points, 2), orders=self._orders_json(d.orders))
             return
         if d.action in ("close_all", "exit_or_roll"):
             cash, fees = self._fill(cycle, d.orders)
@@ -906,7 +912,8 @@ class CondorReplay:
                 "pnl_at_last_check": round(c.last_pnl, 2) if c.last_pnl is not None else None,
                 "cycles": [
                     {"expiry": cy.expiry.isoformat(), "opened": cy.opened, "closed": cy.closed,
-                     "close_reason": cy.close_reason, "tranches": cy.tranches, "rolls": cy.rolls}
+                     "close_reason": cy.close_reason, "tranches": cy.tranches, "rolls": cy.rolls,
+                     "recentres": cy.recentres}
                     for cy in traded
                 ],
             })
@@ -930,6 +937,7 @@ class CondorReplay:
             "max_drawdown": round(self.max_drawdown, 2),
             "charges": round(sum(c.charges for c in self.campaigns), 2),
             "rolls": sum(cy.rolls for c in self.campaigns for cy in c.cycles),
+            "recentres": sum(cy.recentres for c in self.campaigns for cy in c.cycles),
             "skipped": dict(self.skipped),
             "spread_model": self.spread.describe(),
         }

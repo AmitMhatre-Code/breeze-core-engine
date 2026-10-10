@@ -99,6 +99,7 @@ Action = Literal[
     "close_all",
     "exit_or_roll",
     "roll_untested",
+    "recentre",
     "enter_tranche",
 ]
 

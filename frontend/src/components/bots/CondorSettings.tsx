@@ -8,6 +8,7 @@ import { Select, type SelectOption } from "@/components/ui/Select";
 import type { CondorSettings as Campaign } from "@/lib/condor";
 import type { Tab } from "@/components/bots/ScalperSettings";
 import { PremiumGateSettings } from "@/components/bots/PremiumGateSettings";
+import { Checkbox } from "@/components/ui/Checkbox";
 
 /** The Dynamic Iron Condor bot's settings, in the drawer every bot uses (#67). Its campaign
  *  settings are the same ones a manual campaign started from Basket Orders runs on. */
@@ -220,6 +221,15 @@ function clockError(c: Campaign): string | null {
   return null;
 }
 
+/** `CondorSettings._recentre_lands_below_trigger` (#80): a landing at or above the trigger would
+ *  re-centre again at the next due roll. */
+function recentreError(c: Campaign): string | null {
+  if (!c.recentre_enabled) return null;
+  return (c.recentre_short_delta ?? 0.2) >= (c.recentre_tested_delta ?? 0.3)
+    ? "The re-centre short Δ must be below the tested-side Δ that triggers it."
+    : null;
+}
+
 function stopError(c: Campaign): string | null {
   return c.max_loss_inr == null && c.max_loss_pct_of_ceiling == null
     ? "Set a max loss in rupees, as a % of the margin ceiling, or both."
@@ -253,15 +263,18 @@ export function CondorSettings({
   // Checked whichever tab is open: an invalid clock on a tab you have left still blocks Save.
   const clock = clockError(c);
   const stop = stopError(c);
+  const recentre = recentreError(c);
   const report = useContext(FieldValidityContext);
   useEffect(() => {
     report?.("condor_clock", clock === null);
     report?.("condor_stop", stop === null);
+    report?.("condor_recentre", recentre === null);
     return () => {
       report?.("condor_clock", true);
       report?.("condor_stop", true);
+      report?.("condor_recentre", true);
     };
-  }, [report, clock, stop]);
+  }, [report, clock, stop, recentre]);
 
   const evidence = (
     <p className="text-hint text-faint">
@@ -345,6 +358,9 @@ export function CondorSettings({
   }
 
   if (tab === "rolls") {
+    const recentreOn = c.recentre_enabled ?? false;
+    const trigger = c.recentre_tested_delta ?? 0.3;
+    const landing = c.recentre_short_delta ?? 0.2;
     return (
       <div className="space-y-4">
         <TabIntro>
@@ -352,7 +368,12 @@ export function CondorSettings({
             When NIFTY moves, the side it moves towards is <b>tested</b>; the other side is <b>untested</b>, and its
             short loses value. A <b>roll</b>{" "}buys back the untested short and sells a new one closer to the index, at
             the tested short&rsquo;s delta (never past the tested strike), with a new wing. That collects more credit
-            and re-centres the condor. Any rule below can trigger it at a daily check.
+            and brings the condor back towards neutral. Any rule below can trigger it at a daily check.
+          </p>
+          <p>
+            Rolled again and again, the untested short ends up at the tested strike, a <b>straddle</b>, which a sharp
+            reversal hurts most. <b>Re-centre</b> stops that: once the tested short is deep, a due roll moves{" "}
+            <b>both</b> sides instead, booking the tested side&rsquo;s loss.
           </p>
         </TabIntro>
         {evidence}
@@ -360,7 +381,40 @@ export function CondorSettings({
         <Num label="…or decayed" suffix="%" min={1} max={100} value={c.leg_rule_decay_pct} disabled={disabled} onChange={(v) => set({ leg_rule_decay_pct: v })} hint="…or when it has lost this share of its premium." />
         <Num label="Net Δ band per lot" step={0.01} min={0.01} max={1} value={c.net_delta_band_per_lot} disabled={disabled} onChange={(v) => set({ net_delta_band_per_lot: v })} hint="Net delta is how much the whole position gains or loses per point of NIFTY. Roll when, per lot, it drifts outside ±this — the condor has become a bet on direction." />
         <Num label="Minimum roll credit" suffix="points" min={0} max={1000} value={c.min_roll_credit_points} disabled={disabled} onChange={(v) => set({ min_roll_credit_points: v })} hint="A roll adding less than this per unit, after charges, is skipped and reported." />
-        <Num label="No rolls within" suffix="days of exit" min={0} max={30} value={c.no_roll_within_days_of_exit} disabled={disabled} onChange={(v) => set({ no_roll_within_days_of_exit: v })} hint="A roll due this close to the exit DTE is reported, not done. 0 = off." />
+        <Num label="No rolls within" suffix="days of exit" min={0} max={30} value={c.no_roll_within_days_of_exit} disabled={disabled} onChange={(v) => set({ no_roll_within_days_of_exit: v })} hint="A roll due this close to the exit DTE is reported, not done. 0 = off. It holds back re-centres too." />
+        <label className="flex cursor-pointer items-start gap-2">
+          <Checkbox
+            checked={recentreOn}
+            onChange={(recentre_enabled) => set({ recentre_enabled })}
+            disabled={disabled}
+            aria-label="Re-centre both sides when the tested side is deep"
+          />
+          <span className="text-body">
+            <span className="font-semibold">Re-centre both sides when the tested side is deep</span>
+            <span className="block text-hint text-faint">
+              Off: a roll only ever moves the untested side. On: a roll that comes due while the tested short is above
+              the trigger moves both shorts to the re-centre delta around today&rsquo;s spot, each wing the entry
+              width beyond it. It goes ahead even at a net debit, because the tested side&rsquo;s loss is already in
+              the campaign P&amp;L; only spread and charges are new. If a contract in it has no price, nothing moves.
+            </span>
+          </span>
+        </label>
+        <Num label="Re-centre when the tested short is above" suffix="Δ" step={0.01} min={0.01} max={0.99} value={trigger} disabled={disabled || !recentreOn} onChange={(v) => set({ recentre_tested_delta: v })} hint="Below this, a due roll stays one-sided." />
+        <Num label="Re-centre both shorts to" suffix="Δ" step={0.01} min={0.01} max={0.49} value={landing} disabled={disabled || !recentreOn} onChange={(v) => set({ recentre_short_delta: v })} hint="Where both new shorts land. Must be below the trigger, or the next due roll would re-centre again." />
+        {recentre ? (
+          <SettingsError>{recentre}</SettingsError>
+        ) : recentreOn ? (
+          <WorkedExample title="With these settings">
+            <li>
+              NIFTY rallies and a roll comes due with the short call at or below <b>{num(trigger)}</b>Δ: only the
+              puts are rolled up, as with re-centre off.
+            </li>
+            <li>
+              The same roll with the short call above <b>{num(trigger)}</b>Δ: the call spread is bought back and
+              sold again further out, the put spread moves up, and both shorts sit near <b>{num(landing)}</b>Δ.
+            </li>
+          </WorkedExample>
+        ) : null}
       </div>
     );
   }

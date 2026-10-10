@@ -457,12 +457,15 @@ const SETTING_LABEL: Partial<Record<keyof CondorSettings, string>> = {
   net_delta_band_per_lot: "Net Δ band per lot",
   min_roll_credit_points: "Minimum roll credit",
   no_roll_within_days_of_exit: "No rolls within N days of exit",
+  recentre_enabled: "Re-centre both sides",
+  recentre_tested_delta: "Re-centre when tested short above Δ",
+  recentre_short_delta: "Re-centre shorts to Δ",
   max_loss_inr: "Max loss ₹",
   max_loss_pct_of_ceiling: "…or % of ceiling",
   margin_ceiling_inr: "Margin ceiling ₹",
 };
 
-const show = (v: unknown) => (v == null || v === "" ? "off" : String(v));
+const show = (v: unknown) => (v == null || v === "" || v === false ? "off" : v === true ? "on" : String(v));
 
 /** Hand this campaign to the Dynamic Iron Condor bot (#68). Nothing is traded: the bot runs it
  *  from its next check, on its own settings, and gives it back if you trade it or switch it off. */

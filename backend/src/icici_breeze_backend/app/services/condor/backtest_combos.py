@@ -10,10 +10,12 @@ do?". Agreed with the user, 2026-10-05:
   form set, the rupee limit is scaled instead
 * no-roll window: 0 and 3 days, plus the saved value if it is neither
 * exit action: time roll and close
+* re-centre (#80, agreed 2026-10-10): off and on, crossed with all of the above. "On" uses the
+  saved trigger and landing deltas, or the defaults (0.30 / 0.20) when the saved switch is off.
 
 Plus the premium gate (#78), one factor at a time as the other gated bots have it (#75): off and at
 0.90 / 1.00 / 1.20, each at the saved settings and exit action, less the row matching the saved
-gate. Three more rows, not a fourth axis: crossed, the grid would be 432.
+gate. Three more rows, not another axis: crossed, the grid would be four times the size.
 
 Everything else -- strikes, the cycle clock, the leg rule, sizing -- stays as saved: those either
 change which contracts are traded (and so the fetch bill) or only scale P&L. A step outside a
@@ -36,6 +38,7 @@ ROLL_CREDIT_STEP = 10.0
 MAX_LOSS_FACTORS = (0.5, 1.0, 1.5)
 NO_ROLL_WINDOWS = (0, 3)
 EXIT_LABELS = {"time_roll": "Time roll", "close": "Close"}
+RECENTRE_FIELDS = ("recentre_enabled", "recentre_tested_delta", "recentre_short_delta")
 
 
 @dataclass(frozen=True)
@@ -44,7 +47,7 @@ class Combo:
     label: str
     settings: CondorSettings
     exit_action: str
-    # The five values this combination sets, for the comparison table's columns.
+    # The values this combination sets, for the comparison table's columns.
     varied: dict[str, Any]
     # The settings it changes from the saved ones. Stored on its row in place of all of its
     # settings: the bot's evidence lookup reads every run's rows, so they are kept small.
@@ -88,25 +91,30 @@ def combos_for(saved: CondorSettings, saved_exit_action: str) -> list[Combo]:
     loss_round = 4 if loss_field == "max_loss_pct_of_ceiling" else 0
     loss = _values(saved, loss_field, [round(loss_saved * f, loss_round) for f in MAX_LOSS_FACTORS])
     no_roll = _values(saved, "no_roll_within_days_of_exit", list(NO_ROLL_WINDOWS))
+    recentre = (recentre_setting(saved, False), recentre_setting(saved, True))
 
     out: list[Combo] = []
-    for b, c, m, n, x in product(band, credit, loss, no_roll, EXIT_ACTIONS):
+    for b, c, m, n, x, r in product(band, credit, loss, no_roll, EXIT_ACTIONS, recentre):
         settings = CondorSettings(**{
             **saved.model_dump(),
             "net_delta_band_per_lot": b,
             "min_roll_credit_points": c,
             loss_field: m,
             "no_roll_within_days_of_exit": n,
+            **r,
         })
         is_saved = (
             b == saved.net_delta_band_per_lot and c == saved.min_roll_credit_points
             and m == loss_saved and n == saved.no_roll_within_days_of_exit and x == saved_exit_action
+            and r["recentre_enabled"] == saved.recentre_enabled
         )
+        on = r["recentre_enabled"]
         out.append(Combo(
-            id=f"band{b:g}-credit{c:g}-loss{m:g}-noroll{n}-{x}",
+            # Off rows keep the ids they had before re-centre existed.
+            id=f"band{b:g}-credit{c:g}-loss{m:g}-noroll{n}-{x}" + ("-recentre" if on else ""),
             label=(
                 f"Band {b:g} · Roll credit {c:g} · Max loss {_max_loss_text(loss_field, m)} · "
-                f"No-roll {n}d · {EXIT_LABELS[x]}"
+                f"No-roll {n}d · {EXIT_LABELS[x]}" + (f" · Re-centre {recentre_text(r)}" if on else "")
             ),
             settings=settings,
             exit_action=x,
@@ -117,16 +125,39 @@ def combos_for(saved: CondorSettings, saved_exit_action: str) -> list[Combo]:
                 "no_roll_within_days_of_exit": n,
                 "exit_action": x,
                 "premium_gate": _gate_text(saved.premium_gate.enabled, saved.premium_gate.threshold),
+                "recentre": recentre_text(r),
             },
             overrides={
                 "net_delta_band_per_lot": b,
                 "min_roll_credit_points": c,
                 loss_field: m,
                 "no_roll_within_days_of_exit": n,
+                **r,
             },
             is_saved=is_saved,
         ))
     return out + premium_combos(saved, saved_exit_action)
+
+
+def recentre_setting(saved: CondorSettings, on: bool) -> dict[str, Any]:
+    """The re-centre fields of an off or an on row: on keeps the saved deltas when the saved
+    switch is on, else takes the defaults (the user's choice, 2026-10-10)."""
+    if not on:
+        return {"recentre_enabled": False}
+    if saved.recentre_enabled:
+        return {f: getattr(saved, f) for f in RECENTRE_FIELDS}
+    fields = CondorSettings.model_fields
+    return {
+        "recentre_enabled": True,
+        "recentre_tested_delta": fields["recentre_tested_delta"].default,
+        "recentre_short_delta": fields["recentre_short_delta"].default,
+    }
+
+
+def recentre_text(r: dict[str, Any]) -> str:
+    if not r.get("recentre_enabled"):
+        return "off"
+    return f"{r['recentre_tested_delta']:.2f}Δ to {r['recentre_short_delta']:.2f}Δ"
 
 
 def _gate_text(enabled: bool, threshold: float) -> str:
@@ -155,6 +186,7 @@ def premium_combos(saved: CondorSettings, saved_exit_action: str) -> list[Combo]
                 "no_roll_within_days_of_exit": saved.no_roll_within_days_of_exit,
                 "exit_action": saved_exit_action,
                 "premium_gate": _gate_text(enabled, new_gate["threshold"]),
+                "recentre": recentre_text({f: getattr(saved, f) for f in RECENTRE_FIELDS}),
             },
             overrides={"premium_gate": new_gate},
             is_saved=False,

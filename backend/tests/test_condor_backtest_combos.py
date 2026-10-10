@@ -24,13 +24,15 @@ def _values(combos, field):
     return sorted({getattr(c.settings, field) for c in combos})
 
 
-def test_the_default_grid_is_108_combinations_around_the_saved_settings():
+def test_the_default_grid_is_216_combinations_around_the_saved_settings():
     saved = CondorSettings(margin_ceiling_inr=10_00_000)
     every = backtest_combos.combos_for(saved, "time_roll")
-    # The 108-row grid, then the premium gate's rows (#78), one factor at a time.
+    # The 108-row grid crossed with re-centre off and on (#80), then the premium gate's rows
+    # (#78), one factor at a time.
     combos = [c for c in every if not c.id.startswith("premium-")]
-    assert len(combos) == 108 == len({c.id for c in combos})
-    assert [c.id for c in every[108:]] == ["premium-0.90", "premium-1.00", "premium-1.20"]
+    assert len(combos) == 216 == len({c.id for c in combos})
+    assert [c.id for c in every[216:]] == ["premium-0.90", "premium-1.00", "premium-1.20"]
+    assert sum(c.settings.recentre_enabled for c in combos) == 108
     assert _values(combos, "net_delta_band_per_lot") == [0.1, 0.15, 0.2]
     assert _values(combos, "min_roll_credit_points") == [10.0, 20.0, 30.0]
     assert _values(combos, "max_loss_pct_of_ceiling") == [2.5, 5.0, 7.5]
@@ -38,9 +40,10 @@ def test_the_default_grid_is_108_combinations_around_the_saved_settings():
     assert {c.exit_action for c in combos} == {"time_roll", "close"}
     [mine] = [c for c in combos if c.is_saved]
     assert mine.settings == saved and mine.exit_action == "time_roll"
-    # Nothing outside the five is ever changed.
+    # Nothing outside the six is ever changed.
     fixed = set(CondorSettings.model_fields) - {
         "net_delta_band_per_lot", "min_roll_credit_points", "max_loss_pct_of_ceiling", "no_roll_within_days_of_exit",
+        "recentre_enabled",
     }
     assert all(getattr(c.settings, f) == getattr(saved, f) for c in combos for f in fixed)
 
@@ -55,7 +58,7 @@ def test_a_step_outside_the_allowed_range_is_dropped_not_shifted():
     assert _values(combos, "min_roll_credit_points") == [0.0, 10.0]
     assert _values(combos, "max_loss_pct_of_ceiling") == [40.0, 80.0]
     assert _values(combos, "no_roll_within_days_of_exit") == [0, 3, 5]
-    assert len(combos) == 2 * 2 * 2 * 3 * 2
+    assert len(combos) == 2 * 2 * 2 * 3 * 2 * 2
     assert sum(c.is_saved for c in combos) == 1
 
 

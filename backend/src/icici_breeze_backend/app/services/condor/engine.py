@@ -11,13 +11,15 @@ Priority, first match wins:
     P1  campaign P&L <= -max-loss                -> close all
     P2  DTE <= exit DTE                          -> exit or time roll
     P3  at the straddle cap, beyond break-even   -> exit or time roll   (EOD check only)
-    P4  leg rule or block rule                   -> roll the untested side
+    P4  leg rule or block rule                   -> roll the untested side, or re-centre both
     P5  tranche due                              -> enter a tranche
     P6  otherwise                                -> no action
 
 Rolls move only the untested side: its shorts go, together, to the tested side's |delta|,
 never past the tested strike, with a wing at the tested side's width. The tested side is
-never moved by an adjustment (plan section 1).
+never moved by an adjustment (plan section 1) -- unless re-centre is switched on (#80): then a
+roll that comes due while the tested short is above the re-centre trigger moves both sides to
+the re-centre delta around today's spot instead, wings at the entry width.
 """
 from __future__ import annotations
 
@@ -287,6 +289,15 @@ def _roll(
     if not (leg_rule or block_rule):
         return None
     why = "leg_rule" if leg_rule else "block_rule"
+    trigger = (
+        f"untested {untested} at {untested_d:.2f}Δ" if why == "leg_rule" and untested_shorts else
+        f"untested {untested} side has no short" if why == "leg_rule" else
+        f"net delta {net_per_lot:+.2f} per lot outside ±{settings.net_delta_band_per_lot:.2f}"
+    )
+    if settings.recentre_enabled and tested_d > settings.recentre_tested_delta:
+        # Never falls back to the one-sided roll: that is the drift towards the straddle a
+        # re-centre exists to stop (#80).
+        return _recentre(legs, market, model, settings, charges, tested, tested_d, trigger, metrics)
 
     cap = _nearest_money_short(tested, _shorts(legs, tested))
     new_short = strike_for_delta(model, market.strikes, untested, tested_d, not_inside=cap)
@@ -314,13 +325,8 @@ def _roll(
             metrics, orders=tuple(sequenced),
         )
     credit = _net_cash(priced, charges) / qty
-    trigger = (
-        f"untested {untested} at {untested_d:.2f}Δ" if why == "leg_rule" and untested_shorts else
-        f"untested {untested} side has no short" if why == "leg_rule" else
-        f"net delta {net_per_lot:+.2f} per lot outside ±{settings.net_delta_band_per_lot:.2f}"
-    )
     dte = metrics.dte
-    if settings.no_roll_within_days_of_exit and dte is not None and dte < settings.exit_dte + settings.no_roll_within_days_of_exit:
+    if _within_no_roll_window(settings, dte):
         return _decision(
             "no_action", "roll_near_exit",
             f"Roll due ({trigger}) but {dte} DTE is within {settings.no_roll_within_days_of_exit} day(s) of the "
@@ -336,6 +342,83 @@ def _roll(
     return _decision(
         "roll_untested", why,
         f"Roll the {untested} side to {int(new_short)} ({tested_d:.2f}Δ, matching the tested side), wing {int(new_wing)}: {trigger}.",
+        metrics, orders=tuple(priced), roll_credit_points=credit,
+    )
+
+
+def _within_no_roll_window(settings: CondorSettings, dte: Optional[int]) -> bool:
+    return bool(
+        settings.no_roll_within_days_of_exit and dte is not None
+        and dte < settings.exit_dte + settings.no_roll_within_days_of_exit
+    )
+
+
+def _recentre(
+    legs: list[Leg],
+    market: MarketSnapshot,
+    model: GreeksModel,
+    settings: CondorSettings,
+    charges: ChargesModel,
+    tested: Right,
+    tested_d: float,
+    trigger: str,
+    metrics: Metrics,
+) -> Optional[Decision]:
+    """Both sides to `recentre_short_delta` around today's spot, wings at the entry width (#80).
+
+    Each side keeps its short quantity, all its shorts going to one strike; a side with no short
+    takes the other side's. No minimum credit: the tested side's loss is already counted in the
+    campaign P&L, so the debit is the spread and charges. The no-roll window applies."""
+    landing = settings.recentre_short_delta
+    why = (
+        f"tested {tested} short at {tested_d:.2f}Δ, above the {settings.recentre_tested_delta:.2f}Δ "
+        f"re-centre trigger; roll due: {trigger}"
+    )
+    short_call = strike_for_delta(model, market.strikes, "Call", landing)
+    short_put = strike_for_delta(model, market.strikes, "Put", landing)
+    if short_call is None or short_put is None:
+        return _decision(
+            "no_action", "recentre_unpriced",
+            f"Re-centre due ({why}) but no strike near {landing:.2f}Δ could be priced. Nothing is moved.",
+            metrics,
+        )
+    width = wing_width_points(settings, market.spot or model.spot)
+    long_call = wing_at_width(market.strikes, "Call", short_call, width)
+    long_put = wing_at_width(market.strikes, "Put", short_put, width)
+    if long_call is None or long_put is None:
+        return _decision(
+            "no_action", "recentre_no_wing",
+            f"Re-centre due ({why}) but no listed strike for a wing. Nothing is moved.", metrics,
+        )
+    call_qty = sum(l.quantity for l in _shorts(legs, "Call"))
+    put_qty = sum(l.quantity for l in _shorts(legs, "Put"))
+    call_qty, put_qty = call_qty or put_qty, put_qty or call_qty
+    target = {(short_call, "Call"): -call_qty, (long_call, "Call"): call_qty,
+              (short_put, "Put"): -put_qty, (long_put, "Put"): put_qty}
+    current = order_ops.net_position(legs)
+    if current == {k: v for k, v in target.items() if v}:
+        return None
+    sequenced = order_ops.safe_sequence(order_ops.diff_orders(current, target), market.spot)
+    priced = _price_orders(sequenced, market)
+    if priced is None:
+        # Orders go back with the decision, so the backtest fetches exactly those contracts.
+        return _decision(
+            "no_action", "recentre_unpriced",
+            f"Re-centre due ({why}) but a contract in it has no price on the side it trades. Nothing is moved.",
+            metrics, orders=tuple(sequenced),
+        )
+    credit = _net_cash(priced, charges) / max(call_qty, put_qty)
+    shape = f"{int(long_put)}/{int(short_put)} PE · {int(short_call)}/{int(long_call)} CE"
+    if _within_no_roll_window(settings, metrics.dte):
+        return _decision(
+            "no_action", "recentre_near_exit",
+            f"Re-centre due ({why}) but {metrics.dte} DTE is within {settings.no_roll_within_days_of_exit} day(s) "
+            f"of the {settings.exit_dte}-DTE exit, so it is not done.",
+            metrics, orders=tuple(priced), roll_credit_points=credit,
+        )
+    return _decision(
+        "recentre", "recentre",
+        f"Re-centre both sides at {landing:.2f}Δ: {shape}, net {credit:+.1f} points a unit ({why}).",
         metrics, orders=tuple(priced), roll_credit_points=credit,
     )
 

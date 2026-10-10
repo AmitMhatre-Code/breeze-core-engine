@@ -213,9 +213,9 @@ def test_the_card_backtest_is_an_activity_row_sharing_the_stored_runs_id(bt):
     assert "net_pnl" in stored["summary"] and isinstance(stored["trades"], list)
     # The comparison (#71) rides on the stored run, not on the Activity row, and the row's
     # download carries every combination's campaigns.
-    assert len(stored["summary"]["comparison"]) == 111  # 108 grid + 3 premium gate rows (#78)
+    assert len(stored["summary"]["comparison"]) == 219  # 216 grid (108 × re-centre off/on, #80) + 3 premium gate rows (#78)
     assert "comparison" not in row["detail"]["summary"]
-    assert "111 combination(s) replayed in part" in row["reason_text"]
+    assert "219 combination(s) replayed in part" in row["reason_text"]
     import glob
     import zipfile
 
@@ -224,7 +224,7 @@ def test_the_card_backtest_is_an_activity_row_sharing_the_stored_runs_id(bt):
     [archive] = glob.glob(f"{bot_audit.audit_dir()}/**/*.zip", recursive=True)
     names = zipfile.ZipFile(archive).namelist()
     assert {"summary.csv", "campaigns.csv", "actions.csv", "run.json"} <= set(names)
-    assert sum(n.startswith("combinations/") for n in names) == 111
+    assert sum(n.startswith("combinations/") for n in names) == 219
     # A partial run is not shown as the settings' backtest.
     cfg = condor_bot.config_of(bots_repo.get_or_create_bot("u1", BOT_DYNAMIC_CONDOR).config)
     assert condor_bot.eligibility("u1", cfg).backtest is None

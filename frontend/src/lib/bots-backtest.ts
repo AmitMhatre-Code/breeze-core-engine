@@ -65,6 +65,8 @@ export type CondorComparisonRow = {
     exit_action: "time_roll" | "close";
     /** "off" or the threshold ("1.00x"). Absent on runs from before #78. */
     premium_gate?: string;
+    /** "off" or "0.30Δ to 0.20Δ" (trigger to landing). Absent on runs from before #80. */
+    recentre?: string;
   };
   is_saved: boolean;
   trades: number;

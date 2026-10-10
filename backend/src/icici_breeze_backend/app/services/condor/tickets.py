@@ -437,8 +437,9 @@ def preview(
         warnings.append("No price for " + ", ".join(f"{int(o.strike)} {'CE' if o.right == 'Call' else 'PE'}" for o in unpriced) + "; the totals leave it out.")
     tested, _ = _tested(ctx)
     # The rules never touch the tested side -- its short or its wing -- except to close the
-    # whole cycle, so a closing or time-roll ticket is not warned about it.
-    if tested and kind not in CLOSE_KINDS and kind != "time_roll":
+    # whole cycle, so a closing or time-roll ticket is not warned about it. With re-centre on,
+    # moving it is something the rules do too (#80), so it is not warned about either.
+    if tested and not s.recentre_enabled and kind not in CLOSE_KINDS and kind != "time_roll":
         if any(o.expiry is None and o.right == tested for o in sequenced):
             warnings.append(f"Moves the tested side ({'calls' if tested == 'Call' else 'puts'}). The rules never do.")
     short_calls = [k[0] for k, u in after_pos.items() if u < 0 and k[1] == "Call"]

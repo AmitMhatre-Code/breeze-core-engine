@@ -10,8 +10,9 @@ An iron condor sells an out-of-the-money call and put and buys further-out wings
 
 - **Shorts by delta, wings by distance.** Shorts go in at the **Short Δ** (0.20 by default), so one rule works for a weekly or a monthly. Each wing then goes the same distance beyond its short on both sides: the **Wing width**, a percentage of spot (4.5% by default, about 1,000 NIFTY points at 22,400), snapped outward to a listed strike. Equal widths keep the most a side can lose, and the margin, the same on both sides. If the listed strikes end before the wing's target, the furthest one is used and the suggestion says how narrow that wing is.
 - **Entries come in tranches.** The campaign's size is spread over several entries into the **same expiry**, evenly between the entry DTE and the cut-off. All tranches are managed together as one position.
-- **Only the side that is not under attack moves.** When the market rallies the puts are rolled up; when it falls the calls are rolled down. The threatened side is never moved by an adjustment.
+- **Only the side that is not under attack moves.** When the market rallies the puts are rolled up; when it falls the calls are rolled down. The threatened side is never moved by an adjustment, unless you switch on **Re-centre**.
 - **The roll stops at the straddle.** A roll moves the untested short to the threatened side's delta, but never past the threatened short's strike. At that point the position is an iron fly, and it never inverts.
+- **Re-centre, if you switch it on.** Rolled again and again, the untested short ends at the threatened strike, which a sharp reversal hurts most. With **Re-centre both sides** on, a roll that comes due while the threatened short is past the trigger delta (0.30 by default) moves **both** sides instead: the threatened spread is bought back and sold again further out, the other spread moves closer, and both shorts land at the re-centre delta (0.20 by default) around today's spot, each wing the **Wing width** beyond its short. It books the threatened side's loss, but that loss is already in the campaign's P&L, so what is new is only the spread and charges on up to eight orders. It goes ahead even at a net debit. If a contract in it has no price, nothing moves; it never falls back to a one-sided roll.
 - **The ledger is the campaign.** Every fill's proceeds minus its cost, net of charges, add up to the **total net credit**. Break-evens and the campaign's P&L include every past roll.
 
 ## The checks
@@ -33,7 +34,7 @@ At each check the rules are taken in this order, and the first that applies wins
 | 2 | Campaign P&L is at or past the **max loss** | **Close everything**: shorts bought back first, wings sold last |
 | 3 | Days to expiry reach the **exit DTE** | **Exit or time-roll**: close, or close and open the next cycle |
 | 4 | At the straddle and NIFTY is beyond a break-even, at the end-of-day check | **Exit or time-roll** |
-| 5 | The untested side is below its delta floor or has decayed past its threshold, **or** net delta per lot is outside its band | **Roll the untested side**, if the roll adds at least the minimum credit after charges and is not within the **No rolls within N days of exit** window |
+| 5 | The untested side is below its delta floor or has decayed past its threshold, **or** net delta per lot is outside its band | **Roll the untested side**, if the roll adds at least the minimum credit after charges and is not within the **No rolls within N days of exit** window. With **Re-centre** on and the threatened short past its trigger: **Re-centre both sides** instead, at any credit or debit, unless within that window |
 | 6 | A tranche is due at the entry check | **Enter a tranche** |
 
 The max loss is checked **only at the two checks**, not continuously. On a fast day the position can run past it before the next check; the wings cap the worst case, and the card shows that figure as **Worst loss at wings**.
@@ -102,7 +103,9 @@ The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tab
 | **…or decayed** | 80% | …or has lost this share of its premium. |
 | **Net Δ band per lot** | 0.15 | Roll when the position's net delta per lot is outside ± this. |
 | **Minimum roll credit** | 20 points | A roll adding less than this per unit, after charges, is skipped and the card says so. |
-| **No rolls within … days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. Every backtest compares 0 and 3 for you (see [Comparing settings](#comparing-settings)). |
+| **No rolls within … days of exit** | 0 (off) | A roll due within this many days of the exit DTE is reported but not done: the new short would be held only a day or two, so the roll mostly pays the spread. It holds back re-centres too. Every backtest compares 0 and 3 for you (see [Comparing settings](#comparing-settings)). |
+| **Re-centre both sides when the tested side is deep** | off | On: a roll due while the threatened short is past the trigger moves both sides, as described [above](#how-a-campaign-works). Every backtest compares off and on for you. |
+| **Re-centre when the tested short is above / Re-centre both shorts to** | 0.30Δ / 0.20Δ | The trigger, and where both new shorts land. The landing must be below the trigger, or the next due roll would re-centre again. |
 | **Start-of-day check / End-of-day check** | 10:30 / 15:31 | The two check times, IST. |
 | **Margin ceiling** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
 | **Max loss / …or of the ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
@@ -139,12 +142,13 @@ Every backtest also replays the saved settings' neighbours, so one run shows how
 | **Max loss** | your % of the margin ceiling, half of it and one and a half times it. A rupee limit you also set stays as it is; with only a rupee limit, that limit is compared instead. |
 | **No rolls within … days of exit** | 0 and 3, and yours if it is neither |
 | **Exit action** | time roll and close |
+| **Re-centre** | off and on. "On" uses your trigger and landing deltas when your re-centre is on, else 0.30 and 0.20. |
 
-That is 108 combinations with the defaults. A value outside the setting's allowed range is left out rather than moved, so the run may compare fewer. Every other setting (strikes, the cycle clock, the leg rule, lots per tranche) stays as you saved it.
+That is 216 combinations with the defaults, which needs about twice the prices a run without re-centre would, so a long period may take more days of fetch budget. A value outside the setting's allowed range is left out rather than moved, so the run may compare fewer. Every other setting (strikes, the cycle clock, the leg rule, lots per tranche) stays as you saved it.
 
-The Activity row opens on a table with one line per combination: the five settings, **Campaigns**, **Rolls**, **Win rate**, **Net P&L**, **Max drawdown** (the largest fall at a check) and **Worst at a check**. **your settings** marks your saved combination, **best** marks the highest net P&L, and **partial** marks a combination that stopped for missing prices (hover it to see where). The campaigns, chart and figures below the table are your saved combination's.
+The Activity row opens on a table with one line per combination: the settings it varied, **Premium gate**, **Re-centre**, **Campaigns**, **Rolls** (a re-centre counts as one), **Win rate**, **Net P&L**, **Max drawdown** (the largest fall at a check) and **Worst at a check**. **your settings** marks your saved combination, **best** marks the highest net P&L, and **partial** marks a combination that stopped for missing prices (hover it to see where). The campaigns, chart and figures below the table are your saved combination's.
 
-On ICICI prices, history covers only about eight monthly cycles, so the best of 108 combinations is a lead to look into, not a finding. NSE daily closes from 2020 cover about 80, which is better but still not proof: pick settings from the middle of a range that does well, not the single best row. Each combination is also kept as a backtest of its own settings: save one, and the card's **Backtest of these settings** shows its result straight away.
+On ICICI prices, history covers only about eight monthly cycles, so the best of 216 combinations is a lead to look into, not a finding. NSE daily closes from 2020 cover about 80, which is better but still not proof: pick settings from the middle of a range that does well, not the single best row. Each combination is also kept as a backtest of its own settings: save one, and the card's **Backtest of these settings** shows its result straight away.
 
 Lots per tranche left blank are sized from today's margin, which needs ICICI's margin calculator; a mock instance has none, so set the lots in the settings first.
 

@@ -23,6 +23,11 @@ export type CondorSettings = {
   net_delta_band_per_lot: number;
   min_roll_credit_points: number;
   no_roll_within_days_of_exit: number;
+  /** Re-centre (#80): a roll due while the tested short is above `recentre_tested_delta` moves both
+   *  sides to `recentre_short_delta` around today's spot instead. Absent on settings from before it. */
+  recentre_enabled?: boolean;
+  recentre_tested_delta?: number;
+  recentre_short_delta?: number;
   max_loss_inr: number | null;
   max_loss_pct_of_ceiling: number | null;
   margin_ceiling_inr: number;
@@ -87,6 +92,7 @@ export type CondorAction =
   | "close_all"
   | "exit_or_roll"
   | "roll_untested"
+  | "recentre"
   | "enter_tranche";
 
 export type CondorDecision = {
@@ -188,6 +194,7 @@ const ACTION_LABEL: Record<CondorAction, string> = {
   close_all: "Close everything",
   exit_or_roll: "Exit or time-roll",
   roll_untested: "Roll the untested side",
+  recentre: "Re-centre both sides",
   enter_tranche: "Enter a tranche",
 };
 
@@ -198,7 +205,7 @@ export function actionLabel(action: CondorAction): string {
 /** How loudly the card shows a decision: actions stand out, a skipped roll is a note. */
 export function actionTone(action: CondorAction): "act" | "warn" | "quiet" {
   if (action === "close_all" || action === "exit_or_roll") return "warn";
-  if (action === "roll_untested" || action === "enter_tranche") return "act";
+  if (action === "roll_untested" || action === "recentre" || action === "enter_tranche") return "act";
   if (action === "unavailable") return "warn";
   return "quiet";
 }

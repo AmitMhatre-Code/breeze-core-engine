@@ -31,7 +31,7 @@ TICK_SECONDS = 30
 WARM_AHEAD = datetime.timedelta(minutes=5)
 CHECK_WINDOW = datetime.timedelta(minutes=20)
 ALERT_KIND = "condor"
-_ACTIONABLE = {"roll_untested", "enter_tranche", "exit_or_roll", "close_all"}
+_ACTIONABLE = {"roll_untested", "recentre", "enter_tranche", "exit_or_roll", "close_all"}
 
 _stop = threading.Event()
 _thread: Optional[threading.Thread] = None

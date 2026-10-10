@@ -600,7 +600,8 @@ def _grid_text(settings: CondorSettings) -> str:
     loss = "max loss % of ceiling" if backtest_combos.max_loss_field(settings) == "max_loss_pct_of_ceiling" else "max loss ₹"
     return (
         f"net-Δ band ±{backtest_combos.BAND_STEP:g}, minimum roll credit ±{backtest_combos.ROLL_CREDIT_STEP:g} points, "
-        f"{loss} × 0.5 / 1 / 1.5, no-roll window 0 and 3 days (and the saved value), time roll and close"
+        f"{loss} × 0.5 / 1 / 1.5, no-roll window 0 and 3 days (and the saved value), time roll and close, "
+        f"re-centre off and on at {backtest_combos.recentre_text(backtest_combos.recentre_setting(settings, True))}"
     )
 
 

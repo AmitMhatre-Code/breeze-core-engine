@@ -55,6 +55,16 @@ class CondorSettings(BaseModel):
     # the rules as first agreed; the backtest compares the two (decided 2026-10-03).
     no_roll_within_days_of_exit: int = Field(0, ge=0, le=30)
 
+    # Re-centre (#80, agreed 2026-10-10). Off: a roll moves only the untested side, as first
+    # agreed. On: a roll that comes due while the tested short is above `recentre_tested_delta`
+    # moves both sides instead -- every short to `recentre_short_delta` around today's spot, each
+    # wing the entry width beyond it -- booking the tested side's loss to take the position away
+    # from the straddle. No credit floor (the loss is already in campaign P&L; only spread and
+    # charges are new); the no-roll window applies; an unpriced re-centre does nothing.
+    recentre_enabled: bool = False
+    recentre_tested_delta: float = Field(0.30, gt=0, lt=1)
+    recentre_short_delta: float = Field(0.20, gt=0, lt=0.5)
+
     # The campaign stop, evaluated only at the scheduled checks (the user's choice). Both
     # forms may be set; the tighter binds. At least one is required.
     max_loss_inr: Optional[float] = Field(None, gt=0)
@@ -74,6 +84,14 @@ class CondorSettings(BaseModel):
             raise ValueError("Entry DTE must be ≥ tranche cut-off DTE, which must be ≥ exit DTE.")
         if self.tranche_cutoff_dte == self.exit_dte and self.tranches > 1:
             raise ValueError("Tranches need a cut-off DTE above the exit DTE.")
+        return self
+
+    @model_validator(mode="after")
+    def _recentre_lands_below_trigger(self) -> "CondorSettings":
+        # Landing at or above the trigger would leave the new short past it, so the next due
+        # roll would re-centre again at once.
+        if self.recentre_enabled and self.recentre_short_delta >= self.recentre_tested_delta:
+            raise ValueError("The re-centre short Δ must be below the tested-side Δ that triggers it.")
         return self
 
     @model_validator(mode="after")

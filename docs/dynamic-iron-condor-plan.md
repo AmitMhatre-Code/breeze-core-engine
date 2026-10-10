@@ -45,7 +45,7 @@ builds. These parts of the conversation must not leak into the build:
 | Strike selection | **Delta shorts, delta wings** (defaults 20Δ / 5Δ), so one rule works at any DTE. Credit ÷ width is shown, never enforced. *Wings changed 2026-10-05 to an equal width beyond each short, a % of spot (#69).* |
 | Roll target | The untested short goes to the **tested side's \|Δ\|**, **capped at the tested strike** (iron fly). **Never invert** |
 | Wing on roll | **Same point width** as the tested side's wing |
-| Tested side | **Never moved** by an adjustment. It closes only through max-loss, exit DTE, break-even exit or a time roll |
+| Tested side | **Never moved** by an adjustment. It closes only through max-loss, exit DTE, break-even exit or a time roll. *Revised 2026-10-10 (#80): an optional **re-centre**, off by default, moves both sides to a landing Δ once a roll is due and the tested short is past a trigger Δ.* |
 | Roll trigger | **Either** the leg rule (untested side < 10Δ or ≥ 80% decayed) **or** the block rule (\|net Δ\| per lot outside a band), whichever first |
 | Minimum roll credit | A roll must add at least a set **net** credit (after buy-back, wing change and charges), else it is skipped and logged |
 | Rolls near the exit | **No rolls within N days of exit**, a setting, **default 0 (off)** (2026-10-03). The flat-market replay rolled a day before the 21-DTE exit, so the new short was held one day and the roll mostly paid the spread. A due roll inside the window is reported, not done. Backtest N=0 against N=3 and keep the better |
@@ -122,7 +122,7 @@ short/wing pair.
 | P1 | Campaign P&L (ledger realised + open legs at buy-back prices: ask for shorts, bid for longs) ≤ −max-loss (₹ or % of ceiling, tighter binds) | **Close all** |
 | P2 | DTE ≤ exit DTE | **Exit or time roll** (manual: ask; bot: setting) |
 | P3 | At the straddle cap, EOD check, spot beyond a break-even | **Early exit or time roll** (as P2) |
-| P4 | Leg rule or block rule fires | **Roll the untested side** to the tested \|Δ\|, capped at the tested strike, wing at same width. Skipped (`roll_credit_below_min`) if net credit after charges < minimum |
+| P4 | Leg rule or block rule fires | **Roll the untested side** to the tested \|Δ\|, capped at the tested strike, wing at same width. Skipped (`roll_credit_below_min`) if net credit after charges < minimum. With re-centre on and the tested short past its trigger: **re-centre both sides** instead, no credit floor (#80) |
 | P5 | Tranche due (schedule, at the configured check, DTE ≥ cut-off, margin headroom) | **Enter tranche** at short Δ / wing Δ, wings snapped outward |
 | P6 | Otherwise | No action |
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionLabel,
   actionTone,
   campaignForGroup,
   differenceText,
@@ -59,6 +60,8 @@ describe("labels", () => {
   });
   it("tones actions", () => {
     expect(actionTone("roll_untested")).toBe("act");
+    expect(actionTone("recentre")).toBe("act");
+    expect(actionLabel("recentre")).toBe("Re-centre both sides");
     expect(actionTone("close_all")).toBe("warn");
     expect(actionTone("no_action")).toBe("quiet");
   });

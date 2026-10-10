@@ -151,8 +151,8 @@ const TH = "px-2.5 py-2 font-semibold whitespace-nowrap";
 const TH_R = `${TH} text-right`;
 const TD_NUM = "px-2.5 py-1.5 text-right font-mono tabular-nums";
 
-/** Every settings combination a condor backtest replayed, side by side (#71): the five settings
- *  each one sets, every other as saved. The campaigns below are the saved combination's; every
+/** Every settings combination a condor backtest replayed, side by side (#71): the settings each
+ *  one sets, re-centre off and on included (#80), every other as saved. The campaigns below are the saved combination's; every
  *  combination's are in the run's zip. */
 function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
   const best = rows.reduce<CondorComparisonRow | null>(
@@ -174,6 +174,7 @@ function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
               <th className={TH_R}>No-roll window</th>
               <th className={TH}>Exit action</th>
               <th className={TH_R}>Premium gate</th>
+              <th className={TH_R}>Re-centre</th>
               <th className={TH_R}>Campaigns</th>
               <th className={TH_R}>Rolls</th>
               <th className={TH_R}>Win rate</th>
@@ -194,6 +195,7 @@ function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
                   {r.varied.exit_action === "close" ? "Close" : "Time roll"}
                 </td>
                 <td className={TD_NUM}>{r.varied.premium_gate ?? "—"}</td>
+                <td className={`${TD_NUM} whitespace-nowrap`}>{r.varied.recentre ?? "—"}</td>
                 <td className={TD_NUM}>{r.trades}</td>
                 <td className={TD_NUM}>{r.rolls}</td>
                 <td className={TD_NUM}>{r.win_rate_pct == null ? "—" : `${r.win_rate_pct}%`}</td>

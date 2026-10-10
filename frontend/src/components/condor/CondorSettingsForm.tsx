@@ -10,7 +10,7 @@ type NumField = {
   nullable?: boolean;
 };
 
-type Group = { title: string; fields: (NumField | "expiry_kind" | "entry_check" | "sod" | "eod")[] };
+type Group = { title: string; fields: (NumField | "expiry_kind" | "entry_check" | "sod" | "eod" | "recentre")[] };
 
 const GROUPS: Group[] = [
   {
@@ -38,7 +38,10 @@ const GROUPS: Group[] = [
       { key: "leg_rule_decay_pct", label: "…or decayed %", hint: "Roll when the untested short has lost this share of its premium.", step: 1 },
       { key: "net_delta_band_per_lot", label: "Net Δ band per lot", hint: "Roll when net delta per lot is outside ±this.", step: 0.01 },
       { key: "min_roll_credit_points", label: "Minimum roll credit (pts)", hint: "A roll adding less, after charges, is skipped.", step: 1 },
-      { key: "no_roll_within_days_of_exit", label: "No rolls within N days of exit", hint: "A roll due this close to the exit DTE is reported, not done. 0 = off.", step: 1 },
+      { key: "no_roll_within_days_of_exit", label: "No rolls within N days of exit", hint: "A roll due this close to the exit DTE is reported, not done. 0 = off. Holds back re-centres too.", step: 1 },
+      "recentre",
+      { key: "recentre_tested_delta", label: "Re-centre when tested short above Δ", hint: "With re-centre on, a due roll moves both sides once the tested short is above this.", step: 0.01 },
+      { key: "recentre_short_delta", label: "Re-centre shorts to Δ", hint: "Where both new shorts land in a re-centre. Must be below the trigger.", step: 0.01 },
     ],
   },
   {
@@ -81,6 +84,21 @@ export function CondorSettingsForm({
                   >
                     <option value="monthly">Monthly only</option>
                     <option value="any">Any (weeklies)</option>
+                  </select>
+                </label>
+              );
+            }
+            if (f === "recentre") {
+              return (
+                <label key={f} className="flex items-center justify-between gap-3 text-sm" title="On: a roll due while the tested short is deep moves both sides, booking the tested side's loss (#80).">
+                  <span>Re-centre both sides</span>
+                  <select
+                    className="app-input w-36"
+                    value={value.recentre_enabled ? "on" : "off"}
+                    onChange={(e) => set("recentre_enabled", e.target.value === "on")}
+                  >
+                    <option value="off">Off</option>
+                    <option value="on">On</option>
                   </select>
                 </label>
               );

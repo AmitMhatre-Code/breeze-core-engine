@@ -46,7 +46,7 @@ _logger = logging.getLogger(__name__)
 BOT = BOT_DYNAMIC_CONDOR
 APPROVED_NOTE = "telegram-approved"
 AUTO_NOTE = "bot-auto"
-ACTIONABLE = {"roll_untested", "enter_tranche", "exit_or_roll", "close_all"}
+ACTIONABLE = {"roll_untested", "recentre", "enter_tranche", "exit_or_roll", "close_all"}
 _PAPER_CYCLE_ENDS = {"exit_dte", "beyond_breakeven", "max_loss", "time_roll", "close_all", "suggested_close"}
 _FMT = "%d-%b-%Y"
 # What the user reads for each stored mode (#70): the same words as every other bot's card.
@@ -90,6 +90,11 @@ def settings_hash(settings: dict[str, Any], exit_action: str, engine_version: in
         from icici_breeze_backend.app.services.premium_gate.reading import GATE_VERSION
 
         settings["premium_gate"] = {**gate, "version": GATE_VERSION}
+    # Re-centre off decides exactly what the rules decided before it existed, so it hashes as
+    # absent too, its two deltas with it: only switching it on voids evidence (#80).
+    recentre = {k: settings.pop(k, None) for k in ("recentre_enabled", "recentre_tested_delta", "recentre_short_delta")}
+    if recentre["recentre_enabled"]:
+        settings.update(recentre)
     blob = json.dumps(
         {"settings": settings, "exit_action": exit_action, "engine_version": int(engine_version or 0)},
         sort_keys=True, default=str,
