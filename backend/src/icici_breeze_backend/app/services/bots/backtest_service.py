@@ -18,6 +18,7 @@ import datetime
 import io
 import json
 import logging
+import re
 from collections import Counter, OrderedDict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -26,6 +27,7 @@ import icici_breeze_backend.app.core.config as cfg
 from icici_breeze_backend.app.core.timezone import now_ist
 from icici_breeze_backend.app.db.bots_migrate import (
     BOT_CAS_BINGO,
+    BOT_DYNAMIC_CONDOR,
     BOT_EXPIRY_INDEX_WRITER,
     BOT_IRON_FLY_SCALPER,
     BOT_MOMENTUM_LONG_SCALPER,
@@ -857,6 +859,77 @@ def trades_csv(trades: Sequence[Mapping[str, Any]]) -> str:
             {k: json.dumps(v) if isinstance(v, (list, dict)) else v for k, v in row.items()}
         )
     return out.getvalue()
+
+
+
+class ResultsFileGone(LookupError):
+    """The run's results zip is no longer kept, so only the saved setting's trades remain."""
+
+
+def _combo_member(run: Mapping[str, Any], combo_id: str) -> tuple[str, str]:
+    """(bot type the zip is named by, the setting's trades file in it). The two writers lay the
+    zip out differently: `condor/backtest_job._write_zip` and `backtest_combos.zip_members`."""
+    if run.get("bot") == "condor":
+        return BOT_DYNAMIC_CONDOR, f"combinations/{combo_id}.csv"
+    return BOT_TYPES[run["bot"]], f"{combo_id}/trades.csv"
+
+
+def results_file_kept(run: Mapping[str, Any], user_id: str) -> bool:
+    """Whether the other settings' trades can still be read (`combo_trades`)."""
+    import os
+
+    from icici_breeze_backend.audit import bot_audit
+
+    if run.get("bot") != "condor" and run.get("bot") not in BOT_TYPES:
+        return False
+    bot_type, _member = _combo_member(run, "")
+    name = bot_audit.backtest_zip_name(user_id, bot_type, str(run["id"]))
+    return os.path.isfile(os.path.join(bot_audit.backtest_dir(), name))
+
+
+_NUMBER = re.compile(r"-?\d+(\.\d+)?")
+
+
+def _cell(text: str) -> Any:
+    """A zip CSV cell back to the value it was written from (`bot_audit._csv_text`): JSON for
+    lists and dicts, numbers, booleans, and "" for None."""
+    if text == "":
+        return None
+    if text in ("True", "False"):
+        return text == "True"
+    if _NUMBER.fullmatch(text):
+        return float(text) if "." in text else int(text)
+    if text[:1] in "[{":
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
+    return text
+
+
+def combo_trades(run: Mapping[str, Any], user_id: str, combo_id: str) -> list[dict[str, Any]]:
+    """One compared setting's trades. The saved setting's are stored with the run; every other
+    setting's live only in the run's results zip (the run keeps their figures, not their trades),
+    so they last as long as the zip does. `combo_id` must be one of the run's comparison rows:
+    it names a file in the zip."""
+    rows = (run.get("summary") or {}).get("comparison") or []
+    row = next((r for r in rows if r.get("id") == combo_id), None)
+    if row is None:
+        raise KeyError(combo_id)
+    if row.get("is_saved"):
+        return list(run.get("trades") or [])
+    from icici_breeze_backend.audit import bot_audit
+
+    bot_type, member = _combo_member(run, combo_id)
+    text = bot_audit.read_backtest_member(user_id, bot_type, str(run["id"]), member)
+    if text is None:
+        raise ResultsFileGone(
+            "This backtest's results file is no longer kept (the newest 200 are, and Storage can "
+            "delete them), so only your settings' trades can be shown."
+        )
+    out = [{k: _cell(v) for k, v in r.items()} for r in csv.DictReader(io.StringIO(text))]
+    # A setting with no trades is written as one `note` row.
+    return [r for r in out if set(r) != {"note"}]
 
 
 def coverage_summary(path: Optional[str] = None) -> dict[str, Any]:

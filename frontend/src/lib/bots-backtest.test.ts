@@ -10,10 +10,13 @@ import {
   formatDuration,
   quietVerdict,
   inr,
+  markedGroups,
   maxDrawdown,
+  rowMarks,
   summaryTotals,
   tradeTotals,
   type BacktestTrade,
+  type ComparedRow,
 } from "@/lib/bots-backtest";
 
 const trade = (exited_at: string, net: number): BacktestTrade => ({
@@ -114,6 +117,36 @@ describe("bots-backtest", () => {
       expect(quietVerdict(179, "replaying")).toBeNull();
       expect(quietVerdict(200, "fetching")).toMatch(/rate-limit cooldowns/);
       expect(quietVerdict(200, "replaying")).toMatch(/still alive/);
+    });
+  });
+
+  describe("comparison marks", () => {
+    const row = (id: string, net: number | null, is_saved = false): ComparedRow => ({
+      id,
+      is_saved,
+      trades: 1,
+      win_rate_pct: null,
+      net_pnl: net,
+      friction: null,
+      max_drawdown: null,
+    });
+
+    it("marks your settings, the best and the worst by net P&L", () => {
+      const marks = rowMarks([row("a", 10, true), row("b", 50), row("c", -30), row("d", 0)]);
+      expect(Object.fromEntries(marks)).toEqual({ a: ["saved"], b: ["best"], c: ["worst"] });
+    });
+
+    it("shows a row that is both yours and the best once, titled with both", () => {
+      const groups = markedGroups([row("w", -5), row("a", 90, true), row("b", 10)]);
+      expect(groups.map((g) => [g.row.id, g.marks])).toEqual([
+        ["a", ["saved", "best"]],
+        ["w", ["worst"]],
+      ]);
+    });
+
+    it("marks no best or worst with nothing to compare, and no worst when every row made the same", () => {
+      expect(Object.fromEntries(rowMarks([row("a", 10, true)]))).toEqual({ a: ["saved"] });
+      expect(Object.fromEntries(rowMarks([row("a", 0, true), row("b", 0)]))).toEqual({ a: ["saved", "best"] });
     });
   });
 });

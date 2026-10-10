@@ -212,3 +212,14 @@ def test_a_run_from_before_the_comparison_is_still_evidence_for_its_own_settings
     }
     found = _evidence(monkeypatch, run, saved, "time_roll")
     assert found["run_id"] == "old" and found["net_pnl"] == 2.0
+
+
+def test_a_comparison_row_carries_gross_pnl_for_its_charges_share():
+    combo = next(c for c in backtest_combos.combos_for(CondorSettings(margin_ceiling_inr=10_00_000), "time_roll") if c.is_saved)
+    row = backtest_combos.comparison_row(
+        combo, {"max_drawdown": 0.0},
+        [{"net_pnl": 900.0, "gross_pnl": 1000.0, "friction": 100.0},
+         {"net_pnl": -250.0, "gross_pnl": -200.0, "friction": 50.0}],
+        complete=True,
+    )
+    assert (row["gross_pnl"], row["friction"], row["net_pnl"]) == (800.0, 150.0, 650.0)

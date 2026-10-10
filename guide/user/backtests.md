@@ -52,14 +52,15 @@ Backtests use only data ICICI serves as history: one-minute bars of price, volum
 
 **Signal backtests** appear on the Signals page: a sentence per reading in each mechanism's table, and a row in its Activity table. See [How a signal is judged](signals.md#how-a-signal-is-judged).
 
-**Bot backtests** appear as a row marked **Backtest** in the Bots page's Activity. Expanded, a row shows:
+**Bot backtests** appear as a row marked **Backtest** in the Bots page's Activity. Expanded, a row that compared settings shows:
 
 | Part | What it shows |
 |---|---|
-| Comparison table | For each **Setting** (a signal setting, or a premium gate threshold): **Trades**, **Win rate**, **Net P&L**, **Max drawdown** (largest fall from a peak) and **Worst day**. For the Dynamic Iron Condor, one line per settings combination ([Comparing settings](iron-condors.md#comparing-settings)). |
-| Totals | Net P&L and the main figures for the run. |
-| Trades | Every trade with entry and exit times, contract, lots, prices and **Exit reason**. **Download trades CSV** saves them. |
-| Chart | Cumulative net P&L over the period. |
+| Your settings, Best, Worst | One group of figures each: **Net P&L**, **Trades**, **Win rate**, **Charges**, **Charges / gross** and **Max drawdown**. Best and Worst are the highest and lowest net P&L in the table. If your settings are also the best or the worst, one group carries both titles. |
+| Comparison table | For each **Setting** (a signal setting, or a premium gate threshold): **Trades**, **Win rate**, **Net P&L**, **Max drawdown** (largest fall from a peak) and **Worst day**. For the Dynamic Iron Condor, one line per settings combination ([Comparing settings](iron-condors.md#comparing-settings)). Your settings' row is shaded blue, the best green and the worst red. |
+| Trades icon | The icon at the start of every row opens that setting's figures, cumulative P&L chart and every trade (entry and exit times, contract, lots, prices and **Exit reason**). **Download trades CSV** in that window saves them. |
+
+Every setting's trades except yours are read from the run's results file. The app keeps the newest 200 of these files, and [Storage](settings-diagnostics.md#storage) can delete them. Once a run's file is gone, only your settings' icon still opens. A run that compared nothing shows its figures, chart and trades straight away.
 
 **Download backtest results (.zip)** saves everything for the run. A signal backtest's zip holds every bar replayed, every minute's reading and every call with what the index did next, so any number can be checked independently.
 

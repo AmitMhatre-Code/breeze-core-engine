@@ -73,6 +73,9 @@ export type CondorComparisonRow = {
   rolls: number;
   win_rate_pct: number | null;
   net_pnl: number | null;
+  /** Absent on runs from before the per-row trades view. */
+  gross_pnl?: number | null;
+  friction: number | null;
   max_drawdown: number | null;
   worst_at_check: number | null;
   complete: boolean;
@@ -87,6 +90,47 @@ export function comparisonRows(summary: BacktestSummary | null | undefined): Com
   const rows = (summary as { comparison?: unknown } | null | undefined)?.comparison;
   return Array.isArray(rows) ? (rows as ComparisonRow[]) : [];
 }
+
+/** The figures every comparison row carries, whichever bot it is from. */
+export type ComparedRow = Pick<
+  ComparisonRow,
+  "id" | "is_saved" | "trades" | "win_rate_pct" | "net_pnl" | "friction" | "max_drawdown"
+> & { gross_pnl?: number | null };
+
+export type RowMark = "saved" | "best" | "worst";
+
+/** Which rows are your settings, the best and the worst, by net P&L. Partial condor rows count:
+ *  the user's call. Ties go to the first row listed; with one row nothing is best or worst, and
+ *  when every row made the same, the worst is not marked a second time. */
+export function rowMarks(rows: ReadonlyArray<ComparedRow>): Map<string, RowMark[]> {
+  const marks = new Map<string, RowMark[]>();
+  const add = (id: string, mark: RowMark) => marks.set(id, [...(marks.get(id) ?? []), mark]);
+  const saved = rows.find((r) => r.is_saved);
+  if (saved) add(saved.id, "saved");
+  if (rows.length > 1) {
+    const pnl = (r: ComparedRow) => r.net_pnl ?? 0;
+    const best = rows.reduce((b, r) => (pnl(r) > pnl(b) ? r : b));
+    const worst = rows.reduce((w, r) => (pnl(r) < pnl(w) ? r : w));
+    add(best.id, "best");
+    if (worst.id !== best.id) add(worst.id, "worst");
+  }
+  return marks;
+}
+
+/** Your settings, best and worst as the groups atop the results: one group per row, so a row
+ *  that is both your settings and the best is shown once, titled with both. */
+export function markedGroups<R extends ComparedRow>(
+  rows: ReadonlyArray<R>,
+): Array<{ row: R; marks: RowMark[] }> {
+  const marks = rowMarks(rows);
+  const order: RowMark[] = ["saved", "best", "worst"];
+  return rows
+    .filter((r) => marks.has(r.id))
+    .map((row) => ({ row, marks: marks.get(row.id) as RowMark[] }))
+    .sort((a, b) => order.indexOf(a.marks[0]) - order.indexOf(b.marks[0]));
+}
+
+export const MARK_LABELS: Record<RowMark, string> = { saved: "Your settings", best: "Best", worst: "Worst" };
 
 /** The card dialog's only question (#36). */
 export type BacktestPeriod = "last_day" | "last_week" | "last_month" | "custom";
@@ -282,12 +326,21 @@ export type BacktestTrade = Record<string, unknown> & {
   friction: number;
 };
 
-export type BacktestRun = BacktestRunListItem & { trades: BacktestTrade[] };
+export type BacktestRun = BacktestRunListItem & {
+  trades: BacktestTrade[];
+  /** Whether the run's results zip is still kept: every compared row but yours reads its trades
+   *  from it. Absent on older backends. */
+  results_file_kept?: boolean;
+};
 
-export const fetchBacktestRun = (id: string) =>
-  apiClient.get<BacktestRun>(`/bots/backtest/run?id=${encodeURIComponent(id)}`);
-export async function downloadBacktestCsv(id: string): Promise<void> {
-  const url = new URL(`/bots/backtest/run/csv?id=${encodeURIComponent(id)}`, getBackendBaseUrl());
+const runQuery = (id: string, combo?: string) =>
+  `id=${encodeURIComponent(id)}${combo ? `&combo=${encodeURIComponent(combo)}` : ""}`;
+
+/** A stored run; with `combo`, its trades are that compared row's instead of your settings'. */
+export const fetchBacktestRun = (id: string, combo?: string) =>
+  apiClient.get<BacktestRun>(`/bots/backtest/run?${runQuery(id, combo)}`);
+export async function downloadBacktestCsv(id: string, combo?: string): Promise<void> {
+  const url = new URL(`/bots/backtest/run/csv?${runQuery(id, combo)}`, getBackendBaseUrl());
   const res = await fetch(url.toString(), { method: "GET", credentials: "include" });
   if (!res.ok) throw new Error((await res.text()) || "Download failed");
   const blob = await res.blob();

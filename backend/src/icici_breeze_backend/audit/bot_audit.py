@@ -527,3 +527,15 @@ def find_for_backtest_run(user_id: str, bot_type: str, run_id: str) -> Optional[
         if os.path.isfile(os.path.join(backtest_dir(), candidate)):
             return candidate
     return None
+
+
+def read_backtest_member(user_id: str, bot_type: str, run_id: str, member: str) -> Optional[str]:
+    """One file out of a run's results zip, or None when the zip (pruned at `BACKTEST_KEEP`, or
+    deleted from Storage) or the member is not there. The caller names the member from the run's
+    own comparison rows, never from the request."""
+    path = os.path.join(backtest_dir(), backtest_zip_name(user_id, bot_type, run_id))
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return zf.read(member).decode("utf-8")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None

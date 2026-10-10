@@ -35,6 +35,32 @@ def _isolate_log_sink(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_bot_audit(tmp_path, monkeypatch):
+    """Keep bot audit trails and backtest zips out of the real backend/data/ during tests.
+
+    Backtest zips are capped per instance (`bot_audit.BACKTEST_KEEP`), so every suite run used to
+    write its own `u1` zips into the developer's folder and push their real runs' zips out --
+    and with them the download and every compared setting's trades. A test that points
+    `DATA_PATH` elsewhere keeps the folder under it, and one that patches `audit_dir` wins."""
+    import os
+
+    import icici_breeze_backend.app.core.config as app_cfg
+    from icici_breeze_backend.audit import bot_audit
+
+    real_data_path = app_cfg.DATA_PATH
+    original = bot_audit.audit_dir
+    root = str(tmp_path / "bots-audit")
+
+    def _audit_dir() -> str:
+        if app_cfg.DATA_PATH != real_data_path:
+            return original()
+        os.makedirs(root, exist_ok=True)
+        return root
+
+    monkeypatch.setattr(bot_audit, "audit_dir", _audit_dir)
+
+
+@pytest.fixture(autouse=True)
 def _roomy_data_volume(monkeypatch):
     """Report the data volume as 10% full, so no backtest test is halted or refused because the
     machine running the suite happens to have a full disk. Storage tests set their own reading."""

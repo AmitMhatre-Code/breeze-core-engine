@@ -223,6 +223,7 @@ def comparison_row(
         "rolls": int(summary.get("rolls") or 0),
         "win_rate_pct": round(100.0 * wins / len(finished), 1) if finished else None,
         "net_pnl": round(sum(float(t.get("net_pnl") or 0) for t in trades), 2),
+        "gross_pnl": round(sum(float(t.get("gross_pnl") or 0) for t in trades), 2),
         "friction": round(sum(float(t.get("friction") or 0) for t in trades), 2),
         # Drawdown of the equity at every check, not of campaign closes: a condor's worst
         # moment is usually mid-campaign.

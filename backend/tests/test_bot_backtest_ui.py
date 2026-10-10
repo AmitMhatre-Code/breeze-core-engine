@@ -450,6 +450,56 @@ def test_runs_can_be_read_downloaded_and_deleted(client):
     assert client.get("/bots/backtest/run?id=r1").status_code == 404
 
 
+def _compared_run(run_id: str, bot: str = "momentum") -> dict:
+    return {
+        "id": run_id, "user_id": "u1", "bot": bot, "created_at": "2026-10-10T10:00:00",
+        "status": "completed", "params": {"from": "2026-03-02", "to": "2026-03-06"},
+        "summary": {"comparison": [
+            {"id": "saved-cell", "is_saved": True, "net_pnl": 12.5},
+            {"id": "other-cell", "is_saved": False, "net_pnl": -40.0},
+            {"id": "quiet-cell", "is_saved": False, "net_pnl": 0.0},
+        ]},
+        "trades": [{"entered_at": "2026-03-02 10:00:00", "net_pnl": 12.5}],
+    }
+
+
+def test_every_compared_setting_s_trades_open_from_the_results_zip(client):
+    from icici_breeze_backend.audit import bot_audit
+
+    store.save_run(_compared_run("r2"))
+    writer = bot_audit.BacktestZipWriter("u1", service.BOT_TYPES["momentum"], "r2")
+    writer.add_all({
+        "other-cell/trades.csv": [{"entered_at": "2026-03-03 11:00:00", "strike": 24500, "right": "call",
+                                   "legs": [{"strike": 24500}], "net_pnl": -40.0, "exit_reason": None}],
+        "quiet-cell/trades.csv": [{"note": "no trades"}],
+    })
+    writer.close()
+
+    run = client.get("/bots/backtest/run?id=r2").json()
+    assert run["results_file_kept"] is True and run["trades"][0]["net_pnl"] == 12.5
+    # Read back as the values they were written from, not as CSV text.
+    other = client.get("/bots/backtest/run?id=r2&combo=other-cell").json()["trades"]
+    assert other == [{"entered_at": "2026-03-03 11:00:00", "strike": 24500, "right": "call",
+                      "legs": [{"strike": 24500}], "net_pnl": -40.0, "exit_reason": None}]
+    assert client.get("/bots/backtest/run?id=r2&combo=quiet-cell").json()["trades"] == []
+    # The saved setting's come from the run itself.
+    assert client.get("/bots/backtest/run?id=r2&combo=saved-cell").json()["trades"][0]["net_pnl"] == 12.5
+    r = client.get("/bots/backtest/run/csv?id=r2&combo=other-cell")
+    assert r.text.splitlines()[0].startswith("entered_at,strike")
+    assert 'filename="backtest-momentum-2026-03-02-2026-03-06-other-cell.csv"' in r.headers["content-disposition"]
+    # Only the run's own rows name a file in the zip.
+    assert client.get("/bots/backtest/run?id=r2&combo=../../etc").status_code == 404
+
+
+def test_a_pruned_results_zip_leaves_only_the_saved_setting_s_trades(client):
+    store.save_run(_compared_run("r3", bot="condor"))
+    run = client.get("/bots/backtest/run?id=r3").json()
+    assert run["results_file_kept"] is False
+    r = client.get("/bots/backtest/run?id=r3&combo=other-cell")
+    assert r.status_code == 410 and "no longer kept" in r.json()["detail"]
+    assert client.get("/bots/backtest/run?id=r3&combo=saved-cell").json()["trades"][0]["net_pnl"] == 12.5
+
+
 # --- the card's one-click backtest (#35, #36) ---------------------------------------------
 
 IST_ = datetime.timezone(datetime.timedelta(hours=5, minutes=30))

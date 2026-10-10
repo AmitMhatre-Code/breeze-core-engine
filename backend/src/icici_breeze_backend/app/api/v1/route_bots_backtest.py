@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -154,12 +155,32 @@ def cancel(ctx: RequestContext = Depends(get_request_context)):
     return {"cancelled": jobs.cancel()}
 
 
-@router.get("/backtest/run")
-def get_run(id: str = Query(...), ctx: RequestContext = Depends(get_request_context)):
+def _run_for(id: str, combo: Optional[str], user_id: str) -> dict:
+    """The stored run, its `trades` swapped for one compared setting's when `combo` names one."""
     jobs.ensure_store()
-    run = store.get_run(id, ctx.user_id)
+    run = store.get_run(id, user_id)
     if run is None:
         raise HTTPException(status_code=404, detail="No such backtest run.")
+    if combo is not None:
+        try:
+            run["trades"] = service.combo_trades(run, user_id, combo)
+        except service.ResultsFileGone as e:
+            raise HTTPException(status_code=410, detail=str(e)) from e
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="No such setting in this backtest.") from e
+    return run
+
+
+@router.get("/backtest/run")
+def get_run(
+    id: str = Query(...),
+    combo: Optional[str] = Query(None),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    """`combo`: one row of the run's comparison, whose trades come back in place of the saved
+    setting's. `results_file_kept` says whether the other rows' can still be read."""
+    run = _run_for(id, combo, ctx.user_id)
+    run["results_file_kept"] = service.results_file_kept(run, ctx.user_id)
     return run
 
 
@@ -172,12 +193,16 @@ def delete_run(id: str = Query(...), ctx: RequestContext = Depends(get_request_c
 
 
 @router.get("/backtest/run/csv")
-def run_csv(id: str = Query(...), ctx: RequestContext = Depends(get_request_context)):
-    jobs.ensure_store()
-    run = store.get_run(id, ctx.user_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="No such backtest run.")
-    name = f"backtest-{run['bot']}-{run['params'].get('from')}-{run['params'].get('to')}.csv"
+def run_csv(
+    id: str = Query(...),
+    combo: Optional[str] = Query(None),
+    ctx: RequestContext = Depends(get_request_context),
+):
+    run = _run_for(id, combo, ctx.user_id)
+    name = f"backtest-{run['bot']}-{run['params'].get('from')}-{run['params'].get('to')}"
+    if combo is not None:
+        name += "-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", combo)[:80]
+    name += ".csv"
     return Response(
         content=service.trades_csv(run.get("trades") or []),
         media_type="text/csv",
