@@ -60,6 +60,16 @@ _touched = 0.0
 #: Card backtests between opening their Activity row and their thread starting. The row is
 #: `running` before the job is, so the idle reaper must leave it alone for that moment.
 _opening = 0
+#: Where each measured stretch of progress began, for the time-left estimate: (phase, total,
+#: unit) -> (monotonic time, done). Keyed by the stretch rather than reset on every phase change
+#: so that a condor replay interrupted by fetch rounds keeps one rate -- fetch time included,
+#: which is the time the user will actually wait.
+_baselines: dict[tuple[Any, Any, Any], tuple[float, float]] = {}
+
+#: No time-left estimate before the job has measured this long, or moved this share of its total.
+#: An estimate off the first unit is mostly the cost of loading prices, not of replaying them.
+ETA_AFTER_SECONDS = 15
+ETA_AFTER_SHARE = 0.02
 
 
 #: A backtest is refused, and a running one stopped, once the container holds this much of what
@@ -129,7 +139,24 @@ def state() -> Optional[dict[str, Any]]:
         now = time.monotonic()
         out["elapsed_seconds"] = int(now - _began)
         out["quiet_seconds"] = int(now - _touched)
+        out["eta_seconds"] = _eta(_job, now)
         return out
+
+
+def _eta(job: dict[str, Any], now: float) -> Optional[int]:
+    """Seconds left at the rate this stretch has gone so far, or None until it has a rate worth
+    quoting. Caller holds `_lock`."""
+    done, total = job.get("done"), job.get("total")
+    if done is None or not total:
+        return None
+    base = _baselines.get((job.get("phase"), total, job.get("unit")))
+    if base is None:
+        return None
+    began, done_then = base
+    moved, spent = done - done_then, now - began
+    if spent < ETA_AFTER_SECONDS or moved < max(1.0, ETA_AFTER_SHARE * total):
+        return None
+    return max(0, int((total - done) * spent / moved))
 
 
 def is_running() -> bool:
@@ -170,16 +197,49 @@ def _log(line: str) -> None:
 
 
 def _update(**fields: Any) -> None:
-    """Change the job's fields -- its progress included (`phase`, `step`/`steps`, `day`)."""
+    """Change the job's fields -- its progress included (`phase`, `step`/`steps`, `day`, and the
+    bar's `done` of `total` `unit`).
+
+    A new phase that brings no count of its own clears the old one: a bar left at "40 of 40
+    windows" while sizing runs would say something that is no longer true."""
     global _touched
     with _lock:
-        if _job is not None:
-            _job.update(fields)
-            _touched = time.monotonic()
+        if _job is None:
+            return
+        if "phase" in fields and fields["phase"] != _job.get("phase") and "total" not in fields:
+            fields = {"done": None, "total": None, "unit": None, **fields}
+        _job.update(fields)
+        _touched = time.monotonic()
+        if _job.get("done") is not None and _job.get("total"):
+            key = (_job.get("phase"), _job["total"], _job.get("unit"))
+            _baselines.setdefault(key, (_touched, float(_job["done"])))
 
 
-def _on_day(day: datetime.date) -> None:
-    _update(day=day.isoformat())
+def _progress(done: Optional[float], total: Optional[float], unit: Optional[str]) -> None:
+    """The bar's count for the current phase; all None when its size is not known."""
+    _update(done=done, total=total, unit=unit)
+
+
+def _begin_step(step: int, steps: int) -> None:
+    """A setting starts replaying: the bar moves to its start. Its sessions are counted only
+    once its first one starts, so the count carried here is the previous setting's -- every
+    setting walks the same sessions."""
+    with _lock:
+        sessions = (_job or {}).get("sessions")
+    count = {"done": (step - 1) * sessions, "total": steps * sessions, "unit": "sessions"} if sessions else {}
+    _update(phase="replaying", step=step, steps=steps, day=None, session=None, **count)
+
+
+def _on_day(day: datetime.date, n: Optional[int] = None, of: Optional[int] = None) -> None:
+    """Session `n` of the `of` this replay walks has started (`backtest_service.replay`)."""
+    fields: dict[str, Any] = {"day": day.isoformat()}
+    if n and of:
+        with _lock:
+            step = (_job or {}).get("step") or 1
+            steps = (_job or {}).get("steps") or 1
+        n = min(n, of)
+        fields.update(session=n, sessions=of, done=(step - 1) * of + n - 1, total=steps * of, unit="sessions")
+    _update(**fields)
 
 
 def _finish(status: str, *, message: Optional[str] = None, error: Optional[str] = None, **extra: Any) -> None:
@@ -217,8 +277,17 @@ def _start(kind: str, target: Callable[[], None], **info: Any) -> dict[str, Any]
             "step": None,
             "steps": None,
             "day": None,
+            # Session `session` of the `sessions` one setting walks, while replaying.
+            "session": None,
+            "sessions": None,
+            # The progress bar: `done` of `total` `unit` (plural, e.g. "sessions", "option
+            # windows") in the current phase, or None while its size is not known.
+            "done": None,
+            "total": None,
+            "unit": None,
             **info,
         }
+        _baselines.clear()
         _began = _touched = time.monotonic()
 
         def run() -> None:
@@ -277,6 +346,7 @@ def _fetcher(user_id: str) -> Fetcher:
         _update(calls=fetcher.calls)
 
     fetcher.log = log
+    fetcher.on_progress = _progress
     return fetcher
 
 
@@ -658,7 +728,7 @@ def _open_bot_backtest(
                     f"before the first of {len(combos)} setting(s)" if n == 1
                     else f"after {n - 1} of {len(combos)} setting(s)"
                 )
-                _update(phase="replaying", step=n, steps=len(combos), day=None)
+                _begin_step(n, len(combos))
                 note(f"Replaying {service.BOT_LABELS[bot]} ({n}/{len(combos)}: {combo.label}), "
                      f"{start} to {end}, on real ICICI prices…")
                 try:

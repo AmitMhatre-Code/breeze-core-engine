@@ -243,28 +243,32 @@ def replay(
     path: Optional[str] = None,
     readings_cache: Optional[ReadingsCache] = None,
     record_decisions: bool = False,
-    on_day: Optional[Callable[[datetime.date], None]] = None,
+    on_day: Optional[Callable[[datetime.date, int, int], None]] = None,
 ) -> Any:
     """Replay one bot over a range. `readings_cache` (series id -> readings) lets a run that
     compares signal settings build each series' readings once, whichever combinations share it.
     It holds only the last `KEEP_SERIES`, which the combo order makes free -- see `ReadingsCache`.
 
-    `on_day` is called as each session starts replaying, so a job can say where it is."""
+    `on_day(day, n, of)` is called as each session starts replaying -- session `n` of the `of`
+    this replay walks, across every index it covers -- so a job can say where it is."""
     hol = holidays() if holidays_ is None else holidays_
     charges, spread = load_charges(), spread_stats()
     vix = store.load_vix(path=path)
     if bot == "expiry":
         scopes = list(scopes if scopes is not None else expiry_scope(config))
         results, lots_shown = [], {}
+        walks = []
         for scope in scopes:
             lots_shown.update({f"{scope.index} {s}": scope.lots.get(s, 1) for s in scope.strategies})
             strategies = [s for s in scope.strategies if scope.lots.get(s, 1) > 0]
-            if not strategies:
-                continue
+            if strategies:
+                walks.append((scope, strategies, expiry_days(scope.index, start, end, hol)))
+        counted = SessionCounter.wrap(on_day, sum(len(days) for _s, _st, days in walks))
+        for scope, strategies, days in walks:
             results.append(
                 run_expiry_backtest(
                     index=scope.index,
-                    days=expiry_days(scope.index, start, end, hol),
+                    days=days,
                     spot_bars=store.load_candles(
                         stock_code=scope.index, from_date=start, to_date=end, table="spot_candles", path=path
                     ),
@@ -275,7 +279,7 @@ def replay(
                     pricer=pricer,
                     lots={s: scope.lots.get(s, 1) for s in strategies},
                     vix_by_day=vix,
-                    on_day=on_day,
+                    on_day=counted,
                     premium=_replay_premium(config, scope.index, start, end, hol, path),
                 )
             )
@@ -291,6 +295,8 @@ def replay(
     if not futures:
         raise NoCachedData(f"No NIFTY futures bars are cached for {start} to {end}. Fetch data first.")
     spot = store.load_candles(from_date=start, to_date=end, table="spot_candles", path=path)
+    # Both replays walk every day the futures bars cover (`by_day`), skipped ones included.
+    on_day = SessionCounter.wrap(on_day, len({bar.date for bar in futures}))
     if bot == "fly":
         entry_filter = getattr(config, "entry_filter", None)
         kind = getattr(entry_filter, "kind", "none")
@@ -324,6 +330,23 @@ def replay(
     )
 
 
+class SessionCounter:
+    """Turns a replay loop's `on_day(day)` into `on_day(day, n, of)`: the session's place among
+    the `of` sessions the whole replay walks, which the replay knows before its loops start and
+    the loops (one per index, for Bot 2 and CAS Bingo) do not."""
+
+    def __init__(self, on_day: Callable[[datetime.date, int, int], None], of: int) -> None:
+        self.on_day, self.of, self.n = on_day, of, 0
+
+    @classmethod
+    def wrap(cls, on_day: Optional[Callable[..., None]], of: int) -> Optional["SessionCounter"]:
+        return None if on_day is None else cls(on_day, of)
+
+    def __call__(self, day: datetime.date) -> None:
+        self.n += 1
+        self.on_day(day, self.n, self.of)
+
+
 def _replay_premium(
     config: Any, index: str, start: datetime.date, end: datetime.date,
     hol: set[datetime.date], path: Optional[str],
@@ -349,7 +372,7 @@ def _replay_premium(
 def _replay_cas(
     config: Any, *, start: datetime.date, end: datetime.date, pricer: Any, hol: set[datetime.date],
     path: Optional[str], charges: Any, spread: Any, readings_cache: Optional[ReadingsCache],
-    record_decisions: bool, on_day: Optional[Callable[[datetime.date], None]] = None,
+    record_decisions: bool, on_day: Optional[Callable[[datetime.date, int, int], None]] = None,
 ) -> Any:
     """CAS Bingo over each enabled index's expiry days, merged into one result."""
     from icici_breeze_backend.app.services.bots.cas_bingo.backtest import CasResult, run_cas_backtest
@@ -357,8 +380,9 @@ def _replay_cas(
 
     merged = CasResult(price_source=getattr(pricer, "source", ""))
     reads_signal = config.strategy in ("debit_spread", "credit_spread")
-    for index in config.enabled_indices():
-        days = expiry_days(index, start, end, hol)
+    walks = [(index, expiry_days(index, start, end, hol)) for index in config.enabled_indices()]
+    on_day = SessionCounter.wrap(on_day, sum(len(days) for _i, days in walks))
+    for index, days in walks:
         if not days:
             continue
         readings = (

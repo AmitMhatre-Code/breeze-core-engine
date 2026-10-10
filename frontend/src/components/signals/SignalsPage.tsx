@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
+import { BacktestProgressBar } from "@/components/bots/BacktestProgressBar";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import type { BacktestPeriod } from "@/lib/bots-backtest";
 import {
@@ -116,6 +117,7 @@ function BacktestPanel({ data, running }: { data: SignalsOverview; running: bool
               {job.from_date === job.to_date ? job.from_date : `${job.from_date} → ${job.to_date}`}
             </span>
           </div>
+          <BacktestProgressBar job={job} />
           {lastLine ? <p className="font-mono text-hint text-muted">{lastLine}</p> : null}
           <button type="button" className="app-btn-secondary" disabled={stop.isPending} onClick={() => stop.mutate()}>
             Stop

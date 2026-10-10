@@ -158,18 +158,37 @@ export type BacktestJob = {
   elapsed_seconds?: number;
   /** Seconds since the job last showed any sign of progress: a log line, a call, a new day. */
   quiet_seconds?: number;
+} & BacktestJobProgress;
+
+/** The progress bar's numbers. All absent from a server older than the bar. */
+export type BacktestJobProgress = {
+  phase?: BacktestPhase;
+  /** Session `session` of the `sessions` one setting walks, while replaying. */
+  session?: number | null;
+  sessions?: number | null;
+  /** `done` of `total` `unit` (plural) in the current phase; null while its size is unknown. */
+  done?: number | null;
+  total?: number | null;
+  unit?: string | null;
+  /** Seconds left at the rate measured so far; null until there is a rate worth quoting. */
+  eta_seconds?: number | null;
 };
 
 export type BacktestPhase = "starting" | "fetching" | "sizing" | "replaying" | "recording";
 
 /** What a running job is doing, in one line. */
-export function describePhase(job: Pick<BacktestJob, "phase" | "step" | "steps" | "day">): string {
+export function describePhase(
+  job: Pick<BacktestJob, "phase" | "step" | "steps" | "day"> & { unit?: string | null },
+): string {
   switch (job.phase) {
     case "fetching":
-      return "Fetching missing history from ICICI";
+      // The condor's long-history run downloads NSE's public archive, not ICICI's history.
+      return job.unit === "NSE sessions" ? "Downloading NSE daily prices" : "Fetching missing history from ICICI";
     case "sizing":
       return "Pricing one lot's margin at today's levels";
     case "replaying": {
+      // The Signals backtest replays series, not one bot's settings session by session.
+      if (job.unit === "series") return "Replaying every signal series";
       const setting =
         job.step && job.steps && job.steps > 1 ? `Replaying setting ${job.step} of ${job.steps}` : "Replaying";
       return job.day ? `${setting} · session ${job.day}` : `${setting} · loading prices and signal readings`;
@@ -187,6 +206,39 @@ export function formatDuration(seconds: number): string {
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** The bar's share done, 0..1, or null while the size of the phase is not known. */
+export function progressShare(job: BacktestJobProgress): number | null {
+  const { done, total } = job;
+  if (done == null || !total || total <= 0) return null;
+  return Math.min(1, Math.max(0, done / total));
+}
+
+/** `0.004` -> `<1%`, so a bar that has moved never reads as not started. */
+export function formatShare(share: number): string {
+  if (share > 0 && share < 0.01) return "<1%";
+  return `${Math.floor(share * 100)}%`;
+}
+
+/** What the bar is counting, in words: the session while replaying, else the phase's own count. */
+export function progressCount(job: BacktestJobProgress): string | null {
+  if (job.phase === "replaying" && job.session && job.sessions) {
+    return `Session ${job.session} of ${job.sessions}`;
+  }
+  if (job.done != null && job.total && job.unit) {
+    return `${job.done.toLocaleString("en-IN")} of ${job.total.toLocaleString("en-IN")} ${job.unit}`;
+  }
+  return null;
+}
+
+/** An estimate, so in coarse words: `45` -> `under a minute left`, `200` -> `about 4 min left`. */
+export function formatTimeLeft(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return "under a minute left";
+  if (s < 3600) return `about ${Math.ceil(s / 60)} min left`;
+  const m = Math.round((s % 3600) / 60);
+  return `about ${Math.floor(s / 3600)}h${m ? ` ${m}m` : ""} left`;
 }
 
 /** Past this, a job that has said nothing is worth a closer look; not before. */

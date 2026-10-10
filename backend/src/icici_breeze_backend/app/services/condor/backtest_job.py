@@ -632,7 +632,7 @@ def _run_daily(
 
         fetcher = daily_history.DailyFetcher(
             stop=stop, log=jobs._log,  # noqa: SLF001
-            progress=lambda n, total: jobs._update(phase="fetching", step=n, steps=total),  # noqa: SLF001
+            progress=lambda n, total: jobs._progress(n, total, "NSE sessions"),  # noqa: SLF001
         )
         try:
             # A month and a half before the range too: the premium gate's forecast reads the
@@ -712,8 +712,25 @@ def _drive(
     cache allows and fetches what all of them lack together, once, so the budget is spread over
     the grid rather than spent on one combination first (the user's call, 2026-10-05).
 
-    Returns {combo id: where it stopped} for the combinations left unfinished."""
+    Returns {combo id: where it stopped} for the combinations left unfinished.
+
+    The bar counts scheduled checks replayed across every combination: a combination waiting
+    for data keeps its place, so the count only ever rises, round after round."""
     pending = list(replays)
+    total = sum(len(r.checks) for _c, r in replays)
+
+    def watch(replay: CondorReplay) -> None:
+        per_day = max(1, len(replay.check_kinds))
+        sessions = max(1, len(replay.checks) // per_day)
+
+        def on_day(day: datetime.date) -> None:
+            jobs._update(  # noqa: SLF001
+                day=day.isoformat(), session=min(replay.i // per_day + 1, sessions), sessions=sessions,
+                done=sum(r.i for _c, r in replays), total=total, unit="checks",
+            )
+
+        replay.on_day = on_day
+
     for _ in range(MAX_ROUNDS):
         waiting: list[tuple[backtest_combos.Combo, CondorReplay]] = []
         needs: dict[Need, None] = {}
@@ -721,7 +738,11 @@ def _drive(
             if jobs._cancel.is_set():  # noqa: SLF001
                 raise RuntimeError("Stopped at your request.")
             jobs._memory_check("mid-replay")  # noqa: SLF001
-            jobs._update(phase="replaying", step=n, steps=len(pending), day=None)  # noqa: SLF001
+            jobs._update(  # noqa: SLF001
+                phase="replaying", step=n, steps=len(pending), day=None, session=None,
+                done=sum(r.i for _c, r in replays), total=total, unit="checks",
+            )
+            watch(replay)
             got = replay.run()
             if got:
                 waiting.append((combo, replay))

@@ -429,6 +429,7 @@ def run_backtest(
     cancelled=lambda: False,
     halted=lambda: None,
     log=lambda line: None,
+    progress=lambda done, total: None,
 ) -> dict[str, Any]:
     """Replay, score and zip. Returns {"summary": {series_id: summary}, "zip_path": ...}; raises
     `Cancelled` when asked to stop, and `StorageFull` when `halted()` gives a reason -- the data
@@ -469,7 +470,9 @@ def run_backtest(
                 breakevens[index] = (be, bps)
                 if note:
                     notes.append(note)
-            for key in all_keys():
+            keys = all_keys()
+            for n, key in enumerate(keys):
+                progress(n, len(keys))
                 if cancelled():
                     raise Cancelled()
                 reason = halted()
@@ -567,6 +570,7 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
                              "ICICI calls is spent, so only history already stored was replayed. "
                              "Raise it in Settings \u2192 API Usage \u2192 Backtest call budget.")
             else:
+                jobs._update(phase="fetching")  # noqa: SLF001
                 jobs._log(f"Fetching missing futures bars, {start_d} to {end_d}…")  # noqa: SLF001
                 with jobs._broker_scope(user_id):  # noqa: SLF001
                     fetcher = jobs._fetcher(user_id)  # noqa: SLF001
@@ -581,10 +585,12 @@ def start(user_id: str, period: str, from_date: Optional[datetime.date] = None,
                         store.add_calls(now.date(), calls)
             for text in notes:
                 jobs._log(text)  # noqa: SLF001
+            jobs._update(phase="replaying")  # noqa: SLF001
             result = run_backtest(
                 start_d, end_d, run_id=run_id, period=period, holidays=hol, notes=notes, calls=calls,
                 cancelled=jobs._cancel.is_set, halted=storage_usage.halt_reason,
                 log=jobs._log,  # noqa: SLF001
+                progress=lambda n, total: jobs._progress(n, total, "series"),  # noqa: SLF001
             )
             headline = _headline(result["summary"])
             update_run(run_id, status="completed", finished_at=now_ist().isoformat(timespec="seconds"),

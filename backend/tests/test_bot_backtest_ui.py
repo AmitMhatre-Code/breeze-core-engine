@@ -596,22 +596,26 @@ class TestOneClickBacktest:
         _cache_trending(env["cache"])
         monkeypatch.setattr(jobs.cfg, "ICICI_BROKER_MODE", "mock")
         monkeypatch.setattr(jobs, "now_ist", lambda: _at(2026, 3, 9, 18, 0))
-        seen: list[tuple[object, object, object]] = []
+        seen: list[dict[str, object]] = []
         on_day = jobs._on_day
 
-        def watch(day):
-            on_day(day)
-            state = jobs.state()
-            seen.append((state["phase"], state["step"], state["day"]))
+        def watch(day, n=None, of=None):
+            on_day(day, n, of)
+            seen.append(dict(jobs.state()))
 
         monkeypatch.setattr(jobs, "_on_day", watch)
         jobs.start_bot_backtest("u1", "momentum", "last_day")
         state = _wait_for_job()
         assert state["status"] == "completed", state
 
-        assert seen and all(phase == "replaying" and day == "2026-03-09" for phase, _s, day in seen)
-        assert [step for _p, step, _d in seen] == list(range(1, 28))
+        assert seen and all(s["phase"] == "replaying" and s["day"] == "2026-03-09" for s in seen)
+        assert [s["step"] for s in seen] == list(range(1, 28))
+        # One session a setting: the bar stands at the settings already replayed, out of 27.
+        assert all(s["session"] == 1 and s["sessions"] == 1 for s in seen)
+        assert [(s["done"], s["total"], s["unit"]) for s in seen] == [(k, 27, "sessions") for k in range(27)]
         assert state["steps"] == 27 and state["phase"] == "recording"
+        # Recording brings no count of its own, so the replay's is not left standing.
+        assert state["done"] is None and state["total"] is None
         assert state["elapsed_seconds"] >= state["quiet_seconds"] >= 0
 
     def test_a_trail_belongs_to_its_user_and_rejects_traversal(self, env, audit):

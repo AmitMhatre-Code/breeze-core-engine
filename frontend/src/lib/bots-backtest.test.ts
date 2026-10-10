@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   describePhase,
+  formatShare,
+  formatTimeLeft,
+  progressCount,
+  progressShare,
   equityCurve,
   exitLabel,
   formatDuration,
@@ -70,6 +74,34 @@ describe("bots-backtest", () => {
         "Replaying · loading prices and signal readings",
       );
       expect(describePhase({ phase: undefined })).toBe("Starting");
+    });
+
+    it("counts the session while replaying, and the phase's own unit otherwise", () => {
+      const replay = { phase: "replaying" as const, session: 14, sessions: 21, done: 300, total: 567, unit: "sessions" };
+      expect(progressCount(replay)).toBe("Session 14 of 21");
+      expect(progressShare(replay)).toBeCloseTo(300 / 567);
+      expect(progressCount({ phase: "fetching", done: 1200, total: 1580, unit: "NSE sessions" })).toBe(
+        "1,200 of 1,580 NSE sessions",
+      );
+      expect(describePhase({ phase: "replaying", unit: "series" })).toBe("Replaying every signal series");
+      expect(describePhase({ phase: "fetching", unit: "NSE sessions" })).toBe("Downloading NSE daily prices");
+      expect(describePhase({ phase: "fetching", unit: "option windows" })).toBe("Fetching missing history from ICICI");
+    });
+
+    it("draws no share at all while the size of the work is unknown", () => {
+      expect(progressShare({ phase: "sizing" })).toBeNull();
+      expect(progressShare({ phase: "fetching", done: 3, total: null })).toBeNull();
+      expect(progressCount({ phase: "recording" })).toBeNull();
+      expect(formatShare(0.004)).toBe("<1%");
+      expect(formatShare(0)).toBe("0%");
+      expect(formatShare(0.419)).toBe("41%");
+    });
+
+    it("quotes time left coarsely, as the estimate it is", () => {
+      expect(formatTimeLeft(45)).toBe("under a minute left");
+      expect(formatTimeLeft(200)).toBe("about 4 min left");
+      expect(formatTimeLeft(3_600)).toBe("about 1h left");
+      expect(formatTimeLeft(5_400)).toBe("about 1h 30m left");
     });
 
     it("formats durations the way a person reads them", () => {

@@ -5,8 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/components/ui/Modal";
 import { AsyncLabelSpan } from "@/components/ui/AsyncLabelSpan";
 import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
+import { BacktestProgressBar } from "@/components/bots/BacktestProgressBar";
 import {
   BACKTEST_JOB_KEY as JOB_KEY,
+  describePhase,
   BACKTEST_SLUG,
   DAILY_HISTORY_START,
   cancelBacktestJob,
@@ -292,6 +294,12 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
                 {ours.from_date === ours.to_date ? ours.from_date : `${ours.from_date} → ${ours.to_date}`}
               </span>
             </div>
+            {running ? (
+              <>
+                <p className="text-muted">{describePhase(ours)}</p>
+                <BacktestProgressBar job={ours} />
+              </>
+            ) : null}
             {running && lastLine ? <p className="font-mono text-hint text-muted">{lastLine}</p> : null}
             {!running && (ours.message || ours.error) ? (
               <p className={ours.error ? "text-down" : "text-foreground"}>{ours.error ?? ours.message}</p>

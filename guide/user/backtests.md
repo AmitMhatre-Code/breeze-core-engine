@@ -42,7 +42,8 @@ Backtests use only data ICICI serves as history: one-minute bars of price, volum
 ## Running, watching and stopping
 
 - **One backtest at a time.** A signal backtest and a bot backtest never run together; the button tells you if another is running.
-- **It keeps running if you close the dialog** or leave the page. For bots, open **Show live progress** on its Activity row to see how long it has run, ICICI calls used and memory. **Stop backtest** (bots) or **Stop** (signals) ends it early.
+- **A progress bar shows how far it has got**, in the dialog, on the Activity row and on the Signals page. While replaying it reads, for example, **Session 14 of 21** with the share of the whole run done (every setting it compares included). While fetching it counts the batch going out, such as **12 of 40 option windows**. Once it has a measured pace it adds an estimate such as **about 4 min left**. The estimate is based on the pace so far, so it can move. When the size of a step is not known in advance, such as pricing margin, loading prices or writing results, the bar pulses instead of filling. A Dynamic Iron Condor run counts its scheduled checks across all the combinations, so its bar keeps its place through any fetch rounds between them.
+- **It keeps running if you close the dialog** or leave the page. For bots, open **Show live progress** on its Activity row to see the bar, how long it has run, ICICI calls used and memory. **Stop backtest** (bots) or **Stop** (signals) ends it early.
 - **It stops itself before running out of memory** or disk. If storage passes your threshold, backtests that download data are refused until you free space (see [Storage](settings-diagnostics.md#storage)).
 
 ## Reading the results

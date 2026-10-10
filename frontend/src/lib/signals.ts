@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "@/lib/api-client";
-import type { BacktestPeriod } from "@/lib/bots-backtest";
+import type { BacktestJobProgress, BacktestPeriod } from "@/lib/bots-backtest";
 
 /** The Signals page (docs/signals-streamline-plan.md sections 4–6). Every signal is a cell of a
  *  fixed grid — mechanism × version × duration × index — and a pure function of the one-minute
@@ -187,7 +187,7 @@ export type SignalJob = {
   running?: boolean;
   from_date?: string;
   to_date?: string;
-};
+} & BacktestJobProgress;
 
 export type SignalsOverview = {
   mechanisms: MechanismSection[];

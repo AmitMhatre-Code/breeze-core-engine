@@ -263,7 +263,7 @@ The **Activity** section at the bottom of the page lists every scan, order and s
 | Expanded run | For the Long Scalper, Intraday Iron Fly and CAS Bingo: each cycle's **Contract**, **Lots**, **Gross** P&L, **Friction** (costs) and **Exit**. A CAS Bingo trade sits under the run that entered it, so a later "already entered today" run expands to nothing. For a Dynamic Iron Condor campaign: its campaign card (see [Dynamic Iron Condor](#dynamic-iron-condor)). |
 | Download | **Download full-day audit trail** for a scalper or CAS Bingo run, or **Download backtest results (.zip)** for a backtest. |
 
-Backtests appear in Activity too, marked **Backtest**. While one runs, **Show live progress** displays how long it has run, the last update, ICICI calls used and memory, with **Stop backtest**.
+Backtests appear in Activity too, marked **Backtest**. While one runs, **Show live progress** displays a progress bar (see [Backtests](backtests.md)), how long it has run, the last update, ICICI calls used and memory, with **Stop backtest**.
 
 ## Backtesting a bot
 

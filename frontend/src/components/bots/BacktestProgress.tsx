@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BacktestProgressBar } from "@/components/bots/BacktestProgressBar";
 import {
   BACKTEST_JOB_KEY,
   cancelBacktestJob,
@@ -93,6 +94,8 @@ export function BacktestProgress({ runId }: { runId: string }) {
           {stopping ? "Stopping…" : "Stop backtest"}
         </button>
       </div>
+
+      <BacktestProgressBar job={job} sinceSeconds={since} />
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px] sm:grid-cols-4">
         <div>

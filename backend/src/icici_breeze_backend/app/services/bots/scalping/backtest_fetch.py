@@ -152,6 +152,9 @@ class Fetcher:
         # Asked before every call; a reason means stop now. The market-hours rule is checked
         # here too, so a run started at 08:40 stops itself at 09:00 rather than running on.
         self.stop = stop
+        #: Told `(done, total, unit)` as a batch of windows goes out, and `(None, None, None)`
+        #: once it is through, so a job's progress bar counts what is countable and no more.
+        self.on_progress: Optional[Callable[[Optional[int], Optional[int], Optional[str]], None]] = None
         self.calls = 0
         self._clock_warned = False
 
@@ -203,6 +206,10 @@ class Fetcher:
                 "truncated. Run `probe`, or re-run `fetch` to fill the gap."
             )
         return rows, error
+
+    def _progress(self, done: Optional[int], total: Optional[int], unit: Optional[str]) -> None:
+        if self.on_progress is not None:
+            self.on_progress(done, total, unit)
 
     def max_bars(self) -> int:
         raw = store.get_meta(META_MAX_BARS, path=self.path)
@@ -256,7 +263,9 @@ class Fetcher:
         ]
         total = 0
         contract = lambda d: regime.near_month_futures_expiry(d, stock_code, self.holidays)  # noqa: E731
-        for chunk in self._chunks(wanted, contract):
+        chunks = list(self._chunks(wanted, contract))
+        for n, chunk in enumerate(chunks):
+            self._progress(n, len(chunks), f"{stock_code} futures windows")
             expiry = contract(chunk[0])
             frm, to = _day_window(chunk[0], chunk[-1])
             rows, error = self.call(
@@ -276,6 +285,7 @@ class Fetcher:
             )
             total += stored
             self.log(f"  futures {chunk[0]} .. {chunk[-1]} ({expiry:%d-%b-%Y}): {stored} bars")
+        self._progress(None, None, None)
         return total
 
     def fetch_spot(self, stock_code: str, start: datetime.date, end: datetime.date) -> int:
@@ -287,7 +297,9 @@ class Fetcher:
             if counts.get(d, 0) < store.COMPLETE_DAY_BARS
         ]
         total = 0
-        for chunk in self._chunks(wanted, lambda d: None):
+        chunks = list(self._chunks(wanted, lambda d: None))
+        for n, chunk in enumerate(chunks):
+            self._progress(n, len(chunks), f"{stock_code} index windows")
             frm, to = _day_window(chunk[0], chunk[-1])
             rows, error = self.call(
                 interval=store.INTERVAL_MINUTE,
@@ -303,6 +315,7 @@ class Fetcher:
             stored = store.store_candles(rows, stock_code=stock_code, table="spot_candles", path=self.path)
             total += stored
             self.log(f"  {stock_code} index {chunk[0]} .. {chunk[-1]}: {stored} bars")
+        self._progress(None, None, None)
         return total
 
     def fetch_vix(self, start: datetime.date, end: datetime.date) -> int:
@@ -355,7 +368,9 @@ class Fetcher:
 
     def fetch_needs(self, needs: Iterable[Need]) -> dict[str, int]:
         done = rows = errors = empty = 0
-        for need in needs:
+        needs = list(needs)
+        for n, need in enumerate(needs):
+            self._progress(n, len(needs), "option windows")
             stored, error = self.fetch_need(need)
             label = f"  {need.key.label()} {need.interval} {need.start:%Y-%m-%d %H:%M}"
             if error:
@@ -366,6 +381,7 @@ class Fetcher:
             rows += stored
             empty += 0 if stored else 1
             self.log(f"{label}: {stored} bars")
+        self._progress(None, None, None)
         return {"fetched": done, "bars": rows, "empty": empty, "errors": errors}
 
     # -- probe ---------------------------------------------------------------------------

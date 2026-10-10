@@ -285,6 +285,16 @@ def test_futures_fetch_passes_an_expiry_and_rolls_contracts(cache):
     assert all(c["product_type"] == "futures" and c["exchange_code"] == "NFO" for c in sdk.calls)
 
 
+def test_a_fetch_batch_counts_its_windows_then_clears_the_count(cache):
+    """The backtest's progress bar: n of the batch's windows as each goes out, then no count at
+    all, so a finished batch is never left reading as the job's progress."""
+    seen = []
+    fetcher, _ = _fetcher(FakeSdk(), cache)
+    fetcher.on_progress = lambda done, total, unit: seen.append((done, total, unit))
+    fetcher.fetch_futures("NIFTY", D(2026, 9, 28), D(2026, 10, 1))
+    assert seen == [(0, 2, "NIFTY futures windows"), (1, 2, "NIFTY futures windows"), (None, None, None)]
+
+
 def test_complete_days_are_not_fetched_again(cache):
     full = [
         {"datetime": (DT(2026, 9, 28, 9, 15) + m * MIN).strftime(_TS), "close": 1, "volume": 1}

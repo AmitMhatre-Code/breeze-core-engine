@@ -89,7 +89,7 @@ The grid is fixed. You cannot adjust a signal, because a signal that can be twea
 |---|---|
 | **Trade size for costs** | How many lots you typically trade. A call only counts as useful if the index moved far enough to pay for one round trip. Most of that cost is a flat fee per order, so a bigger trade clears a smaller move. Takes effect on the next backtest. |
 | **Period** | **Last trading day**, **Last trading week**, **Last trading month** or **Custom range**. |
-| **Run backtest** | Replays every reading, every version, over the period. While it runs, a progress line shows what it is doing, and **Stop** ends it early. Only one backtest (signal or bot) runs at a time. |
+| **Run backtest** | Replays every reading, every version, over the period. While it runs, a progress bar counts the series replayed (for example **7 of 21 series**) with an estimate of the time left, and **Stop** ends it early. Only one backtest (signal or bot) runs at a time. |
 
 History that is not already stored on your server is downloaded from ICICI, **outside market hours only**. See [Backtests](backtests.md).
 
