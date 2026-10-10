@@ -9,6 +9,8 @@ import type { BacktestPeriod } from "@/lib/bots-backtest";
 import {
   backtestSentence,
   horizonDetail,
+  measuredFromFiringPrice,
+  volatilityDetail,
   DURATIONS,
   INDEX_LABEL,
   reasonText,
@@ -344,6 +346,7 @@ function MechanismCard({
                   }
                   const tone = verdictTone(s.last_backtest?.best);
                   const detail = horizonDetail(s.last_backtest ?? null);
+                  const movement = volatilityDetail(s.last_backtest ?? null);
                   return (
                     <td key={i} className="py-2 pr-3">
                       <ReadingChip reading={s.reading} />
@@ -356,6 +359,9 @@ function MechanismCard({
                       </p>
                       {detail ? (
                         <p className="mt-0.5 max-w-xs leading-snug text-hint text-faint">{detail}</p>
+                      ) : null}
+                      {movement ? (
+                        <p className="mt-0.5 max-w-xs leading-snug text-hint text-faint">{movement}</p>
                       ) : null}
                     </td>
                   );
@@ -371,7 +377,18 @@ function MechanismCard({
           series is scored 1, 5, 15 and 30 minutes after a call, both with the signal and against it, and the
           best of those is what is shown &mdash; a call need not say most about the length of window that made
           it. &ldquo;After costs&rdquo; means after one round trip of charges and the bid-ask spread, at the size
-          set above.
+          set above.{" "}
+          {m.series.some((s) => measuredFromFiringPrice(s.last_backtest)) ? (
+            <>
+              That run measured each call from the price that fired it, which no one can trade at; run a new
+              backtest to measure from the first trade after it.
+            </>
+          ) : (
+            <>
+              Each call is measured from the first trade after it, because the price that fired it is one no one
+              can trade at.
+            </>
+          )}
         </p>
       ) : null}
     </section>

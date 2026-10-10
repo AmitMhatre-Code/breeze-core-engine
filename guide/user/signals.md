@@ -106,12 +106,13 @@ History that is not already stored on your server is downloaded from ICICI, **ou
 
 The backtest sentence has one of a few shapes. For example:
 
-- **240 calls over 21 sessions. Best was trading against it, held 15 min rather than 5: +0.40 bps a call after costs, which stands out against the day-to-day swings.** The best way to use this reading paid for itself consistently.
+- **240 calls over 21 sessions. Best was trading against it, held 15 min rather than 5 (the best of 8 ways tried): +0.40 bps a call after costs, which stands out against the day-to-day swings and held up in the last third of the period.** The best way to use this reading paid for itself consistently.
 - **… The best it managed was … — but that is inside the normal day-to-day swings, so it may be luck.** Positive, but not consistent enough to rely on.
+- **… — but it did not pay in the last third of the period, so it may have been the period rather than the signal.** Positive overall, but not at the end.
 - **…; nothing paid for its costs, either with the signal or against it.** No way of trading this reading covered its costs.
 - **…; too few sessions to say anything yet.** Fewer than 20 sessions of data.
 
-The second line in each cell breaks the best horizon down direction by direction (**with** and **against**) and shows the cost bar in bps at your trade size. A line under the table says which backtest run the figures come from.
+The second line in each cell breaks the best horizon down direction by direction (**with** and **against**) and shows the cost bar in bps at your trade size. A third line, **Movement**, says whether calls were followed by bigger or smaller moves than usual for that time of day, whichever way. A line under the table says which backtest run the figures come from.
 
 ### Activity
 
@@ -140,8 +141,12 @@ A signal backtest asks one question of every call: **did the index then move the
 
 - **Both directions are scored.** A signal that is reliably wrong carries as much information as one that is reliably right; you would simply trade against it. Every reading is scored as **follow** (with the call) and **fade** (against it).
 - **Every horizon is scored.** Each call is checked 1, 5, 15 and 30 minutes later, not only at the end of its own duration.
+- **From the first trade after the call.** A call is known only once its minute has closed, so the price that fired it is one no one can trade at. Each call is measured from the first trade after it. A call with no trade in the next five minutes is not scored. The price that fires a call is often the top or bottom of a spike, and the next trade often lands back across the bid-ask spread; measured from the firing price, that bounce would look like a profit from trading against the call. The second line in each cell shows what the best result would have read from the firing price, so you can see how much of it was the bounce.
 - **Money, not hit rate.** The headline is the average move in the traded direction **after costs**, in basis points (1 bps = 0.01%). A 60% hit rate with small wins and big losses still loses money.
 - **The cost bar reflects your size** (the **Trade size for costs** setting) and includes the bid-ask spread.
-- **Consistency across days, not one lucky week.** A reading only "stands out" if its net result is positive, consistent from day to day, and based on at least 20 sessions.
+- **Consistency across days, not one lucky week.** A reading only "stands out" if its net result is positive, at least three times its own day-to-day scatter, and based on at least 20 sessions.
+- **It must hold up at the end.** Each backtest also scores the last third of its period on its own, and a result only stands out if it paid there too. A result made in the first two months and gone in the third was the period, not the signal.
+- **Picked from eight.** Each reading is scored at four horizons in two directions, and the best of those eight is shown, so the page says so. Across a whole run that is about 170 comparisons. That is why the bar is three times the scatter, not the usual two: at two, several would stand out by luck alone.
+- **Movement, whichever way.** A reading can say nothing about direction yet still forecast how far the index will move. So each backtest also measures how big the move was 5, 15 and 30 minutes after a call, against the usual move from that time of day. "Bigger moves" or "smaller moves" is shown only when it clears the same bar (three times its scatter, and the last third agreeing). A seller of options cares about this more than about direction.
 
 Bots that trade a direction have a **trade against the signal** switch in their settings, which fades the call instead of following it. See [Bots](bots.md).

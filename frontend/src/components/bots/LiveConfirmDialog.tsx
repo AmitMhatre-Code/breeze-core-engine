@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { BacktestLossConfirm } from "@/components/bots/BacktestLossConfirm";
 import { Modal } from "@/components/ui/Modal";
+import { lossConfirmed } from "@/lib/backtest-loss";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import type { LiveEligibility } from "@/lib/use-bots";
 
@@ -20,9 +22,10 @@ import type { LiveEligibility } from "@/lib/use-bots";
  *     day was any good. That judgement is the user's, and they can only make it with the
  *     numbers in front of them, at the moment they are deciding.
  *
- *  Deliberately not a typed phrase or a checkbox. The consequence is real, but so is the
- *  fact that someone running these bots does this repeatedly; "type LIVE to continue" would
- *  be theatre by the third time and would train the habit of clicking through.
+ *  Not a typed phrase on every confirmation: someone running these bots does this repeatedly,
+ *  and "type LIVE to continue" would be theatre by the third time. The one exception is a
+ *  backtest of these exact settings that lost money (#76): then the loss must be typed. It is
+ *  rare by construction, so it stays a deliberate act -- and it warns, never refuses.
  */
 export function LiveConfirmDialog({
   open,
@@ -52,6 +55,15 @@ export function LiveConfirmDialog({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const days = evidence?.sessions ?? [];
   const backtest = evidence?.backtest ?? null;
+  const [typed, setTyped] = useState("");
+  // Every opening starts empty: a loss typed once is not consent for the next time.
+  // Reset while rendering, when `open` changes (React's pattern for state tied to a prop).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setTyped("");
+  }
+  const confirmed = lossConfirmed(backtest?.net_pnl, typed);
 
   return (
     <Modal
@@ -194,6 +206,15 @@ export function LiveConfirmDialog({
           )}
         </div>
 
+        <BacktestLossConfirm
+          netPnl={backtest?.net_pnl}
+          fromDate={backtest?.from_date}
+          toDate={backtest?.to_date}
+          value={typed}
+          onChange={setTyped}
+          disabled={pending}
+        />
+
         {error && <p className="text-hint text-down">{error}</p>}
       </div>
 
@@ -209,7 +230,7 @@ export function LiveConfirmDialog({
         </button>
         <button
           type="button"
-          disabled={pending}
+          disabled={pending || !confirmed}
           onClick={onConfirm}
           className="inline-flex items-center justify-center rounded-lg bg-down-btn px-4 py-2.5 text-sm font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:opacity-50"
         >

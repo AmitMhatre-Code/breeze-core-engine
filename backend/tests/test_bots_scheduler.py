@@ -472,3 +472,57 @@ def test_the_sweep_reaps_hung_runs(db, monkeypatch):
         conn.commit()
     scheduler.tick(FakeProc())
     assert repo.list_runs("u1")[0].reason_code == ReasonCode.INTERRUPTED
+
+
+# --- Bot 1's firing day ----------------------------------------------------------------
+
+
+class _ExpiryProc(FakeProc):
+    """An NFO universe of one stock with the given monthly expiries (ISO)."""
+
+    def __init__(self, expiries):
+        super().__init__()
+        self._expiries = expiries
+
+    def fetch_stock_codes(self, exchange_code=cfg.NFO):
+        return [{"expiry_dates": list(self._expiries)}]
+
+
+_OCT, _NOV, _DEC = datetime.date(2026, 10, 27), datetime.date(2026, 11, 24), datetime.date(2026, 12, 29)
+
+
+def _on(monkeypatch, day):
+    from icici_breeze_backend.app.services.bots import holdings_writer
+
+    monkeypatch.setattr(scheduler, "now_ist", lambda: datetime.datetime.combine(day, datetime.time(9, 20)))
+    monkeypatch.setattr(holdings_writer, "today_ist_date", lambda: day)
+
+
+def _firing(preference, days_before=3):
+    from icici_breeze_backend.app.domain.bots import HoldingsWriterConfig
+
+    proc = _ExpiryProc([d.isoformat() for d in (_OCT, _NOV, _DEC)])
+    config = HoldingsWriterConfig(expiry_preference=preference, fire_days_before_expiry=days_before)
+    return scheduler._is_holdings_firing_day(proc, "u1", config)
+
+
+@pytest.mark.parametrize("preference", ["current", "next"])
+def test_both_expiry_choices_fire_n_trading_days_before_this_months_expiry(monkeypatch, preference):
+    """"Next month" writes next month's options on the same day "Current month" writes this
+    month's. It used to count back from next month's own expiry, a day on which this month's
+    contract has already expired and "next" has moved on a month -- so it never fired."""
+    from icici_breeze_backend.app.services.bots import holdings_writer
+
+    _on(monkeypatch, holdings_writer.firing_date(_OCT, 3))
+    assert _firing(preference) is True
+
+
+@pytest.mark.parametrize("preference", ["current", "next"])
+def test_no_other_day_is_a_firing_day(monkeypatch, preference):
+    from icici_breeze_backend.app.services.bots import holdings_writer
+
+    fire = holdings_writer.firing_date(_OCT, 3)
+    _on(monkeypatch, fire - datetime.timedelta(days=1))
+    assert _firing(preference) is False
+    _on(monkeypatch, _OCT)
+    assert _firing(preference) is False

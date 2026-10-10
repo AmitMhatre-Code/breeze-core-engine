@@ -102,6 +102,26 @@ def normalize_config(bot_type: str, raw: Any) -> dict[str, Any]:
         return model().model_dump()
 
 
+def new_bot_config(bot_type: str) -> dict[str, Any]:
+    """The config a bot is created with.
+
+    The model defaults are what a *stored* config without a field means, so a setting added
+    later defaults to the old behaviour there. Where a new bot should start differently, it is
+    set here and only here (docs/premium-gate-plan.md): the premium gate on, and Bots 1 and 2's
+    strikes set by implied move."""
+    config = normalize_config(bot_type, {})
+    if bot_type in (BOT_EXPIRY_INDEX_WRITER, BOT_MOMENTUM_LONG_SCALPER, BOT_IRON_FLY_SCALPER):
+        config["premium_gate"]["enabled"] = True
+    if bot_type == BOT_EXPIRY_INDEX_WRITER:
+        for leg in config["indices"].values():
+            leg["distance_basis"] = "implied_move"
+    if bot_type == BOT_HOLDINGS_WRITER:
+        config["distance_basis"] = "implied_move"
+    if bot_type == BOT_DYNAMIC_CONDOR:
+        config["campaign"]["premium_gate"]["enabled"] = True
+    return config
+
+
 def _row_to_bot(row: sqlite3.Row) -> BotRecord:
     d = dict(row)
     return BotRecord(
@@ -151,7 +171,7 @@ def get_or_create_bot(user_id: str, bot_type: str) -> BotRecord:
                 user_id,
                 bot_type,
                 default_priority,
-                json.dumps(normalize_config(bot_type, {})),
+                json.dumps(new_bot_config(bot_type)),
             ),
         )
         conn.commit()
@@ -1400,6 +1420,42 @@ def issue_approval_token(
     return token
 
 
+def issue_approval_tokens(
+    *,
+    user_id: str,
+    bot_type: str,
+    proposal_id: str,
+    chat_id: str,
+    ttl_minutes: int,
+    choices: list[str],
+) -> dict[str, str]:
+    """One token per alternative of one proposal, minted together: {choice: token}.
+
+    The portal routes only approve/reject taps, so a message offering two trades gives each its
+    own token (docs/bot2-hedged-shapes-plan.md). Earlier live tokens are burned first, as
+    `issue_approval_token` does; using one of these burns its siblings (`consume_approval_token`)."""
+    out: dict[str, str] = {}
+    for n, choice in enumerate(choices):
+        if n == 0:
+            token = issue_approval_token(user_id=user_id, bot_type=bot_type, proposal_id=proposal_id,
+                                         chat_id=chat_id, ttl_minutes=ttl_minutes)
+        else:
+            token = secrets.token_urlsafe(24)
+            expires = (now_ist() + datetime.timedelta(minutes=max(1, int(ttl_minutes)))).strftime("%Y-%m-%d %H:%M:%S")
+            with _connect() as conn:
+                conn.execute(
+                    "INSERT INTO bot_approval_tokens (token, user_id, bot_type, proposal_id, chat_id, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (token, user_id, bot_type, proposal_id, str(chat_id), expires),
+                )
+                conn.commit()
+        with _connect() as conn:
+            conn.execute("UPDATE bot_approval_tokens SET choice = ? WHERE token = ?", (choice, token))
+            conn.commit()
+        out[choice] = token
+    return out
+
+
 def consume_approval_token(token: str) -> Optional[dict[str, Any]]:
     """Burn `token` and return what it authorises, or None if it is no longer good.
 
@@ -1420,10 +1476,17 @@ def consume_approval_token(token: str) -> Optional[dict[str, Any]]:
             conn.commit()
             return None
         row = conn.execute(
-            "SELECT user_id, bot_type, proposal_id, chat_id FROM bot_approval_tokens "
+            "SELECT user_id, bot_type, proposal_id, chat_id, choice FROM bot_approval_tokens "
             "WHERE token = ?",
             (token,),
         ).fetchone()
+        if row is not None:
+            # Its siblings (the other alternatives of the same message) die with it: one tap
+            # places one trade, never two.
+            conn.execute(
+                "UPDATE bot_approval_tokens SET consumed_at = ? WHERE proposal_id = ? AND consumed_at IS NULL",
+                (ist_timestamp(), row["proposal_id"]),
+            )
         conn.commit()
     return dict(row) if row is not None else None
 
@@ -1479,13 +1542,21 @@ def open_approval_messages(
 
 
 def open_approval_message(token: str) -> Optional[dict[str, Any]]:
-    """The still-open message behind one token, whoever it belongs to."""
+    """The still-open message behind one token, whoever it belongs to. A message offering two
+    alternatives is recorded on its first token; a sibling token finds it through the proposal."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT token, chat_id, message_id, message_text FROM bot_approval_tokens "
             "WHERE token = ? AND message_id IS NOT NULL AND message_closed_at IS NULL",
             (token,),
         ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT s.token, s.chat_id, s.message_id, s.message_text FROM bot_approval_tokens t "
+                "JOIN bot_approval_tokens s ON s.proposal_id = t.proposal_id AND s.token != t.token "
+                "WHERE t.token = ? AND s.message_id IS NOT NULL AND s.message_closed_at IS NULL",
+                (token,),
+            ).fetchone()
     return dict(row) if row is not None else None
 
 

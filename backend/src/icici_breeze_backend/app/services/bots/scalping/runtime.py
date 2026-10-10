@@ -237,6 +237,7 @@ def build_snapshot(
         except Exception:  # noqa: BLE001 -- never let a guard lookup stop the gate stack
             _logger.exception("scalping[%s]: PB/SL conflict check failed", bot_type)
 
+    signal = _entry_signal(bot_type, config)
     return Snapshot(
         now_ist=now,
         trading_allowed=_trading_allowed(),
@@ -254,10 +255,10 @@ def build_snapshot(
         exit_at_window_end=_EXIT_AT_WINDOW_END.get(bot_type, False),
         unrealized_pnl=float(unrealized),
         entries_suspended=bool(entries_suspended),
-        signal=_entry_signal(bot_type, config),
+        signal=signal,
         entry_hold=_entry_hold(
             bot_type, config, now, totals, has_open_position=bool(open_cycles),
-            proc=proc, user_id=user_id,
+            proc=proc, user_id=user_id, signal=signal,
         ),
     )
 
@@ -294,11 +295,13 @@ def _entry_hold(
     has_open_position: bool,
     proc: Any = None,
     user_id: str = "",
+    signal: Any = None,
 ) -> Optional[tuple[str, str]]:
     """A bot-specific hold on a fresh entry, as a verdict input, or None.
 
-    Bot 3: the fresh-signal rule. Bot 4: the re-entry gate (cooldown, then a settled range),
-    then its entry filter (#38).
+    Bot 3: the fresh-signal rule, then the premium gate once a call has fired. Bot 4: the
+    re-entry gate (cooldown, then a settled range), then its entry filter (#38), then the premium
+    gate (docs/premium-gate-plan.md).
 
     Evaluated here for the reason `_entry_signal` is: checked only inside the executor, a held
     pass was published as `enter / gates_clear` and the wait after every stop-loss looked like
@@ -309,7 +312,10 @@ def _entry_hold(
     if has_open_position:
         return None
     if bot_type == BOT_MOMENTUM_LONG_SCALPER:
-        return _fresh_signal_hold(config, totals)
+        held = _fresh_signal_hold(config, totals)
+        if held is not None or signal is None or not getattr(signal, "fired", False):
+            return held
+        return _premium_hold(bot_type, config, now, proc, user_id)
     if bot_type != BOT_IRON_FLY_SCALPER:
         return None
     try:
@@ -324,7 +330,64 @@ def _entry_hold(
         return (ReasonCode.REENTRY_GATE_CLOSED, "Re-entry check failed; holding off.")
     if held is not None:
         return held
-    return _fly_entry_filter(config, now, proc, user_id)
+    held = _fly_entry_filter(config, now, proc, user_id)
+    if held is not None:
+        return held
+    return _premium_hold(bot_type, config, now, proc, user_id)
+
+
+# How long one premium reading serves the scalpers' passes. The forecast is fixed for the day;
+# only the ATM pair moves, and a few seconds of it does not change a ratio a threshold reads.
+_PREMIUM_TTL_SECONDS = 30.0
+_premium_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _scalper_premium_reading(bot_type: str, proc: Any, user_id: str, now: Any) -> Any:
+    """The premium reading on the NIFTY expiry the scalpers trade, cached briefly."""
+    from icici_breeze_backend.app.services.premium_gate import live as premium_live
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    hit = _premium_cache.get(bot_type)
+    if hit is not None and time.time() - hit[0] < _PREMIUM_TTL_SECONDS:
+        return hit[1]
+    expiry = momentum_bot.nearest_expiry(proc)
+    spot = momentum_bot.live_index_spot()
+    if not expiry:
+        result = premium.Reading(None, None, None, premium.REASON_NO_ATM_QUOTES)
+    elif spot is None:
+        result = premium.Reading(None, None, None, premium.REASON_NO_SPOT)
+    else:
+        import datetime as _dt
+
+        result, _ = premium_live.live_reading(
+            momentum_bot.INDEX_STOCK_CODE,
+            _dt.datetime.strptime(expiry, "%d-%b-%Y").date(),
+            spot,
+            momentum_bot._chain_rows(proc, user_id, expiry, "call"),  # noqa: SLF001
+            momentum_bot._chain_rows(proc, user_id, expiry, "put"),  # noqa: SLF001
+            now,
+            user_id=user_id,
+        )
+    _premium_cache[bot_type] = (time.time(), result)
+    return result
+
+
+def _premium_hold(bot_type: str, config: Any, now: Any, proc: Any, user_id: str) -> Optional[tuple[str, str]]:
+    """The premium gate (docs/premium-gate-plan.md): the fly sells only rich premium, the Long
+    Scalper buys only cheap. Read only inside a trading window. Fails closed."""
+    gate = getattr(config, "premium_gate", None)
+    if gate is None or not gate.enabled or proc is None:
+        return None
+    try:
+        if in_window(now, config.sessions) is None:
+            return None
+        from icici_breeze_backend.app.services.premium_gate.gate import refusal
+
+        side = "sell" if bot_type == BOT_IRON_FLY_SCALPER else "buy"
+        return refusal(_scalper_premium_reading(bot_type, proc, user_id, now), gate, side)
+    except Exception:  # noqa: BLE001 -- a failed check must not stop the gate stack
+        _logger.exception("scalping[%s]: premium gate failed", bot_type)
+    return (ReasonCode.PREMIUM_UNREADABLE, "Premium gate could not be checked; holding off.")
 
 
 def _fly_entry_filter(config: Any, now: Any, proc: Any, user_id: str) -> Optional[tuple[str, str]]:

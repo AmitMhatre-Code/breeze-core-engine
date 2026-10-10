@@ -35,6 +35,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from icici_breeze_backend.app.domain.bots import MomentumLongScalperConfig, ReasonCode
 from icici_breeze_backend.app.services.bots.charges import ChargesModel
+from icici_breeze_backend.app.services.bots.scalping.decide import Decision
 from icici_breeze_backend.app.services.bots.scalping import backtest_regime as regime
 from icici_breeze_backend.app.services.bots.scalping import ladder as ladder_mod
 from icici_breeze_backend.app.services.bots.scalping.backtest_common import (
@@ -225,6 +226,7 @@ def run_backtest(
     spot_bars: Sequence[HistCandle] = (),
     record_decisions: bool = False,
     on_day: Optional[Callable[[datetime.date], None]] = None,
+    premium: Any = None,
 ) -> BacktestResult:
     """Replay the bot's signal series, gates and ladder over historical futures bars.
 
@@ -264,7 +266,7 @@ def run_backtest(
         expiry = next_expiry(day, weekday_map, holidays)
         _run_day(
             day_bars, day, expiry, sigma, config, charges, spread, pricer, spots, result,
-            readings=readings, record_decisions=record_decisions,
+            readings=readings, record_decisions=record_decisions, premium=premium,
         )
     return result
 
@@ -300,6 +302,26 @@ def call_reversal_time(
     return None
 
 
+def _premium_refusal(
+    config: MomentumLongScalperConfig, premium: Any, pricer: Any, key: OptionKey,
+    now: datetime.datetime, spot: float, sigma: float, expiry: datetime.date,
+) -> Any:
+    """The premium gate's refusal at this minute, `MISSING` when the ATM pair is not cached yet,
+    or None to buy. Both sides are queried before either is judged, so one pass records both."""
+    from icici_breeze_backend.app.services.premium_gate import reading as premium_reading
+    from icici_breeze_backend.app.services.premium_gate.gate import refusal
+    from icici_breeze_backend.app.services.premium_gate.replay import bar_price
+
+    pair = [pricer.bar(OptionKey(INDEX, expiry, key.strike, r), now, spot=spot, sigma=sigma)
+            for r in ("call", "put")]
+    if any(status == MISSING for status, _ in pair):
+        return MISSING
+    reading = (premium.reading(now, expiry, spot, key.strike, bar_price(pair[0]), bar_price(pair[1]))[0]
+               if premium is not None
+               else premium_reading.Reading(None, None, None, premium_reading.REASON_NO_HISTORY))
+    return refusal(reading, config.premium_gate, "buy")
+
+
 def _run_day(
     day_bars: list[HistCandle],
     day: datetime.date,
@@ -314,6 +336,7 @@ def _run_day(
     *,
     readings: dict[datetime.datetime, dict[str, Any]],
     record_decisions: bool = False,
+    premium: Any = None,
 ) -> None:
     _pre_open, day_bars = split_session(day_bars)
     choice = config.signal
@@ -366,6 +389,18 @@ def _run_day(
         right = signal.right or "call"
         spot = spot_at(spots, bar.ts, bar.close)
         key = OptionKey(INDEX, expiry, regime.atm_strike(spot, INDEX), right)
+        if config.premium_gate.enabled:
+            # The live gate once a call has fired: buy only cheap premium. A refusal holds the
+            # entry, so the same call is looked at again next minute, as live.
+            refused = _premium_refusal(config, premium, pricer, key, now, spot, sigma, expiry)
+            if refused == MISSING:
+                rollback(result, saved)
+                del result.decisions[saved_decisions:]
+                result.days_awaiting_data += 1
+                return
+            if refused is not None:
+                tally_idle(result.idle, Decision("idle", *refused))
+                continue
         status, points, resolution = _price_path(
             pricer, key, now, spot, day_bars[i:], spots, sigma
         )

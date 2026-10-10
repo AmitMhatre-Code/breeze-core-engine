@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { backtestSentence, horizonDetail, verdictTone } from "@/lib/signals";
+import { backtestSentence, horizonDetail, measuredFromFiringPrice, verdictTone, volatilityDetail } from "@/lib/signals";
 import type { HorizonScore, SeriesBacktestSummary, SignalDirection } from "@/lib/signals";
 
 function score(over: Partial<HorizonScore> = {}): HorizonScore {
@@ -81,6 +81,27 @@ describe("what the page says about a backtested series", () => {
     expect(text).toContain("0.60 charges, 0.20 spread");
   });
 
+  it("shows what the best cell read from the firing price, beside the next-trade figure", () => {
+    const s = summary();
+    const fadeAtClose = score({ net_bps: 1.14, t: 4.1, stands_out: true, verdict: "pays" });
+    const text = horizonDetail({
+      ...s,
+      entry_basis: "next_trade",
+      at_signal_close: { horizons: { "15": { follow: score(), fade: fadeAtClose } }, best: null },
+    });
+    expect(text).toContain("against +0.59 bps");
+    expect(text).toContain("From the price that fired the call, which no one can trade at, it read +1.14 bps.");
+  });
+
+  it("flags a run that measured from the firing price, and only one with calls", () => {
+    expect(measuredFromFiringPrice(summary())).toBe(true);
+    expect(measuredFromFiringPrice(summary({ entry_basis: "next_trade" }))).toBe(false);
+    expect(measuredFromFiringPrice(summary({ calls: 0 }))).toBe(false);
+    expect(measuredFromFiringPrice(null)).toBe(false);
+    // An older run has nothing to compare against, so its second line is unchanged.
+    expect(horizonDetail(summary())).not.toContain("fired the call");
+  });
+
   it("handles a series that has never been backtested", () => {
     expect(backtestSentence(null, 1)).toBe("Not backtested yet.");
     expect(horizonDetail(null)).toBeNull();
@@ -100,5 +121,33 @@ describe("versions side by side (#72)", () => {
   it("keys availability by mechanism and version", async () => {
     const { signalKey } = await import("@/lib/use-bots");
     expect(signalKey("momentum", 1)).toBe("momentum-v1");
+  });
+});
+
+describe("the stricter bar and the movement score (2026-10-09)", () => {
+  it("names how many ways the best was picked from", () => {
+    expect(backtestSentence(summary({ comparisons: 8 }), 1)).toContain("the best of 8 ways tried");
+  });
+
+  it("says when a result did not hold up in the last third", () => {
+    const s = summary();
+    const best = { ...s.best!, verdict: "unclear" as const, stands_out: false, short_of: "holdout" as const };
+    const text = backtestSentence({ ...s, best, tradeable: false }, 1);
+    expect(text).toContain("did not pay in the last third");
+    expect(text).not.toContain("may be luck");
+  });
+
+  it("reports a movement forecast whichever way it points", () => {
+    const vol = (ratio: number, verdict: "expands" | "calms" | "unclear") => ({
+      calls: 300, days: 60, mean_ratio: ratio, t: 4, holdout_ratio: ratio, verdict,
+    });
+    const text = volatilityDetail(summary({
+      volatility: { "5": vol(1.1, "unclear"), "15": vol(1.42, "expands"), "30": vol(1.2, "expands") },
+    }));
+    expect(text).toContain("over the 15 min after a call the index moved 1.42×");
+    expect(text).toContain("bigger moves");
+    expect(volatilityDetail(summary({ volatility: { "15": vol(1.05, "unclear") } })))
+      .toContain("no clear change");
+    expect(volatilityDetail(summary())).toBeNull();
   });
 });

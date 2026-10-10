@@ -21,6 +21,8 @@ import {
   type Proposal,
   type ProposalLeg,
   type SkippedScrip,
+  type PremiumNote,
+  premiumNotes,
 } from "@/lib/use-bots";
 
 function money(n: number | null | undefined) {
@@ -126,7 +128,10 @@ function LegRow({
   onValidity: (key: string, valid: boolean) => void;
 }) {
   const isPut = leg.right === "put";
-  const shownDistance = edit?.distance_pct ?? distancePct(leg) ?? undefined;
+  // A hedged shape's wing is bought, and follows its short (the wing multiple), so it has no
+  // distance of its own to edit.
+  const isWing = leg.action === "buy";
+  const shownDistance = isWing ? undefined : (edit?.distance_pct ?? distancePct(leg) ?? undefined);
   return (
     <tr className="app-table-row align-top">
       <td className="px-3 py-2">
@@ -139,11 +144,13 @@ function LegRow({
       </td>
       <td className="px-3 py-2 text-body">
         <div className="font-semibold">
+          <span className={isWing ? "text-up" : "text-down"}>{isWing ? "BUY" : "SELL"}</span>{" "}
           {INDEX_LABEL[leg.stock_code] ?? leg.stock_code} {isPut ? "PE" : "CE"}
         </div>
         <div className="font-mono text-micro text-faint">{leg.expiry_display}</div>
         {leg.strategy && (
           <div className="text-micro text-accent-on-tint">
+            {leg.alternative ? `${leg.alternative === "hedged" ? "Hedged" : "Naked"} · ` : ""}
             {STRATEGY_LABEL[leg.strategy]}
           </div>
         )}
@@ -192,7 +199,10 @@ function LegRow({
       </td>
       <td className="px-3 py-2 text-right font-mono text-table tabular-nums">
         {leg.premium_basis === "bid" ? (
-          <span>{leg.premium_per_share}</span>
+          <span>
+            {leg.premium_per_share}
+            {isWing && <span className="block text-micro text-faint">ask</span>}
+          </span>
         ) : (
           // Amber is the only in-row cue now that the "ind." suffix is gone (legend below);
           // the title and the off-screen word keep it from being colour-only.
@@ -202,7 +212,10 @@ function LegRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-table tabular-nums text-up">
+      <td
+        className={`px-3 py-2 text-right font-mono text-table tabular-nums ${isWing ? "text-down" : "text-up"}`}
+      >
+        {isWing ? "−" : ""}
         {money(leg.premium_total)}
       </td>
       <td className="px-3 py-2 text-right font-mono text-table tabular-nums">
@@ -237,6 +250,7 @@ export function BotRunSheet({
 
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [skipped, setSkipped] = useState<SkippedScrip[]>([]);
+  const [premium, setPremium] = useState<PremiumNote[]>([]);
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
   const [edits, setEdits] = useState<Record<number, LegEdit>>({});
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
@@ -272,6 +286,7 @@ export function BotRunSheet({
         : await plan.mutateAsync(bot.bot_type);
       setProposal(result.proposal);
       setSkipped(result.skipped ?? []);
+      setPremium(premiumNotes(result));
     } catch (e) {
       setProposal(null);
       setError((e as Error)?.message ?? "The run could not be started.");
@@ -299,14 +314,24 @@ export function BotRunSheet({
   );
 
   function toggle(index: number, checked: boolean) {
-    const group = legs[index]?.group_key;
+    const picked = legs[index];
+    const group = picked?.group_key;
     setOverrides((current) => {
       const next = { ...current, [index]: checked };
       // Half a strangle is a naked short — not the shape the bot proposed or the user
-      // picked — so both sides move together.
+      // picked — so both sides move together, as do a spread's short and its wing.
       if (group) {
         legs.forEach((leg, i) => {
           if (i !== index && leg.group_key === group) next[i] = checked;
+        });
+      }
+      // Bot 2 offers a naked and a hedged trade per index; exactly one is placed, so choosing
+      // one sets the other aside.
+      if (checked && picked?.alternative) {
+        legs.forEach((leg, i) => {
+          if (leg.stock_code === picked.stock_code && leg.alternative && leg.alternative !== picked.alternative) {
+            next[i] = false;
+          }
         });
       }
       return next;
@@ -338,7 +363,11 @@ export function BotRunSheet({
   }, [edits, open, anyInvalid, bot.bot_type]);
 
   const totals = useMemo(() => {
-    const premium = chosen.reduce((sum, i) => sum + legs[i].premium_total, 0);
+    // Net of any wing bought.
+    const premium = chosen.reduce(
+      (sum, i) => sum + (legs[i].action === "buy" ? -1 : 1) * legs[i].premium_total,
+      0,
+    );
     const margin = chosen.reduce(
       (sum, i) => sum + (legs[i].span_margin ?? 0) + (legs[i].elm_margin ?? 0),
       0,
@@ -428,6 +457,7 @@ export function BotRunSheet({
               {placed.map((p, i) => (
                 <li key={`${p.stock_code}-${p.strike_price}-${i}`}>
                   <span className="font-semibold">
+                    {p.action === "buy" ? "BUY " : ""}
                     {INDEX_LABEL[p.stock_code] ?? p.stock_code} {p.strike_price}{" "}
                     {p.right === "put" ? "PE" : "CE"}
                   </span>{" "}
@@ -536,6 +566,15 @@ export function BotRunSheet({
           <p className="mt-2 font-mono text-hint text-faint">Re-pricing…</p>
         )}
 
+        {legs.some((l) => l.alternative === "hedged") && legs.some((l) => l.alternative === "naked") && (
+          <p className="mt-3 text-hint text-faint">
+            Two trades are offered: the best naked shape and the best hedged one, each sized to
+            the margin cap. Only one can be placed per index, so ticking one clears the other. The
+            one ticked to start with collects more premium in total, which is what Auto would
+            place. A hedged shape&apos;s wing is bought first and must fill before anything is sold.
+          </p>
+        )}
+
         {anyIndicative && (
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber/30 bg-amber-tint p-3 text-hint text-text">
             <span
@@ -569,6 +608,24 @@ export function BotRunSheet({
           <p className="mt-3 rounded-lg border border-down/30 bg-down-tint p-3 text-hint text-text">
             A highlighted field is empty or out of range. Enter a value to continue.
           </p>
+        )}
+
+        {premium.length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {premium.map((p) => (
+              <li
+                key={p.stock_code}
+                className={`rounded-lg p-3 text-hint text-text ${
+                  p.would_refuse ? "border border-amber/30 bg-amber-tint" : "app-card-muted"
+                }`}
+              >
+                <span className="font-semibold">{p.stock_code}</span>: {p.message}.
+                {p.would_refuse && p.threshold !== null
+                  ? ` On its own schedule the bot would not sell this: its premium gate needs ${p.threshold.toFixed(2)}x. You can still place it by hand.`
+                  : null}
+              </li>
+            ))}
+          </ul>
         )}
 
         {skipped.length > 0 && (

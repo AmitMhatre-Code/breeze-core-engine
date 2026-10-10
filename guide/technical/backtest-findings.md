@@ -38,6 +38,11 @@ On 6 October 2026, after an outside review, **Momentum v3** was added beside v1 
 ## Part 3 — Backtest results
 ### 3.2 Signal backtest: 1 April – 18 September 2026
 
+> [!NOTE]
+> Since 9 October 2026 (#76) a reading "stands out" only with t ≥ 3 and a positive result in the run's last third, and runs also score movement (how big the next move was, whichever way). The verdicts below used the older t ≥ 2 bar.
+>
+> Every figure in this section was measured from the close of the bar that fired each call. Since 7 October 2026 (design-decisions.md #74), calls are measured from the first trade after them, because no one can deal at the firing close. For a reversal that matters: about a third of the expansion fade measured below sits in the first minute, which may be bid-ask bounce rather than anything a bot can collect. Re-run this period before relying on the fade finding (2 below); the new run shows both figures side by side.
+
 **Scope:**
 - 117 trading sessions and all twelve readings.
 - **About 17,200 calls** in total.

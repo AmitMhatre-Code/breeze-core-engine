@@ -163,6 +163,13 @@ def _pick_strike(rows: list[dict], spot: float, right: str, safety_pct: float) -
     target = (
         spot * (1 + safety_pct / 100) if right == cfg.CALL else spot * (1 - safety_pct / 100)
     )
+    return _pick_strike_at(rows, target, right)
+
+
+def _pick_strike_at(rows: list[dict], target: float, right: str) -> Optional[dict]:
+    """The chain row at or beyond `target`, away from spot, closest to it."""
+    if not target > 0:
+        return None
     best: Optional[dict] = None
     best_distance = float("inf")
     for row in rows:
@@ -273,32 +280,42 @@ def scan(
         candidates.append({**holding, "expiry_display": expiry_display, "lot_size": lot_size})
 
     existing = _existing_short_lots(_read_positions(proc, user_id), lot_sizes)
+    by_implied = config.distance_basis == "implied_move"
+    implied_cache: dict[tuple[str, str], tuple[Optional[float], bool, Optional[str]]] = {}
 
     for cand in candidates:
         code = cand["stock_code"]
         pref = prefs.get(code) or ScripPref(stock_code=code)
-        for right, enabled, safety_pct, wanted_lots in (
+        for right, enabled, own_pct, default_pct, multiple, wanted_lots in (
             (
                 cfg.CALL,
                 pref.writes_ce,
-                pref.safety_pct_ce or config.default_safety_pct_ce,
+                pref.safety_pct_ce,
+                config.default_safety_pct_ce,
+                config.implied_multiple_ce,
                 pref.ce_lots,
             ),
             (
                 cfg.PUT,
                 pref.writes_pe,
-                pref.safety_pct_pe or config.default_safety_pct_pe,
+                pref.safety_pct_pe,
+                config.default_safety_pct_pe,
+                config.implied_multiple_pe,
                 pref.pe_lots,
             ),
         ):
             if not enabled:
                 continue
+            # A scrip's own % is an explicit choice and always wins; otherwise the bot's basis.
+            implied_multiple = float(multiple) if (by_implied and not own_pct) else None
             leg = _build_leg(
                 proc,
                 user_id,
                 cand,
                 right=right,
-                safety_pct=float(safety_pct),
+                safety_pct=float(own_pct or default_pct),
+                implied_multiple=implied_multiple,
+                implied_cache=implied_cache,
                 existing_lots=existing.get((code, right), 0),
                 wanted_lots=wanted_lots,
                 priority=pref.priority,
@@ -332,6 +349,8 @@ def _build_leg(
     priority: int = 1,
     margin_source: str,
     result: ScanResult,
+    implied_multiple: Optional[float] = None,
+    implied_cache: Optional[dict] = None,
 ) -> Optional[ProposalLeg]:
     code = cand["stock_code"]
     lot_size = cand["lot_size"]
@@ -391,15 +410,41 @@ def _build_leg(
         return None
     spot = reading.spot
 
-    row = _pick_strike(rows, spot, right, safety_pct)
-    if row is None:
-        result.skipped.append(
-            SkippedScrip(label, "no_strike", f"No strike at least {safety_pct}% from spot.")
+    indicative_strike = False
+    if implied_multiple is not None:
+        implied, indicative_strike, why = _stock_implied(
+            proc, user_id, code, expiry_display, right, rows, spot,
+            implied_cache if implied_cache is not None else {},
         )
-        return None
+        if implied is None:
+            result.skipped.append(SkippedScrip(
+                label, "no_implied_move",
+                f"Strikes are set by implied move, but there is {why}."))
+            return None
+        from icici_breeze_backend.app.services.premium_gate.reading import strike_target
+
+        row = _pick_strike_at(rows, strike_target(spot, implied, implied_multiple, up=right == cfg.CALL), right)
+        if row is None:
+            result.skipped.append(SkippedScrip(
+                label, "no_strike", f"No strike {implied_multiple:g}x the implied move from spot."))
+            return None
+    else:
+        row = _pick_strike(rows, spot, right, safety_pct)
+        if row is None:
+            result.skipped.append(
+                SkippedScrip(label, "no_strike", f"No strike at least {safety_pct}% from spot.")
+            )
+            return None
 
     strike = float(parse_strike(row.get("strike_price")) or 0)
     bid, basis = _premium(row)
+    implied_note = None
+    if indicative_strike:
+        # Placed from last-traded prices, so the leg is planning information like any other
+        # indicative price: the unattended run skips it and approval re-prices it.
+        basis = "ltp_indicative"
+        implied_note = ("Strike placed from the at-the-money options' last-traded prices, "
+                        "because their live book was not available.")
     if bid <= 0:
         result.skipped.append(
             SkippedScrip(label, "no_price", f"No bid or last trade on the {strike:g} strike.")
@@ -454,9 +499,65 @@ def _build_leg(
         pledged_quantity=cand.get("pledged_quantity"),
         existing_short_lots=existing_lots,
         selected=right == cfg.CALL,
-        note=_note(clipped_note, _pledge_note(cand, lot_size) if right == cfg.CALL else None),
+        note=_note(clipped_note, _pledge_note(cand, lot_size) if right == cfg.CALL else None,
+                   implied_note),
         scrip_priority=int(priority or 1),
     )
+
+
+def _stock_implied(
+    proc: Any,
+    user_id: str,
+    code: str,
+    expiry_display: str,
+    right: str,
+    rows: list[dict],
+    spot: float,
+    cache: dict,
+) -> tuple[Optional[float], bool, Optional[str]]:
+    """(implied variance to expiry, indicative?, why not) from the stock's ATM call and put.
+
+    The mid of a live two-sided book where there is one; otherwise the pair's last-traded
+    prices, flagged indicative (docs/premium-gate-plan.md section 5). Read once per scrip and
+    expiry, and shared by its call and put."""
+    key = (code, expiry_display)
+    if key in cache:
+        return cache[key]
+    from icici_breeze_backend.app.core.timezone import now_ist
+    from icici_breeze_backend.app.services.condor.pricing import years_to_expiry_close
+    from icici_breeze_backend.app.services.premium_gate import live as premium_live
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    other = cfg.PUT if right == cfg.CALL else cfg.CALL
+    chain = fetch_chain_side_icici_response(proc, user_id, code, cfg.NFO, expiry_display, other)
+    other_rows = rows_with_source(chain) if (chain or {}).get("Status") == 200 else []
+    calls, puts = (rows, other_rows) if right == cfg.CALL else (other_rows, rows)
+    strike, call, put = premium_live.atm_pair(calls, puts, spot)
+    indicative = False
+    if strike is not None and (call is None or put is None):
+        call, put = _atm_ltp(calls, strike), _atm_ltp(puts, strike)
+        indicative = True
+    if strike is None:
+        out = (None, False, premium.describe_reason(premium.REASON_NO_ATM_QUOTES))
+    else:
+        expiry = _parse_expiry(expiry_display)
+        years = years_to_expiry_close(expiry, now_ist()) if expiry else 0.0
+        implied, why = premium.implied_variance(call, put, strike, spot, years)
+        out = (implied, indicative, premium.describe_reason(why) if why else None)
+    cache[key] = out
+    return out
+
+
+def _atm_ltp(rows: list[dict], strike: float) -> Optional[float]:
+    for row in rows:
+        value = parse_strike(row.get("strike_price"))
+        if value is not None and abs(float(value) - strike) < 1e-6:
+            try:
+                ltp = float(row.get("ltp") or 0)
+            except (TypeError, ValueError):
+                return None
+            return ltp if ltp > 0 else None
+    return None
 
 
 def _note(*parts: Optional[str]) -> Optional[str]:

@@ -561,3 +561,72 @@ def test_an_edited_call_is_capped_at_deliverable_stock_not_the_holding(monkeypat
     assert proposals.price_edited_leg("u1", leg, SimpleNamespace(lots=3, strike_price=None, distance_pct=None), {}) == "priced"
     assert seen["lots"] == 2
     assert seen["deliverable_quantity_value"] == 3000
+
+
+# --- strikes by implied move (docs/premium-gate-plan.md section 5) -------------------------
+
+
+@pytest.fixture
+def implied(monkeypatch):
+    """Stub the implied-variance solve: a 5% move to expiry, recording the prices it was given."""
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    seen = []
+
+    def fake(call, put, strike, spot, years, r=premium.RISK_FREE):
+        seen.append((call, put, strike))
+        if not (call and put):
+            return None, premium.REASON_NO_ATM_QUOTES
+        return 0.05 ** 2, None
+
+    monkeypatch.setattr(premium, "implied_variance", fake)
+    return seen
+
+
+def _ntpc():
+    return FakeProcessor([holding("NTPC", 3000)], {"NTPC": [FUTURE_EXPIRY]}, {"NTPC": 1500})
+
+
+BY_IMPLIED = HoldingsWriterConfig(distance_basis="implied_move", implied_multiple_ce=1.0)
+
+
+def test_a_call_is_placed_by_the_stocks_own_implied_move(patch_chain, implied):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1000, 1050, 1100]),
+                 cfg.PUT: chain_rows(1000.0, [1000, 1050, 1100])})
+    (leg,) = run_scan(_ntpc(), config=BY_IMPLIED).legs
+    # 1000 x e^0.05 = 1051.3, rounded away from spot: 1100.
+    assert leg.strike_price == 1100 and leg.premium_basis == "bid"
+    assert implied == [(5.25, 5.25, 1000.0)], "the live mid of the ATM pair, read once"
+
+
+def test_without_a_live_atm_book_the_strike_is_indicative(patch_chain, implied):
+    stale = [{**r, "quote_source": "snapshot"} if r["strike_price"] == 1000 else r
+             for r in chain_rows(1000.0, [1000, 1050, 1100])]
+    patch_chain({cfg.CALL: stale, cfg.PUT: chain_rows(1000.0, [1000, 1050, 1100])})
+    (leg,) = run_scan(_ntpc(), config=BY_IMPLIED).legs
+    assert implied == [(9.99, 9.99, 1000.0)], "fell back to the pair's last-traded prices"
+    # Planning information only: the unattended run skips it and approval re-prices it.
+    assert leg.premium_basis == "ltp_indicative" and "last-traded" in (leg.note or "")
+
+
+def test_a_scrips_own_percent_still_wins(patch_chain, implied):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1000, 1050, 1100, 1150]),
+                 cfg.PUT: chain_rows(1000.0, [1000])})
+    prefs = {"NTPC": ScripPref(stock_code="NTPC", safety_pct_ce=12.0)}
+    (leg,) = run_scan(_ntpc(), config=BY_IMPLIED, prefs=prefs).legs
+    assert leg.strike_price == 1150 and implied == []
+
+
+def test_no_atm_pair_skips_the_scrip_rather_than_guessing_a_percent(patch_chain, implied):
+    patch_chain({cfg.CALL: chain_rows(1000.0, [1000, 1050, 1100])})  # no put side at all
+    result = run_scan(_ntpc(), config=BY_IMPLIED)
+    assert result.legs == []
+    assert [s.reason_code for s in result.skipped] == ["no_implied_move"]
+
+
+def test_new_holdings_bots_start_by_implied_move():
+    from icici_breeze_backend.app.db.bots_migrate import BOT_HOLDINGS_WRITER
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    assert repo.new_bot_config(BOT_HOLDINGS_WRITER)["distance_basis"] == "implied_move"
+    assert repo.normalize_config(BOT_HOLDINGS_WRITER, {"fire_days_before_expiry": 3})["distance_basis"] == "pct"

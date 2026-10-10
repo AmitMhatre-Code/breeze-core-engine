@@ -63,6 +63,8 @@ export type CondorComparisonRow = {
     max_loss: string;
     no_roll_within_days_of_exit: number;
     exit_action: "time_roll" | "close";
+    /** "off" or the threshold ("1.00x"). Absent on runs from before #78. */
+    premium_gate?: string;
   };
   is_saved: boolean;
   trades: number;
@@ -99,7 +101,15 @@ export type BacktestStartBody = {
   period: BacktestPeriod;
   from_date?: string;
   to_date?: string;
+  /** The Dynamic Iron Condor only: ICICI's intraday prices, or NSE's daily closes from 2020
+   *  (docs/condor-daily-history-plan.md). */
+  prices?: BacktestPrices;
 };
+
+export type BacktestPrices = "icici" | "nse_daily";
+
+/** The first session of the condor's NSE daily-price history. */
+export const DAILY_HISTORY_START = "2020-01-01";
 
 export type BacktestJobStatus = {
   job: BacktestJob | null;

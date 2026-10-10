@@ -3,19 +3,23 @@
 import { useRef, useState } from "react";
 import { AttentionMarker } from "@/components/bots/AttentionMarker";
 import { BacktestButton } from "@/components/bots/BacktestButton";
+import { BacktestLossConfirm } from "@/components/bots/BacktestLossConfirm";
 import { BotSettingsDrawer } from "@/components/bots/BotSettingsDrawer";
 import { BotStatusRow } from "@/components/bots/BotStatusRow";
 import { CasBingoSheet } from "@/components/bots/CasBingoSheet";
 import { PriorityPill } from "@/components/bots/PriorityPill";
 import { Modal } from "@/components/ui/Modal";
+import { lossConfirmed } from "@/lib/backtest-loss";
 import { casBingoAttention } from "@/lib/bot-attention";
 import { formatIndianMoneyCompact, moneyToneClass } from "@/lib/format-money-in";
 import {
+  BOT_CAS_BINGO,
   BOT_META,
   CAS_BINGO_CREDIT_WARNING,
   CAS_BINGO_REGIME_NOTE,
   INDEX_LABEL,
   signalKey,
+  useBacktestEvidence,
   useSignalAvailability,
   useTodaysCycles,
   useTodaysRun,
@@ -117,6 +121,17 @@ function AutonomousConfirm({
   // Focus starts on Cancel: the safe choice is the one a stray Enter takes.
   const cancelRef = useRef<HTMLButtonElement>(null);
   const spreads = config.strategy !== "long_strangle";
+  const evidence = useBacktestEvidence(BOT_CAS_BINGO, open);
+  const backtest = evidence.data?.backtest ?? null;
+  const [typed, setTyped] = useState("");
+  // Every opening starts empty: a loss typed once is not consent for the next time (#76).
+  // Reset while rendering, when `open` changes (React's pattern for state tied to a prop).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setTyped("");
+  }
+  const confirmed = lossConfirmed(backtest?.net_pnl, typed);
   const indices = Object.entries(config.indices ?? {}).filter(([, v]) => v.enabled).map(([c]) => c);
   return (
     <Modal
@@ -156,6 +171,28 @@ function AutonomousConfirm({
             <strong>Warning:</strong> {CAS_BINGO_CREDIT_WARNING}
           </p>
         )}
+        <div className="rounded-lg border border-border bg-panel2 p-3 text-hint">
+          <p className="text-faint">Backtest on these exact settings:</p>
+          {backtest ? (
+            <p className="mt-1">
+              {backtest.from_date} → {backtest.to_date}: {backtest.cycles} trade{backtest.cycles === 1 ? "" : "s"},{" "}
+              <span className={moneyToneClass(backtest.net_pnl)}>{formatIndianMoneyCompact(backtest.net_pnl)}</span>{" "}
+              after costs.
+            </p>
+          ) : (
+            <p className="mt-1 text-faint">
+              {evidence.isLoading ? "Looking…" : "None. Run one from the card's history icon before trusting these settings."}
+            </p>
+          )}
+        </div>
+        <BacktestLossConfirm
+          netPnl={backtest?.net_pnl}
+          fromDate={backtest?.from_date}
+          toDate={backtest?.to_date}
+          value={typed}
+          onChange={setTyped}
+          disabled={pending}
+        />
         <p className="text-hint text-faint">{CAS_BINGO_REGIME_NOTE}</p>
         {error && <p className="text-hint text-down">{error}</p>}
       </div>
@@ -165,7 +202,7 @@ function AutonomousConfirm({
         </button>
         <button
           type="button"
-          disabled={pending}
+          disabled={pending || !confirmed}
           onClick={onConfirm}
           className="inline-flex items-center justify-center rounded-lg bg-down-btn px-4 py-2.5 text-sm font-bold text-down-ink transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-down/40 disabled:pointer-events-none disabled:opacity-50"
         >

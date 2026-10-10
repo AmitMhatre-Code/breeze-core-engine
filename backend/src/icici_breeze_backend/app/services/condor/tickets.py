@@ -31,6 +31,7 @@ from icici_breeze_backend.app.services.condor.engine import (
     _wing_width,
     entry_orders,
     entry_strikes,
+    premium_refusal,
 )
 from icici_breeze_backend.app.services.condor.model import Leg, MarketSnapshot, OrderLeg
 from icici_breeze_backend.app.services.condor.pricing import GreeksModel, build_greeks_model
@@ -237,6 +238,14 @@ def template(proc: Any, campaign: repo.Campaign, kind: str, params: Optional[dic
         snap2 = live.snapshot(proc, campaign.user_id, nxt.strftime(_FMT))
         m2 = snap2.market if snap2.live else live.with_ltp_stand_ins(snap2.market)
         model2 = build_greeks_model(m2.chain, m2.spot, nxt, m2.now) if m2.spot else None
+        # The premium gate (#78) governs opening the next cycle, never closing this one: refused,
+        # the ticket only closes, which ends the campaign as Close does, and the next cycle's
+        # tranches go in when premium is rich.
+        refused = premium_refusal(model2, m2, campaign.settings) if model2 else None
+        if refused is not None:
+            return {"kind": kind, "orders": [_order_json(o) for o in orders],
+                    "note": f"Closes {ctx.expiry_display}. The {nxt:%d-%b-%Y} cycle is not opened now: "
+                            f"{refused[1]} Its tranches go in when premium is rich."}
         strikes = entry_strikes(model2, m2.strikes, campaign.settings) if model2 else None
         if strikes is None:
             raise Refused(f"The {nxt:%d-%b-%Y} chain cannot price the next cycle's strikes right now.")

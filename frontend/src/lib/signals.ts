@@ -63,6 +63,20 @@ export type HorizonScore = {
   t: number | null;
   stands_out: boolean;
   verdict: "pays" | "unclear" | "loses" | "not_enough_days";
+  /** The same net average over the run's last third alone. Absent on runs before 2026-10-09. */
+  holdout_net_bps?: number | null;
+  /** Why a positive result is only "unclear": inside the noise (t under 3), or gone in the last third. */
+  short_of?: "noise" | "holdout" | null;
+};
+
+/** How big the move after a call was against the usual move at that minute (1.0 = usual). */
+export type VolatilityScore = {
+  calls: number;
+  days: number;
+  mean_ratio: number | null;
+  t: number | null;
+  holdout_ratio: number | null;
+  verdict: "expands" | "calms" | "unclear" | "not_enough_days";
 };
 
 export type BestHorizon = HorizonScore & {
@@ -100,6 +114,22 @@ export type SeriesBacktestSummary = {
   best: BestHorizon | null;
   tradeable: boolean;
   breakeven: BreakevenDetail | null;
+  /** How many horizon × direction cells `best` was picked from. */
+  comparisons?: number;
+  /** Keyed by minutes ("5" | "15" | "30"). Direction aside: a forecast of how much it moves. */
+  volatility?: Record<string, VolatilityScore> | null;
+  /** What each call is measured from. Absent on runs from before 2026-10-07, which measured from
+   *  the close that fired the call; `next_trade` is the first trade after it, which a bot can get. */
+  entry_basis?: "next_trade";
+  /** Calls with no trade in the five minutes after them, so not scored. */
+  calls_without_entry?: number;
+  /** Average called-way move between the firing close and the first trade after it. */
+  mean_entry_gap_bps?: number | null;
+  /** The same scores measured from the firing close — for comparison only. */
+  at_signal_close?: {
+    horizons: Record<string, Record<SignalDirection, HorizonScore>> | null;
+    best: BestHorizon | null;
+  } | null;
 };
 
 export type SignalSeries = {
@@ -333,12 +363,18 @@ export function backtestSentence(s: SeriesBacktestSummary | null, duration: numb
   if (best.verdict === "not_enough_days") {
     return `${head}; too few sessions to say anything yet.`;
   }
+  const tried = s.comparisons ? ` (the best of ${s.comparisons} ways tried)` : "";
   if (best.verdict === "pays") {
-    return `${head}. Best was ${how}, ${when}: ${bps(best.net_bps)} a call after costs, `
-      + `which stands out against the day-to-day swings.`;
+    return `${head}. Best was ${how}, ${when}${tried}: ${bps(best.net_bps)} a call after costs, `
+      + `which stands out against the day-to-day swings and held up in the last third of the period.`;
   }
   if (best.verdict === "unclear") {
-    return `${head}. The best it managed was ${how}, ${when}: ${bps(best.net_bps)} a call after `
+    if (best.short_of === "holdout") {
+      return `${head}. The best it managed was ${how}, ${when}${tried}: ${bps(best.net_bps)} a call `
+        + `after costs — but it did not pay in the last third of the period, so it may have been the `
+        + `period rather than the signal.`;
+    }
+    return `${head}. The best it managed was ${how}, ${when}${tried}: ${bps(best.net_bps)} a call after `
       + `costs — but that is inside the normal day-to-day swings, so it may be luck.`;
   }
   return `${head}; nothing paid for its costs, either with the signal or against it `
@@ -361,7 +397,41 @@ export function horizonDetail(s: SeriesBacktestSummary | null): string | null {
         ? ` (${be.charges_bps.toFixed(2)} charges, ${be.spread_bps.toFixed(2)} spread).`
         : ".")
     : "";
-  return `At ${s.best.horizon_minutes} min: ${parts.join(", ")} a call after costs.${bar}`;
+  return `At ${s.best.horizon_minutes} min: ${parts.join(", ")} a call after costs.${bar}${firingPriceNote(s)}`;
+}
+
+/** What the best cell read when measured from the price that fired the call, which no one can
+ *  trade at. The gap between the two is how much of a result was the bid-ask bounce. */
+function firingPriceNote(s: SeriesBacktestSummary): string {
+  if (s.entry_basis !== "next_trade" || !s.best) return "";
+  const same = s.at_signal_close?.horizons?.[String(s.best.horizon_minutes)]?.[s.best.direction];
+  if (!same || same.net_bps === null) return "";
+  return ` From the price that fired the call, which no one can trade at, it read ${bps(same.net_bps)}.`;
+}
+
+/** The volatility line: whether calls were followed by bigger (or smaller) moves than usual for
+ *  that time of day, whichever way. Null for a run that predates the score. */
+export function volatilityDetail(s: SeriesBacktestSummary | null): string | null {
+  const vol = s?.volatility;
+  if (!vol) return null;
+  const scored = Object.entries(vol).filter(([, v]) => v.mean_ratio !== null);
+  if (!scored.length) return null;
+  const found = scored
+    .filter(([, v]) => v.verdict === "expands" || v.verdict === "calms")
+    .sort(([, a], [, b]) => Math.abs((b.mean_ratio ?? 1) - 1) - Math.abs((a.mean_ratio ?? 1) - 1))[0];
+  if (!found) {
+    return "Movement: no clear change in how far the index moved after a call.";
+  }
+  const [minutes, v] = found;
+  const more = v.verdict === "expands";
+  return `Movement: over the ${minutes} min after a call the index moved ${v.mean_ratio!.toFixed(2)}× `
+    + `its usual amount for that time of day — a forecast of ${more ? "bigger" : "smaller"} moves, `
+    + `whichever way.`;
+}
+
+/** True when a backtest summary predates measuring calls from the first trade after them. */
+export function measuredFromFiringPrice(s: SeriesBacktestSummary | null | undefined): boolean {
+  return !!s && s.calls > 0 && s.entry_basis !== "next_trade";
 }
 
 export function verdictTone(

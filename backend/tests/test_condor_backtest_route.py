@@ -108,12 +108,13 @@ def test_uncached_run_is_partial_and_says_where_it_stopped(client):
     assert run["status"] == "partial"
     notes = " ".join(run["summary"]["notes"])
     assert "Nothing fetched" in notes
-    assert "108 of 108 combination(s) stopped part-way" in notes
+    # 108 grid rows and the premium gate's three (#78).
+    assert "111 of 111 combination(s) stopped part-way" in notes
     assert "yours at the 16 Mar 2026 10:30 check" in notes
     assert run["params"]["settings"]["margin_ceiling_inr"] == 10_00_000
     # Every combination is stored, each partial and saying where it stopped.
     rows = run["summary"]["comparison"]
-    assert run["params"]["combinations"] == len(rows) == 108
+    assert run["params"]["combinations"] == len(rows) == 111
     assert all(r["status"] == "partial" and r["stopped_at"] for r in rows)
     assert sum(r["is_saved"] for r in rows) == 1
 

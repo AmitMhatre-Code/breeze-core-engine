@@ -428,13 +428,15 @@ def start_bot_backtest(
     period: str,
     from_date: Optional[datetime.date] = None,
     to_date: Optional[datetime.date] = None,
+    prices: str = "icici",
 ) -> dict[str, Any]:
-    """Start a card backtest, keeping `reap_orphaned_rows` off its row until its job is running."""
+    """Start a card backtest, keeping `reap_orphaned_rows` off its row until its job is running.
+    `prices` is the Dynamic Iron Condor's choice of ICICI intraday or NSE daily prices."""
     global _opening
     with _lock:
         _opening += 1
     try:
-        return _open_bot_backtest(user_id, bot, period, from_date, to_date)
+        return _open_bot_backtest(user_id, bot, period, from_date, to_date, prices=prices)
     finally:
         with _lock:
             _opening -= 1
@@ -446,6 +448,7 @@ def _open_bot_backtest(
     period: str,
     from_date: Optional[datetime.date],
     to_date: Optional[datetime.date],
+    prices: str = "icici",
 ) -> dict[str, Any]:
     """The card's clock: one choice of period, and everything else follows (#35, #36).
 
@@ -470,7 +473,7 @@ def _open_bot_backtest(
         # Same dialog, same slot, same Activity row; the replay is the condor engine's (#67).
         from icici_breeze_backend.app.services.condor import backtest_job as condor_job
 
-        return condor_job.start_card(user_id, period, from_date, to_date)
+        return condor_job.start_card(user_id, period, from_date, to_date, prices=prices)
     if bot not in service.BOT_TYPES:
         raise ValueError(f"{bot!r} has no backtest.")
     if period not in service.PERIODS:
@@ -652,8 +655,8 @@ def _open_bot_backtest(
                 if _cancel.is_set():
                     raise RuntimeError("Stopped at your request.")
                 _memory_check(
-                    f"before the first of {len(combos)} signal setting(s)" if n == 1
-                    else f"after {n - 1} of {len(combos)} signal setting(s)"
+                    f"before the first of {len(combos)} setting(s)" if n == 1
+                    else f"after {n - 1} of {len(combos)} setting(s)"
                 )
                 _update(phase="replaying", step=n, steps=len(combos), day=None)
                 note(f"Replaying {service.BOT_LABELS[bot]} ({n}/{len(combos)}: {combo.label}), "

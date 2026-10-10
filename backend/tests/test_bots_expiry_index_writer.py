@@ -1017,3 +1017,289 @@ def test_a_smaller_size_is_verified_with_icici_not_scaled_down(patch_chain, no_a
     assert result.lots == 1
     assert result.margin_total == 140000.0, "the recorded margin is ICICI's answer for 1 lot"
     assert proc.margin_sizes[-1] == 75
+
+
+# --- the premium gate and strikes by implied move (docs/premium-gate-plan.md) -------------
+
+
+from icici_breeze_backend.app.domain.bots import PremiumGateConfig  # noqa: E402
+from icici_breeze_backend.app.services.premium_gate import live as premium_live  # noqa: E402
+from icici_breeze_backend.app.services.premium_gate import reading as premium  # noqa: E402
+
+_STRIKES = (23300, 23400, 23500, 23600, 24000, 24400, 24500, 24600, 24700)
+
+
+def _reading(monkeypatch, ratio, implied=0.0001):
+    """Stub the live reading: `ratio` None is no reading at all."""
+    seen = {}
+
+    def fake(index, expiry, spot, calls, puts, now, *, user_id=None, cache_path=None):
+        seen.update(index=index, calls=len(calls), puts=len(puts))
+        if ratio is None:
+            return premium.Reading(None, None, None, premium.REASON_NO_HISTORY), None
+        return premium.Reading(ratio, 1.0, 1.0 / ratio), implied
+
+    monkeypatch.setattr(premium_live, "live_reading", fake)
+    return seen
+
+
+def _gated_fire(proc, *, gate=None, leg=None, manual=False):
+    leg = leg or IndexWriterLeg(enabled=True, safety_pct_ce=2.0, safety_pct_pe=2.0, margin_pct_cap=30.0)
+    conf = config(indices={"NIFTY": leg}, premium_gate=gate or PremiumGateConfig())
+    if manual:
+        return bot2.plan_index(proc, "u1", "NIFTY", expiry_display=EXPIRY, config=conf,
+                               available_margin=1_000_000.0, margin_source="breeze_api",
+                               enforce_gate=False)
+    return bot2.fire_index(proc, "u1", "NIFTY", expiry_display=EXPIRY, config=conf,
+                           available_margin=1_000_000.0, margin_source="breeze_api")
+
+
+def test_the_gate_refuses_premium_that_is_not_rich(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    seen = _reading(monkeypatch, 0.8)
+    result = _gated_fire(proc, gate=PremiumGateConfig(enabled=True, threshold=1.0))
+    assert result.reason_code == ReasonCode.PREMIUM_NOT_RICH
+    assert "0.80x the forecast move" in result.error and "needs 1.00x" in result.error
+    assert proc.placed == []
+    # A naked-PE shortlist still reads the call side: the reading needs the ATM pair.
+    assert seen["calls"] and seen["puts"]
+
+
+def test_no_reading_is_no_trade(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    _reading(monkeypatch, None)
+    result = _gated_fire(proc, gate=PremiumGateConfig(enabled=True))
+    assert result.reason_code == ReasonCode.PREMIUM_UNREADABLE and proc.placed == []
+
+
+def test_rich_premium_trades_and_records_the_reading(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    _reading(monkeypatch, 1.3)
+    result = _gated_fire(proc, gate=PremiumGateConfig(enabled=True, threshold=1.2))
+    assert result.ok and result.premium["ratio"] == 1.3
+    assert result.premium_would_refuse is False
+
+
+def test_a_gate_that_is_off_is_never_read(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    seen = _reading(monkeypatch, 0.5)
+    assert _gated_fire(proc).ok
+    assert seen == {}
+
+
+def test_the_manual_run_sheet_reports_the_gate_but_never_blocks(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    _reading(monkeypatch, 0.7)
+    plan = _gated_fire(proc, gate=PremiumGateConfig(enabled=True), manual=True)
+    assert plan.error is None and plan.legs
+    assert plan.premium_would_refuse is True and "0.70x" in plan.premium_text
+
+
+def test_a_strike_by_implied_move_sits_k_deviations_out(patch_chain, no_arm, monkeypatch):
+    proc = FakeProc(spot=24000.0)
+    patch_chain(proc, strikes=_STRIKES)
+    _reading(monkeypatch, 1.1, implied=0.01 ** 2)  # a 1% implied move to expiry
+    leg = IndexWriterLeg(enabled=True, distance_basis="implied_move", implied_multiple_pe=2.5,
+                         margin_pct_cap=30.0)
+    # 24000 x e^-0.025 = 23407.4, rounded away from spot: 23400.
+    assert _gated_fire(proc, leg=leg).strike_price == 23400
+
+
+def test_strikes_by_implied_move_without_a_reading_fail_closed(patch_chain, no_arm, monkeypatch):
+    """Never quietly fall back to a % the user did not choose."""
+    proc = FakeProc()
+    patch_chain(proc, strikes=_STRIKES)
+    _reading(monkeypatch, None)
+    leg = IndexWriterLeg(enabled=True, distance_basis="implied_move", margin_pct_cap=30.0)
+    result = _gated_fire(proc, leg=leg)
+    assert result.reason_code == ReasonCode.PREMIUM_UNREADABLE and proc.placed == []
+
+
+def test_new_bots_start_gated_and_by_implied_move_saved_ones_do_not():
+    from icici_breeze_backend.app.db.bots_migrate import (
+        BOT_EXPIRY_INDEX_WRITER, BOT_IRON_FLY_SCALPER, BOT_MOMENTUM_LONG_SCALPER)
+    from icici_breeze_backend.app.repositories import bots as repo
+
+    fresh = repo.new_bot_config(BOT_EXPIRY_INDEX_WRITER)
+    assert fresh["premium_gate"]["enabled"] is True
+    assert {leg["distance_basis"] for leg in fresh["indices"].values()} == {"implied_move"}
+    for bot in (BOT_IRON_FLY_SCALPER, BOT_MOMENTUM_LONG_SCALPER):
+        assert repo.new_bot_config(bot)["premium_gate"]["enabled"] is True
+    saved = repo.normalize_config(BOT_EXPIRY_INDEX_WRITER, {"entry_time_ist": "09:45"})
+    assert saved["premium_gate"]["enabled"] is False
+    assert saved["indices"]["NIFTY"]["distance_basis"] == "pct"
+
+
+# --- Hedged shapes beside the naked ones (docs/bot2-hedged-shapes-plan.md) -------------------
+
+_WIDE = (22500, 22800, 23000, 23300, 23500, 24000, 24500, 24700, 25000, 25200, 25500)
+
+
+class HedgeProc(FakeProc):
+    """Premium falls away from spot; a spread's margin is `hedge_factor` of its shorts'."""
+
+    def __init__(self, *, hedge_factor=0.3, **kw):
+        super().__init__(**kw)
+        self.hedge_factor = hedge_factor
+
+    def margin_calculator(self, payload, exchange_code=cfg.NFO):
+        sold = [row for row in payload if row.get("action") != cfg.BUY]
+        out = super().margin_calculator(sold, exchange_code)
+        if len(sold) < len(payload):
+            out["Success"]["span_margin_required"] *= self.hedge_factor
+        return out
+
+
+@pytest.fixture
+def hedge_chain(monkeypatch):
+    def _install(proc):
+        def price(strike):
+            return max(1.0, 60.0 - abs(strike - proc.spot) / 25.0)
+
+        def fake(p, user_id, stock_code, exchange_code, expiry, right):
+            return {
+                "Status": 200, "Error": None, "quote_source": "websocket",
+                "Success": [
+                    {"strike_price": s, "spot_price": proc.spot, "spot_source": "live",
+                     "best_bid_price": price(s), "best_offer_price": price(s) + 1, "ltp": price(s) + 0.5}
+                    for s in _WIDE
+                ],
+            }
+
+        monkeypatch.setattr(bot2, "fetch_chain_side_icici_response", fake, raising=False)
+        monkeypatch.setattr(
+            "icici_breeze_backend.app.services.quote_source_router.fetch_chain_side_icici_response", fake)
+
+    return _install
+
+
+def _hedged_plan(proc, monkeypatch, strategies, *, choice="best", implied=0.02 ** 2, wing_multiple=1.0):
+    _reading(monkeypatch, 1.2, implied=implied)
+    leg = IndexWriterLeg(enabled=True, strategies=strategies, safety_pct_ce=2.0, safety_pct_pe=2.0,
+                         margin_pct_cap=30.0, wing_multiple=wing_multiple)
+    return bot2.plan_index(proc, "u1", "NIFTY", expiry_display=EXPIRY,
+                           config=config(indices={"NIFTY": leg}, premium_gate=PremiumGateConfig()),
+                           available_margin=1_000_000.0, margin_source="breeze_api", choice=choice)
+
+
+def test_a_bull_put_spread_buys_its_wing_an_implied_move_beyond_the_short(hedge_chain, monkeypatch):
+    proc = HedgeProc()
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["bull_put_spread"])
+    assert plan.strategy == "bull_put_spread" and plan.choice == "hedged"
+    wing, short = plan.legs
+    assert (wing["action"], short["action"]) == ("buy", "sell")
+    assert short["strike_price"] == 23500.0
+    # 23500 x e^-0.02 = 23034.6: the listed strike at or beyond it, further from the money.
+    assert wing["strike_price"] == 23000.0
+    # Net premium: the short's bid less the wing's ask, at the size the margin cap buys.
+    per_unit = short["bid"] - wing["bid"]
+    assert plan.premium_total == pytest.approx(per_unit * plan.quantity)
+
+
+def test_a_wing_is_always_at_least_one_strike_beyond_its_short(hedge_chain, monkeypatch):
+    proc = HedgeProc()
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["bear_call_spread"], implied=1e-10)
+    wing, short = plan.legs
+    assert short["strike_price"] == 24500.0 and wing["strike_price"] == 24700.0
+
+
+def test_a_plan_offers_the_best_naked_and_the_best_hedged_and_auto_takes_the_bigger_total(
+    hedge_chain, monkeypatch,
+):
+    proc = HedgeProc(hedge_factor=0.3)
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["naked_pe", "short_strangle", "bull_put_spread", "iron_condor"])
+    assert set(plan.alternatives) == {"naked", "hedged"}
+    naked, hedged = plan.alternatives["naked"], plan.alternatives["hedged"]
+    assert naked.strategy in ("naked_pe", "short_strangle")
+    assert hedged.strategy in ("bull_put_spread", "iron_condor")
+    # Total premium receivable at each one's own size, not per lot: the cheap spread fits
+    # many more lots, so it collects more even though each lot collects less.
+    assert hedged.premium_total > naked.premium_total
+    assert plan.choice == "hedged"
+
+
+def test_with_costly_spreads_auto_keeps_the_naked_shape(hedge_chain, monkeypatch):
+    proc = HedgeProc(hedge_factor=0.95)
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["naked_pe", "bull_put_spread"])
+    assert plan.choice == "naked" and plan.strategy == "naked_pe"
+
+
+def test_a_choice_plans_only_that_alternative(hedge_chain, monkeypatch):
+    proc = HedgeProc(hedge_factor=0.95)
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["naked_pe", "bull_put_spread"], choice="hedged")
+    assert plan.choice == "hedged" and set(plan.alternatives) == {"hedged"}
+
+
+def test_no_implied_move_drops_the_hedged_shapes_and_keeps_the_naked(hedge_chain, monkeypatch):
+    proc = HedgeProc()
+    hedge_chain(proc)
+    _reading(monkeypatch, None)
+    leg = IndexWriterLeg(enabled=True, strategies=["naked_pe", "bull_put_spread"], safety_pct_pe=2.0,
+                         margin_pct_cap=30.0)
+    plan = bot2.plan_index(proc, "u1", "NIFTY", expiry_display=EXPIRY, config=config(indices={"NIFTY": leg}),
+                           available_margin=1_000_000.0, margin_source="breeze_api")
+    assert plan.strategy == "naked_pe" and set(plan.alternatives) == {"naked"}
+
+
+def test_the_stop_is_on_net_premium_and_the_target_reads_the_shorts_only(hedge_chain, monkeypatch):
+    proc = HedgeProc()
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["bull_put_spread"])
+    conf = config(loss_limit_premium_multiple=2.0, profit_target_pct=50.0)
+    terms = bot2.exit_terms(plan, conf)
+    assert terms["loss_limit"] == pytest.approx(2.0 * plan.premium_total)
+    short = plan.legs[1]
+    assert terms["target_option_price"] == conf.profit_target_price_for(short["bid"])
+
+
+def test_a_wing_that_does_not_fill_stops_every_sell(hedge_chain, monkeypatch, no_arm):
+    from icici_breeze_backend.app.services.bots.scalping import live as scalp
+
+    proc = HedgeProc()
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["bull_put_spread"])
+    bought = []
+
+    def partial(p, user_id, order, **kw):
+        bought.append(order)
+        return scalp.FillResult(order_id="W1", filled_quantity=order.quantity // 2,
+                                requested_quantity=order.quantity, average_price=5.0)
+
+    monkeypatch.setattr(scalp, "place_and_confirm", partial)
+    monkeypatch.setattr(bot2, "_fit_to_book", lambda user_id, result: True)
+    result = bot2.execute_plan(proc, "u1", plan, config=config())
+    assert len(bought) == 1 and bought[0].action == cfg.BUY
+    assert proc.placed == [], "no short may go out without its wing"
+    assert "nothing was sold" in result.error and result.order_ids == ["W1"]
+
+
+def test_wings_fill_first_then_the_shorts_are_sold(hedge_chain, monkeypatch, no_arm):
+    from icici_breeze_backend.app.services.bots.scalping import live as scalp
+
+    proc = HedgeProc()
+    hedge_chain(proc)
+    plan = _hedged_plan(proc, monkeypatch, ["iron_condor"])
+    order = []
+
+    def filled(p, user_id, leg, **kw):
+        order.append(("buy", leg.right))
+        return scalp.FillResult(order_id=f"W{len(order)}", filled_quantity=leg.quantity,
+                                requested_quantity=leg.quantity, average_price=5.0)
+
+    monkeypatch.setattr(scalp, "place_and_confirm", filled)
+    monkeypatch.setattr(bot2, "_fit_to_book", lambda user_id, result: True)
+    result = bot2.execute_plan(proc, "u1", plan, config=config())
+    assert result.error is None
+    # Both wings bought (through place_and_confirm), then the two shorts sold.
+    assert len(order) == 2 and len(proc.placed) == 2
+    assert all(leg["order_ids"] for leg in result.legs)

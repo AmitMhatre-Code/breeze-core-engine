@@ -225,3 +225,34 @@ def test_a_partial_run_still_counts_as_the_bot_having_acted_today(db):
 
     assert repo.has_committed_run_today("u1", BOT_HOLDINGS_WRITER) is True
     assert repo.has_terminal_run_today("u1", BOT_HOLDINGS_WRITER) is True
+
+
+def _two_alternative_proposal():
+    run_id = repo.start_run("u1", BOT_EXPIRY_INDEX_WRITER, "schedule")
+    legs = [_index_leg(alternative="naked"),
+            _index_leg(alternative="hedged", action="buy", strike_price=79000.0),
+            _index_leg(alternative="hedged")]
+    return repo.create_proposal(run_id=run_id, user_id="u1", bot_type=BOT_EXPIRY_INDEX_WRITER,
+                                legs=legs, totals={}, ttl_minutes=15)
+
+
+def test_approving_both_alternatives_of_one_index_is_refused_before_any_run(db, monkeypatch):
+    _two_alternative_proposal()
+    _arrange(monkeypatch, _executed())
+    runs_before = len(repo.list_runs("u1"))
+
+    with pytest.raises(svc.ApprovalRefused, match="not both"):
+        svc.approve("u1", BOT_EXPIRY_INDEX_WRITER, ApproveProposalRequest(leg_indexes=[0, 1, 2]))
+
+    assert len(repo.list_runs("u1")) == runs_before
+
+
+def test_approving_one_alternative_re_plans_just_that_one(db, monkeypatch):
+    _two_alternative_proposal()
+    _arrange(monkeypatch, _executed(rule_id="rule-1"))
+    asked = {}
+    monkeypatch.setattr(bot2, "plan_index", lambda *a, **k: asked.update(k) or _plan())
+
+    svc.approve("u1", BOT_EXPIRY_INDEX_WRITER, ApproveProposalRequest(leg_indexes=[1, 2]))
+
+    assert asked["choice"] == "hedged"

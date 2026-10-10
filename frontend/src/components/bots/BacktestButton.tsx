@@ -8,10 +8,12 @@ import { BacktestPeriodPicker } from "@/components/bots/BacktestPeriodPicker";
 import {
   BACKTEST_JOB_KEY as JOB_KEY,
   BACKTEST_SLUG,
+  DAILY_HISTORY_START,
   cancelBacktestJob,
   fetchBacktestJobStatus,
   startBotBacktest,
   type BacktestPeriod,
+  type BacktestPrices,
 } from "@/lib/bots-backtest";
 import { BOT_META, type BotType } from "@/lib/use-bots";
 import { apiClient } from "@/lib/api-client";
@@ -88,6 +90,10 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
+  // The Dynamic Iron Condor can replay years of NSE daily closes as well as ICICI's intraday bars.
+  const condor = bot === "condor";
+  const [prices, setPrices] = useState<BacktestPrices>("icici");
+  const daily = condor && prices === "nse_daily";
 
   const status = useQuery({
     queryKey: JOB_KEY,
@@ -106,6 +112,7 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
         bot,
         period,
         ...(period === "custom" ? { from_date: from, to_date: to } : {}),
+        ...(condor ? { prices } : {}),
       }),
     onSuccess: (j) => {
       setStartedRunId(j.run_id ?? null);
@@ -150,12 +157,52 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
         Backtest {title}
       </h2>
       <p className="mt-1 text-xs leading-relaxed text-muted">
-        Replays this bot&rsquo;s saved settings on real ICICI prices, sized with today&rsquo;s lot sizes and margin.
-        The result appears in Activity.
+        Replays this bot&rsquo;s saved settings on real {daily ? "NSE closing" : "ICICI"} prices, sized with
+        today&rsquo;s lot sizes and margin. The result appears in Activity.
       </p>
 
       {!ours ? (
         <>
+          {condor ? (
+            <fieldset className="mt-3">
+              <legend className="text-micro font-semibold uppercase tracking-[0.06em] text-faint">Prices</legend>
+              <div className="mt-1.5 space-y-1.5 text-sm">
+                {([
+                  ["icici", "ICICI intraday", "From 5 Jan 2026. Both checks, at 10:30 and after the close."],
+                  ["nse_daily", "NSE daily closes", "From 1 Jan 2020, including the 2020 crash. One decision a session, at the close, with every cycle sized to today's money."],
+                ] as const).map(([value, label, hint]) => (
+                  <label key={value} className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="radio"
+                      name="backtest-prices"
+                      className="mt-1"
+                      checked={prices === value}
+                      disabled={start.isPending}
+                      onChange={() => setPrices(value)}
+                    />
+                    <span>
+                      <span className="font-semibold text-text">{label}</span>
+                      <span className="block text-hint text-faint">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {daily ? (
+                <button
+                  type="button"
+                  className="app-link mt-1.5 text-hint"
+                  disabled={start.isPending}
+                  onClick={() => {
+                    setPeriod("custom");
+                    setFrom(DAILY_HISTORY_START);
+                    setTo(new Date().toISOString().slice(0, 10));
+                  }}
+                >
+                  Since 2020
+                </button>
+              ) : null}
+            </fieldset>
+          ) : null}
           <BacktestPeriodPicker
             period={period}
             onPeriod={setPeriod}
@@ -166,7 +213,14 @@ function BacktestDialog({ botType, onClose }: { botType: BotType; onClose: () =>
             disabled={start.isPending}
           />
 
-          <p className="mt-3 text-hint leading-relaxed text-faint">
+          {daily ? (
+            <p className="mt-3 text-hint leading-relaxed text-faint">
+              Sessions not stored yet are downloaded from NSE&rsquo;s public archive outside market hours, about
+              1.3 GB the first time from 2020 (about an hour), and only new sessions after that. In market
+              hours it replays what is already stored.
+            </p>
+          ) : null}
+          <p className={`mt-3 text-hint leading-relaxed text-faint ${daily ? "hidden" : ""}`}>
             Missing history is fetched from ICICI outside market hours
             {budget ? `, within today's backtest budget (${budget.remaining_today} of ${budget.daily_calls} calls left)` : ""}.
             Anything that can&rsquo;t be fetched is skipped and reported, never modelled.

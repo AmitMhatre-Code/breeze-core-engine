@@ -86,6 +86,24 @@ def _legacy_signal_shape(node: Any) -> Any:
     return out
 
 
+def _gate_off_shape(node: Any) -> Any:
+    """Drop a premium gate that is switched off (docs/premium-gate-plan.md).
+
+    The gate arrived after paper evidence already existed, and an off gate decides nothing, so a
+    bot that never turned it on must hash exactly as before. Switched on, it is part of what the
+    bot does with money -- and so is the reading's version, since a new version decides
+    differently for the same threshold."""
+    if not isinstance(node, dict) or not isinstance(node.get("premium_gate"), dict):
+        return node
+    out = dict(node)
+    gate = out.pop("premium_gate")
+    if gate.get("enabled"):
+        from icici_breeze_backend.app.services.premium_gate.reading import GATE_VERSION
+
+        out["premium_gate"] = {**gate, "version": GATE_VERSION}
+    return out
+
+
 def material_config_hash(bot_type: str, config: Any) -> str:
     """Fingerprint the settings that decide what this bot does with money.
 
@@ -107,7 +125,8 @@ def material_config_hash(bot_type: str, config: Any) -> str:
     except Exception:  # noqa: BLE001 -- see docstring: unhashable config must not open a gate
         _logger.debug("evidence: config did not normalise for %s", bot_type, exc_info=True)
         normalised = raw
-    canonical = json.dumps(_strip(_legacy_signal_shape(normalised)), sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(_strip(_gate_off_shape(_legacy_signal_shape(normalised))), sort_keys=True,
+                           separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 

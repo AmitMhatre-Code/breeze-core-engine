@@ -355,6 +355,9 @@ def _tranche(
         return None
     if dte > tranche_due_dte(settings, state.tranches_entered):
         return None
+    refused = premium_refusal(model, market, settings)
+    if refused is not None:
+        return _decision("no_action", refused[0], f"Tranche due, but {refused[1]}", metrics)
     strikes = entry_strikes(model, market.strikes, settings)
     if strikes is None:
         return _decision(
@@ -370,6 +373,29 @@ def _tranche(
         + narrowed_wings_note(strikes, wing_width_points(settings, model.spot)),
         metrics, tranche_strikes=strikes,
     )
+
+
+def premium_refusal(
+    model: GreeksModel, market: MarketSnapshot, settings: CondorSettings
+) -> Optional[tuple[str, str]]:
+    """(reason code, text) when the premium gate stops a tranche entry, else None (#78).
+
+    Implied: the cycle chain's ATM volatility over the model's time to expiry (total variance,
+    so the day count does not matter). Forecast: `market.forecast_variance`, from the cash index's
+    own sessions. One refusal rule with every other gated bot (`premium_gate.gate`)."""
+    gate = settings.premium_gate
+    if not gate.enabled:
+        return None
+    from icici_breeze_backend.app.services.premium_gate import gate as premium_gate
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    implied = model.atm_sigma ** 2 * model.t if model.atm_sigma else None
+    reading = premium.reading_from_variance(implied, market.forecast_variance, market.forecast_reason)
+    refused = premium_gate.refusal(reading, gate, "sell")
+    if refused is None:
+        return None
+    text = refused[1]
+    return refused[0], text[0].lower() + text[1:]
 
 
 def wing_width_points(settings: CondorSettings, spot: float) -> float:

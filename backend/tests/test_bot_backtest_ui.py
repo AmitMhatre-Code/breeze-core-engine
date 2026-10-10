@@ -54,6 +54,10 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "db_path", lambda: cache)
     monkeypatch.setattr(jobs, "_store_ready", False)
     monkeypatch.setattr(service, "holidays", lambda: set())
+    # These tests drive the backtest plumbing over a synthetic day or two, which carries no
+    # month of index history: a new bot's premium gate (on by default) would refuse every
+    # trade, correctly. The gate's own replay has its own tests, so bots start as saved ones do.
+    monkeypatch.setattr(repo, "new_bot_config", lambda bot_type: repo.normalize_config(bot_type, {}))
     ensure_bots_tables(users)
     store.ensure_tables(cache)
     yield {"users": users, "cache": cache}
@@ -423,7 +427,7 @@ def test_a_fly_replay_off_the_live_broker_is_a_400(client, monkeypatch):
 
 def test_every_bot_with_a_replay_can_be_started_from_its_card(client, monkeypatch):
     # The route once listed only the retired page's bots, so CAS Bingo's card got a bare 422.
-    monkeypatch.setattr(jobs, "start_bot_backtest", lambda user_id, bot, *a: {"bot": bot})
+    monkeypatch.setattr(jobs, "start_bot_backtest", lambda user_id, bot, *a, **k: {"bot": bot})
     for bot in service.BOT_TYPES:
         r = client.post("/bots/backtest/start", json={"bot": bot, "period": "last_day"})
         assert r.status_code == 200 and r.json()["bot"] == bot, (bot, r.text)
@@ -559,7 +563,8 @@ class TestOneClickBacktest:
         # Bot 3 is compared across every signal setting it could trade (plan section 8): four
         # signal choices (expansion, Momentum v3, v2, v1 -- #72) x three durations x two ways.
         comparison = row.detail["summary"]["comparison"]
-        assert len(comparison) == 24 and sum(1 for c in comparison if c["is_saved"]) == 1
+        # 24 signal settings, then the premium gate off/0.90/1.00/1.20 less the saved one (off).
+        assert len(comparison) == 27 and sum(1 for c in comparison if c["is_saved"]) == 1
 
         # The row downloads one zip: the comparison, each setting's files, and the trail.
         import json
@@ -572,7 +577,7 @@ class TestOneClickBacktest:
             assert {"README.txt", "run.json", "summary.csv", "audit.jsonl"} <= names
             assert {"momentum-1m-follow/trades.csv", "momentum-1m-follow/daily.csv",
                     "momentum-1m-follow/decisions.csv"} <= names
-            assert len(zf.read("summary.csv").decode().strip().splitlines()) == 25
+            assert len(zf.read("summary.csv").decode().strip().splitlines()) == 28  # header + 27 settings
             events = [json.loads(line)["event"] for line in zf.read("audit.jsonl").decode().splitlines()]
         assert events[0] == "backtest_started" and events[-1] == "backtest_finished"
 
@@ -605,8 +610,8 @@ class TestOneClickBacktest:
         assert state["status"] == "completed", state
 
         assert seen and all(phase == "replaying" and day == "2026-03-09" for phase, _s, day in seen)
-        assert [step for _p, step, _d in seen] == list(range(1, 25))
-        assert state["steps"] == 24 and state["phase"] == "recording"
+        assert [step for _p, step, _d in seen] == list(range(1, 28))
+        assert state["steps"] == 27 and state["phase"] == "recording"
         assert state["elapsed_seconds"] >= state["quiet_seconds"] >= 0
 
     def test_a_trail_belongs_to_its_user_and_rejects_traversal(self, env, audit):
@@ -637,7 +642,7 @@ class TestOneClickBacktest:
         """Its row is `running` a moment before its thread is; a read in between must not close it."""
         reaped: list[int] = []
 
-        def opening(user_id, bot, *a):
+        def opening(user_id, bot, *a, **k):
             repo.start_run(user_id, service.BOT_TYPES[bot], "backtest")
             reaped.append(jobs.reap_orphaned_rows())
             return {}
@@ -670,7 +675,7 @@ class TestOneClickBacktest:
         assert _wait_for_job()["status"] == "completed"
 
         decisions = [m for m in written if m.endswith("/decisions.csv")]
-        assert len(decisions) == 24, written
+        assert len(decisions) == 27, written
         assert written.index(decisions[-1]) < written.index("summary.csv")
 
     def test_a_run_that_fails_leaves_no_zip_behind(self, env, audit, monkeypatch):
@@ -910,7 +915,7 @@ class TestTheMemoryCeiling:
         jobs.start_bot_backtest("u1", "momentum", "last_day")
         state = _wait_for_job()
         assert state["status"] == "failed"
-        assert "after 1 of 24 signal setting(s)" in state["error"]
+        assert "after 1 of 27 setting(s)" in state["error"]
 
         (row,) = [r for r in repo.list_runs("u1") if r.trigger == "backtest"]
         assert row.status == "failed" and row.reason_code == "backtest_failed"
@@ -925,3 +930,19 @@ class TestTheMemoryCeiling:
         monkeypatch.setattr(jobs.memory, "usage", lambda: (900_000_000, 1_000_000_000))
         r = client.post("/bots/backtest/start", json={"bot": "momentum", "period": "last_day"})
         assert r.status_code == 503 and "restart the app" in r.json()["detail"]
+
+
+def test_any_bot_can_read_the_backtest_of_its_saved_settings(env):
+    """`/bots/backtest-evidence`: what CAS Bingo's Autonomous confirmation shows, and asks the
+    user to type when it lost money (#76). Never a gate, so it answers null rather than failing."""
+    from icici_breeze_backend.app.api.v1 import route_bots
+
+    ctx = RequestContext(user_id="u1", username="u1", roles=["trader"], is_authenticated=True,
+                         broker_token=None)
+    bot_type = service.BOT_TYPES["momentum"]
+    assert route_bots.backtest_evidence(bot_type=bot_type, ctx=ctx) == {"backtest": None}
+
+    saved = MomentumLongScalperConfig(**repo.get_or_create_bot("u1", bot_type).config)
+    _save_momentum_run(env["cache"], "r-mine", saved, created_at="2026-09-15T20:00:00")
+    body = route_bots.backtest_evidence(bot_type=bot_type, ctx=ctx)
+    assert body["backtest"]["run_id"] == "r-mine" and body["backtest"]["net_pnl"] == 18_450.0

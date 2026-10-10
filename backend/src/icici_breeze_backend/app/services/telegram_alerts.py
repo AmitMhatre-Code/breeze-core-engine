@@ -524,10 +524,38 @@ _BOT_LABEL = {
 
 def _leg_line(leg: Any) -> str:
     side = "CE" if str(getattr(leg, "right", "")).lower().startswith("c") else "PE"
+    verb = "BUY" if getattr(leg, "action", "sell") == "buy" else "SELL"
     return (
-        f"• SELL {leg.stock_code} {leg.strike_price:g} {side} ×{leg.quantity} "
+        f"• {verb} {leg.stock_code} {leg.strike_price:g} {side} ×{leg.quantity} "
         f"@ ₹{leg.premium_per_share:g}"
     )
+
+
+_CHOICE_TITLE = {"naked": "Naked", "hedged": "Hedged"}
+
+
+def _alternatives_message(bot_type: str, proposal: Any, deadline: str, alts: dict[str, Any]) -> str:
+    """Bot 2 offering the best naked and the best hedged trade side by side; one is placed."""
+    lines = [f"🤖 *{_BOT_LABEL.get(bot_type, 'Bot')} — choose one*", ""]
+    for n, choice in enumerate(("naked", "hedged")):
+        if choice not in alts:
+            continue
+        t = alts[choice]
+        names = ", ".join(s for s in t.get("strategies") or [] if s)
+        lines.append(f"*{n + 1}. {_CHOICE_TITLE[choice]}{f' — {names}' if names else ''}*")
+        lines += [_leg_line(leg) for leg in proposal.legs if getattr(leg, "alternative", None) == choice]
+        detail = f"Premium ₹{float(t['premium_total']):,.0f}"
+        if t.get("span_total"):
+            detail += f" · margin ₹{float(t['span_total']):,.0f}"
+        if t.get("worst_case") is not None:
+            detail += f" · worst case ₹{float(t['worst_case']):,.0f}"
+        lines += [detail, ""]
+    lines += [
+        "_Tap the one to place. Both are sized to the margin cap; the same stop guards either._",
+        f"_Valid until {deadline}. Nothing is placed unless you choose._",
+        _price_move_note(bot_type),
+    ]
+    return "\n".join(lines)
 
 
 def _format_proposal_message(bot_type: str, proposal: Any, deadline: str) -> str:
@@ -538,6 +566,9 @@ def _format_proposal_message(bot_type: str, proposal: Any, deadline: str) -> str
     stale message and sees no orders would reasonably conclude the bot is broken.
     """
     totals = proposal.totals or {}
+    alts = totals.get("alternatives") or {}
+    if len(alts) > 1:
+        return _alternatives_message(bot_type, proposal, deadline, alts)
     lines = [
         f"🤖 *{_BOT_LABEL.get(bot_type, 'Bot')} — approval needed*",
         "",
@@ -594,9 +625,24 @@ def _bots_app_url() -> str:
     return f"{origin}/bots" if origin else ""
 
 
-def _approval_keyboard(token: str, app_url: str) -> dict[str, Any]:
+def _approval_keyboard(
+    token: str, app_url: str, choice_tokens: dict[str, str] | None = None,
+    premiums: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Two actions on one single-use token. Whichever is tapped first wins, and the second
-    tap finds the token already burned — which is the behaviour we want anyway."""
+    tap finds the token already burned — which is the behaviour we want anyway.
+
+    With `choice_tokens` (Bot 2's two alternatives), one approve button per alternative, each on
+    its own token: the portal routes only approve/reject, and the token says which trade."""
+    if choice_tokens:
+        keyboard = [[
+            {"text": f"✅ Place {choice}" + (f" · ₹{premiums[choice]:,.0f}" if premiums and choice in premiums else ""),
+             "callback_data": f"a:{t}"}
+            for choice, t in choice_tokens.items()
+        ], [{"text": "❌ Reject", "callback_data": f"r:{token}"}]]
+        if app_url:
+            keyboard.append([{"text": "⚙️ Review in app", "url": app_url}])
+        return {"inline_keyboard": keyboard}
     row = [
         {"text": "✅ Approve all", "callback_data": f"a:{token}"},
         {"text": "❌ Reject", "callback_data": f"r:{token}"},
@@ -623,6 +669,7 @@ def notify_bot_proposal(
     deadline: str,
     token: str,
     record_message: Callable[[int, str], None] | None = None,
+    choice_tokens: dict[str, str] | None = None,
 ) -> bool:
     """Send a proposal with its Approve/Reject keyboard. False if it could not be sent.
 
@@ -642,7 +689,11 @@ def notify_bot_proposal(
         return False
 
     text = _format_proposal_message(bot_type, proposal, deadline)
-    markup = _approval_keyboard(token, _bots_app_url())
+    alts = (getattr(proposal, "totals", None) or {}).get("alternatives") or {}
+    markup = _approval_keyboard(
+        token, _bots_app_url(), choice_tokens,
+        {c: float(t.get("premium_total") or 0) for c, t in alts.items()},
+    )
     # Sent inline rather than on a daemon thread, unlike every other alert here: the caller
     # must know whether the ask actually went out before it records the run as waiting.
     message_id = send_message_get_id(status["telegram_chat_id"], text, reply_markup=markup)

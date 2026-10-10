@@ -9,6 +9,7 @@ import {
   num,
   rupees,
 } from "@/components/bots/SettingsHelp";
+import { PremiumGateSettings } from "@/components/bots/PremiumGateSettings";
 import { SignalChoicePicker } from "@/components/bots/SignalChoicePicker";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { FieldValidityContext, NumberInput } from "@/components/ui/NumberInput";
@@ -35,6 +36,7 @@ export type Tab = { id: string; label: string };
 export const MOMENTUM_TABS: Tab[] = [
   { id: "schedule", label: "Schedule" },
   { id: "signal", label: "Signal" },
+  { id: "premium", label: "Premium" },
   { id: "exits", label: "Exits" },
   { id: "risk", label: "Risk" },
 ];
@@ -45,6 +47,7 @@ export const IRON_FLY_TABS: Tab[] = [
   { id: "exits", label: "Exits" },
   { id: "reentry", label: "Re-entry" },
   { id: "filter", label: "Entry filter" },
+  { id: "premium", label: "Premium" },
   { id: "risk", label: "Risk" },
 ];
 
@@ -344,6 +347,17 @@ export function ScalperSettings({
   if (tab === "schedule") {
     return (
       <ScheduleTab config={config} onConfig={onConfig} disabled={disabled} isFly={isFly} />
+    );
+  }
+
+  if (tab === "premium") {
+    return (
+      <PremiumGateSettings
+        gate={config.premium_gate ?? { enabled: false, threshold: 1 }}
+        side={isFly ? "sell" : "buy"}
+        disabled={disabled}
+        onChange={(premium_gate) => onConfig({ premium_gate })}
+      />
     );
   }
 

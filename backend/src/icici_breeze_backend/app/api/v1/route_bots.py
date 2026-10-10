@@ -393,6 +393,27 @@ def update_bot(
     return updated
 
 
+@router.get("/backtest-evidence")
+def backtest_evidence(
+    bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
+) -> dict:
+    """The newest completed backtest of this bot's exact saved settings, or null.
+
+    For the confirmations that stand in front of unattended orders (CAS Bingo's Autonomous; the
+    scalpers read the same thing through `/live-eligibility`). Never a gate: the dialog shows a
+    losing backtest and asks the user to type its loss, and nothing else (#76)."""
+    _validate_bot_type(bot_type)
+    record = repo.get_or_create_bot(ctx.user_id, bot_type)
+    found = None
+    try:
+        from icici_breeze_backend.app.services.bots import backtest_service as backtest_mod
+
+        found = backtest_mod.backtest_evidence(ctx.user_id, bot_type, record.config)
+    except Exception:  # noqa: BLE001 -- evidence that cannot be read is simply not shown
+        logging.getLogger(__name__).debug("backtest-evidence: none for %s", bot_type, exc_info=True)
+    return {"backtest": BacktestEvidence(**found).model_dump() if found else None}
+
+
 @router.get("/live-eligibility", response_model=LiveEligibility)
 def live_eligibility(
     bot_type: str = Query(...), ctx: RequestContext = Depends(get_request_context)
@@ -649,7 +670,9 @@ def plan_bot(
     ordered = sorted(expiring, key=lambda c: config.indices[c].priority)
     legs: list[ProposalLeg] = []
     skipped: list[dict] = []
+    warnings: list[dict] = []
     for code in ordered:
+        # A trade chosen by hand is the user's call: the premium gate is reported, never enforced.
         plan = bot2.plan_index(
             proc,
             ctx.user_id,
@@ -658,7 +681,16 @@ def plan_bot(
             config=config,
             available_margin=available,
             margin_source=margin_source,
+            enforce_gate=False,
         )
+        if plan.premium_text:
+            warnings.append({
+                "kind": "premium",
+                "stock_code": bot2.INDEX_LABEL.get(code, code),
+                "message": plan.premium_text,
+                "would_refuse": plan.premium_would_refuse,
+                "threshold": config.premium_gate.threshold if config.premium_gate.enabled else None,
+            })
         if plan.error or not plan.legs:
             skipped.append(
                 {
@@ -668,7 +700,7 @@ def plan_bot(
                 }
             )
             continue
-        legs.extend(proposals.plan_to_legs(plan, code))
+        legs.extend(proposals.plan_alternatives_to_legs(plan, code))
 
     if not legs:
         repo.finish_run(
@@ -678,7 +710,7 @@ def plan_bot(
             reason_text="Nothing could be sized today.",
             detail={"skipped": skipped},
         )
-        return ScanResponse(run_id=run_id, proposal=None, skipped=skipped, warnings=[])
+        return ScanResponse(run_id=run_id, proposal=None, skipped=skipped, warnings=warnings)
 
     proposal = repo.create_proposal(
         run_id=run_id,
@@ -695,7 +727,7 @@ def plan_bot(
         reason_text=f"{len(legs)} leg(s) proposed for review.",
         detail={"skipped": skipped, "proposal_id": proposal.id},
     )
-    return ScanResponse(run_id=run_id, proposal=proposal, skipped=skipped, warnings=[])
+    return ScanResponse(run_id=run_id, proposal=proposal, skipped=skipped, warnings=warnings)
 
 
 # --------------------------------------------------------------------------------------

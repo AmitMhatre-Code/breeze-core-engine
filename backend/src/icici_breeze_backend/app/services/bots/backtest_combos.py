@@ -16,6 +16,11 @@ and v1 -- four signal choices while Momentum's versions run side by side.
   trades NIFTY only.
 * Bot 2 (expiry writer) reads no signal: one replay, as configured.
 
+Bots 2, 3 and 4 also compare their premium gate (docs/premium-gate-plan.md): off, and at 0.90,
+1.00 and 1.20, each at the bot's saved other settings -- one factor at a time, never crossed with
+the signal grid, so the scalper compares 24 + 3 rows, not 96. The row matching the saved gate is
+the saved row already listed, so it is not repeated; the others follow it.
+
 Every other setting is the bot's saved one. The saved combination is marked, so the table can
 say "your setting" beside the alternatives.
 """
@@ -61,6 +66,47 @@ def _same_cell(choice: SignalChoice, m: str, v: int, d: int) -> bool:
 
 
 def combos_for(bot: str, config: Any) -> list[Combo]:
+    combos = _signal_combos(bot, config)
+    if bot in ("expiry", "fly", "momentum"):
+        # Straight after the saved row's series (its follow and fade both): they read that
+        # series, which the bounded readings cache (`backtest_service.KEEP_SERIES`) still holds
+        # there and may not hold at the end.
+        at = next((i + 1 for i, c in enumerate(combos) if c.is_saved), len(combos))
+        while at < len(combos) and at > 0 and _cell_of(combos[at]) == _cell_of(combos[at - 1]):
+            at += 1
+        combos[at:at] = _premium_combos(bot, config)
+    return combos
+
+
+def _cell_of(combo: Combo) -> Optional[tuple]:
+    """The signal series a combo reads, direction aside; None for one that reads none."""
+    if not combo.signal:
+        return None
+    return tuple(sorted((k, v) for k, v in combo.signal.items() if k != "direction"))
+
+
+def _premium_combos(bot: str, config: Any) -> list[Combo]:
+    from icici_breeze_backend.app.services.premium_gate.replay import COMPARED_THRESHOLDS
+
+    saved = config.premium_gate
+    verb = "Buy at or below" if bot == "momentum" else "Sell at or above"
+    out = []
+    for threshold in (None, *COMPARED_THRESHOLDS):
+        enabled = threshold is not None
+        if enabled == saved.enabled and (not enabled or abs(threshold - saved.threshold) < 1e-9):
+            continue  # the saved row is already in the table
+        gate = saved.model_copy(update={"enabled": enabled, "threshold": threshold or saved.threshold})
+        out.append(Combo(
+            id=f"premium-{'off' if not enabled else f'{threshold:.2f}'}",
+            label=f"Premium gate off" if not enabled else f"Premium gate: {verb.lower()} {threshold:.2f}x",
+            config=config.model_copy(update={"premium_gate": gate}),
+            signal=None,
+            is_saved=False,
+        ))
+    return out
+
+
+def _signal_combos(bot: str, config: Any) -> list[Combo]:
     if bot == "momentum":
         out = []
         for m, v in options():

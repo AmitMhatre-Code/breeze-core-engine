@@ -58,7 +58,9 @@ def test_the_gate_is_asked_about_the_version_the_bot_picked():
 def test_every_version_is_its_own_backtest_setting():
     combos = backtest_combos.combos_for("momentum", MomentumLongScalperConfig())
     ids = [c.id for c in combos]
-    assert len(ids) == len(set(ids)) == 24
+    # 24 signal settings, plus the premium gate at three thresholds (#75).
+    assert len(ids) == len(set(ids)) == 27
+    assert len([c for c in combos if c.signal is not None]) == 24
     assert {"expansion-15m-fade", "momentum-v3-1m-follow", "momentum-15m-fade",
             "momentum-v1-5m-follow"} <= set(ids)
     (saved,) = [c for c in combos if c.is_saved]
@@ -68,9 +70,14 @@ def test_every_version_is_its_own_backtest_setting():
 
 def test_follow_and_fade_of_one_series_stay_adjacent():
     """The readings cache holds two series because follow and fade of one run back to back."""
-    combos = backtest_combos.combos_for("momentum", MomentumLongScalperConfig())
+    combos = [c for c in backtest_combos.combos_for("momentum", MomentumLongScalperConfig())
+              if c.signal is not None]
     series = [c.config.signal.series_id("NIFTY") for c in combos]
     assert all(series[i] == series[i + 1] for i in range(0, len(series), 2))
+    # The premium gate's rows (#75) sit after the saved pair, not between follow and fade.
+    every = backtest_combos.combos_for("momentum", MomentumLongScalperConfig())
+    saved = next(i for i, c in enumerate(every) if c.is_saved)
+    assert every[saved + 1].id.endswith("-fade") and every[saved + 2].id.startswith("premium-")
 
 
 def test_an_old_run_shows_under_the_version_it_replayed():

@@ -45,7 +45,7 @@ from icici_breeze_backend.app.services.bots.scalping import backtest_regime as r
 from icici_breeze_backend.app.services.bots.scalping import backtest_store as store
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import Need, OptionKey
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
-from icici_breeze_backend.app.services.condor.engine import decide, entry_orders, entry_strikes
+from icici_breeze_backend.app.services.condor.engine import decide, entry_orders, entry_strikes, premium_refusal
 from icici_breeze_backend.app.services.condor.model import (
     CampaignState,
     Decision,
@@ -81,6 +81,9 @@ SMILE_ANCHOR_STEP = 500
 # for every settings combination, so the bars of every contract any of them touched would
 # otherwise stay loaded for the whole run; a check needs only a few dozen at once.
 BARS_KEPT = 400
+#: Traded out-of-the-money contracts an expiry needs on a session before an untraded one is priced
+#: off their smile (`DailySource`). Fewer, and the smile is a guess.
+MIN_SMILE_POINTS = 3
 
 ExitAction = Literal["time_roll", "close"]
 Status = Literal["ok", "missing", "stale", "unlisted"]
@@ -145,9 +148,17 @@ class StoreSource:
         self.path = path
         self.interval = interval
         self.blocks = Blocks(holidays, data_until)
+        from icici_breeze_backend.app.services.premium_gate import reading as premium
+        from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS
+
         spot = store.load_candles(
-            stock_code=UNDERLYING, table="spot_candles", from_date=start, to_date=end, path=path
+            stock_code=UNDERLYING, table="spot_candles", from_date=start - datetime.timedelta(days=WARMUP_DAYS),
+            to_date=end, path=path,
         )
+        # The premium gate's forecast reads the sessions before each check (#78).
+        self._sessions = premium.session_vols(spot)
+        self._holidays = holidays
+        spot = [c for c in spot if c.ts.date() >= start]
         self._spot = {c.ts: c.close for c in spot}
         self._spot_ts = sorted(self._spot)
         self._bars: OrderedDict[Contract, list[store.HistCandle]] = OrderedDict()
@@ -156,6 +167,9 @@ class StoreSource:
     def refresh(self) -> None:
         self._bars.clear()
         self._fetched = {k: v for k, v in self._fetched.items() if v}
+
+    def forecast_variance(self, at: datetime.datetime, expiry: datetime.date) -> tuple[Optional[float], Optional[str]]:
+        return _forecast(self._sessions, at, expiry, self._holidays)
 
     def spot(self, at: datetime.datetime) -> Optional[float]:
         import bisect
@@ -233,6 +247,181 @@ class StoreSource:
         return out
 
 
+class DailySource:
+    """NSE daily closing prices, for the long-history replay (docs/condor-daily-history-plan.md).
+
+    Every check reads that session's close: the replay runs close-only checks on this source, so
+    nothing is read before it happened. The sessions and listed expiries come from the data, not
+    from today's calendar: 2020's NIFTY options expired on Thursdays.
+
+    A contract that did not trade that session is **priced off the session's smile** (the user's
+    choice, 2026-10-09): the implied volatilities of that expiry's out-of-the-money contracts that
+    did trade, interpolated in log-moneyness and flat beyond the furthest one, then Black-Scholes.
+    Without it a far wing that did not trade had no price and a due tranche could not go in --
+    54 of 122 sessions in Jan-Jun 2020 -- which is not what the live bot does: it buys the wing at
+    its quote. NSE prices untraded contracts the same way. A traded close always wins; with fewer
+    than `MIN_SMILE_POINTS` traded contracts on the expiry there is no estimate (`stale`).
+    Every estimate used is counted (`estimated`) and the run says how many.
+
+    `notional_scale` sizes a cycle to today's money: today's NIFTY over NIFTY when it opens, so a
+    2% move costs the same in 2020 as now (the user's choice)."""
+
+    daily = True
+
+    def __init__(
+        self, start: datetime.date, end: datetime.date, *, reference_spot: float, path: Optional[str] = None,
+    ) -> None:
+        from icici_breeze_backend.app.services.condor import daily_history as dh
+
+        self._dh = dh
+        self.path = path
+        self.reference_spot = float(reference_spot)
+        from icici_breeze_backend.app.services.premium_gate import reading as premium
+        from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS
+
+        self._index = dh.index_closes(start, end, path=path)
+        self._expiries = dh.expiries_by_session(start, end, path=path)
+        # The premium gate's forecast (#78) from daily open and close: intraday (open to close)
+        # and overnight (close to open) variance per session. Noisier than the 1-minute sum the
+        # live gate reads, but unbiased; the close-only checks need no time-of-day share.
+        warm = start - datetime.timedelta(days=WARMUP_DAYS)
+        self._sessions = _daily_session_vols(dh.index_bars(warm, end, path=path))
+        self._holidays = dh.holidays_between(warm, end + datetime.timedelta(days=dh.MAX_DTE), path=path)
+        self._closes: OrderedDict[Contract, dict[datetime.date, float]] = OrderedDict()
+        self._smiles: OrderedDict[tuple[datetime.date, datetime.date], Optional[list[tuple[float, float]]]] = OrderedDict()
+        #: The (session, contract) prices that were estimated rather than traded.
+        self.estimated: set[tuple[datetime.date, Contract]] = set()
+
+    def refresh(self) -> None:
+        self._closes.clear()
+        self._smiles.clear()
+
+    def _smile(self, day: datetime.date, expiry: datetime.date, spot: float) -> Optional[list[tuple[float, float]]]:
+        """(log-moneyness, IV) of the out-of-the-money contracts of `expiry` that traded on `day`."""
+        import math
+
+        from icici_breeze_backend.app.services.condor.pricing import (
+            DEFAULT_R,
+            implied_volatility,
+            years_to_expiry_close,
+        )
+
+        key = (day, expiry)
+        if key in self._smiles:
+            self._smiles.move_to_end(key)
+            return self._smiles[key]
+        t = years_to_expiry_close(expiry, datetime.datetime.combine(day, datetime.time(15, 30), tzinfo=IST))
+        points = []
+        for strike, right, close in self._dh.traded_on(day, expiry, path=self.path):
+            if (right == "Call") != (strike >= spot):
+                continue  # in-the-money: mostly intrinsic, its volatility is noise
+            iv = implied_volatility(right, close, spot, strike, t, DEFAULT_R, 0.0)
+            if iv is not None and 0.01 < iv < 3.0:
+                points.append((math.log(strike / spot), iv))
+        smile = sorted(points) if len(points) >= MIN_SMILE_POINTS else None
+        self._smiles[key] = smile
+        if len(self._smiles) > BARS_KEPT:
+            self._smiles.popitem(last=False)
+        return smile
+
+    def _estimate(self, contract: Contract, day: datetime.date) -> Optional[float]:
+        import math
+
+        from icici_breeze_backend.app.services.condor.pricing import DEFAULT_R, bs_price, years_to_expiry_close
+
+        expiry, strike, right = contract
+        spot = self._index.get(day)
+        if not spot or expiry < day:
+            return None
+        smile = self._smile(day, expiry, spot)
+        if not smile:
+            return None
+        x = math.log(strike / spot)
+        if x <= smile[0][0]:
+            iv = smile[0][1]
+        elif x >= smile[-1][0]:
+            iv = smile[-1][1]
+        else:
+            for (x0, v0), (x1, v1) in zip(smile, smile[1:]):
+                if x0 <= x <= x1:
+                    iv = v0 + (v1 - v0) * (x - x0) / (x1 - x0) if x1 > x0 else v0
+                    break
+        t = years_to_expiry_close(expiry, datetime.datetime.combine(day, datetime.time(15, 30), tzinfo=IST))
+        return max(0.05, round(bs_price(right, spot, strike, t, iv, DEFAULT_R, 0.0), 2))
+
+    def trading_days(self, start: datetime.date, end: datetime.date) -> list[datetime.date]:
+        return sorted(d for d in self._index if start <= d <= end)
+
+    def listed_expiries(self, day: datetime.date) -> list[datetime.date]:
+        return list(self._expiries.get(day, []))
+
+    def forecast_variance(self, at: datetime.datetime, expiry: datetime.date) -> tuple[Optional[float], Optional[str]]:
+        return _forecast(self._sessions, at, expiry, self._holidays)
+
+    def notional_scale(self, spot: float) -> float:
+        return self.reference_spot / spot if spot > 0 else 1.0
+
+    def spot(self, at: datetime.datetime) -> Optional[float]:
+        return self._index.get(at.date())
+
+    def option(self, contract: Contract, at: datetime.datetime) -> tuple[Status, Optional[float]]:
+        closes = self._closes.get(contract)
+        if closes is None:
+            closes = self._dh.contract_closes(contract[0], contract[1], contract[2], path=self.path)
+            self._closes[contract] = closes
+            if len(self._closes) > BARS_KEPT:
+                self._closes.popitem(last=False)
+        else:
+            self._closes.move_to_end(contract)
+        price = closes.get(at.date())
+        if price:
+            return "ok", price
+        estimate = self._estimate(contract, at.date())
+        if estimate is None:
+            return "stale", None
+        self.estimated.add((at.date(), contract))
+        return "ok", estimate
+
+    def needs(self, contract: Contract, at: datetime.datetime, until: datetime.date) -> list[Need]:
+        return []  # everything is downloaded before the replay starts
+
+
+def _sessions_after(day: datetime.date, expiry: datetime.date, holidays: set[datetime.date]) -> int:
+    """Weekdays after `day` up to and including expiry, less known holidays."""
+    n, d = 0, day + datetime.timedelta(days=1)
+    while d <= expiry:
+        if d.weekday() < 5 and d not in holidays:
+            n += 1
+        d += datetime.timedelta(days=1)
+    return n
+
+
+def _forecast(sessions: list[Any], at: datetime.datetime, expiry: datetime.date,
+              holidays: set[datetime.date]) -> tuple[Optional[float], Optional[str]]:
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    naive = at.replace(tzinfo=None)
+    fc = premium.forecast(sessions, naive, _sessions_after(naive.date(), expiry, holidays))
+    return (fc.variance, None) if fc is not None else (None, premium.REASON_NO_HISTORY)
+
+
+def _daily_session_vols(bars: list[tuple[datetime.date, Optional[float], float]]) -> list[Any]:
+    import math
+
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    out: list[Any] = []
+    prev: Optional[tuple[datetime.date, float]] = None
+    for day, open_, close in bars:
+        o = open_ if open_ and open_ > 0 else close
+        intraday = math.log(close / o) ** 2
+        overnight = (math.log(o / prev[1]) ** 2
+                     if prev is not None and (day - prev[0]).days <= premium.MAX_OVERNIGHT_DAYS else None)
+        out.append(premium.SessionVol(day, o, close, intraday, (intraday,) * premium.SESSION_MINUTES, overnight))
+        prev = (day, close)
+    return out
+
+
 def price_at(bars: list[store.HistCandle], at: datetime.datetime) -> tuple[Status, Optional[float]]:
     """The traded price at `at`: the open of the 5-minute bar `at` falls in, if it traded, else
     the close of the last bar to finish by `at`, if recent enough."""
@@ -258,6 +447,9 @@ def price_at(bars: list[store.HistCandle], at: datetime.datetime) -> tuple[Statu
 class _Cycle:
     expiry: datetime.date
     opened: Optional[str] = None
+    #: Units per lot for this cycle on a notional-scaled source (`DailySource`); None until its
+    #: first tranche, and the lot size itself on an unscaled one.
+    lot_units: Optional[int] = None
     closed: Optional[str] = None
     close_reason: Optional[str] = None
     tranches: int = 0
@@ -305,7 +497,14 @@ class CondorReplay:
         holidays: set[datetime.date],
         on_day: Optional[Callable[[datetime.date], None]] = None,
         listed_band: Optional[tuple[float, float]] = None,
+        checks: tuple[str, ...] = ("sod", "eod"),
     ) -> None:
+        # Which scheduled checks run. The daily-price replay runs "eod" only: a 10:30 check would
+        # otherwise read that session's closing prices before they happened. A tranche set to
+        # enter at a check that does not run enters at the one that does (the user's call).
+        self.check_kinds = checks
+        if settings.entry_check not in checks and checks:
+            settings = settings.model_copy(update={"entry_check": checks[-1]})
         self.settings = settings
         # (below, above) as fractions of spot: new legs only inside it (#69). None = unlimited.
         self.listed_band = listed_band
@@ -333,13 +532,19 @@ class CondorReplay:
 
     def _schedule(self) -> list[tuple[datetime.date, str, datetime.datetime]]:
         out = []
-        for day in regime.trading_days(self.start, self.end, self.holidays):
+        days = (self.source.trading_days(self.start, self.end) if hasattr(self.source, "trading_days")
+                else regime.trading_days(self.start, self.end, self.holidays))
+        for day in days:
             for kind, hhmm in (("sod", self.settings.sod_check_ist), ("eod", self.settings.eod_check_ist)):
+                if kind not in self.check_kinds:
+                    continue
                 h, m = (int(x) for x in hhmm.split(":"))
                 out.append((day, kind, datetime.datetime.combine(day, datetime.time(h, m))))
         return out
 
     def listed_expiries(self, day: datetime.date) -> list[datetime.date]:
+        if hasattr(self.source, "listed_expiries"):
+            return self.source.listed_expiries(day)
         weekdays = regime.EXPIRY_WEEKDAY_MAP[UNDERLYING]
         out: set[datetime.date] = set()
         d = day
@@ -394,7 +599,7 @@ class CondorReplay:
             cycle = _Cycle(expiry=expiry)
             camp.cycles.append(cycle)
 
-        state = CampaignState(cycle.expiry, self.lot_size, cycle.leg_tuple(), camp.cash, cycle.tranches)
+        state = CampaignState(cycle.expiry, self._lot_units(cycle, spot), cycle.leg_tuple(), camp.cash, cycle.tranches)
         resolved = self._resolve(cycle.expiry, ts, spot, state, lambda m: (decide(state, m, self.settings, kind, self.charges), None))
         if isinstance(resolved, list):
             return resolved
@@ -435,9 +640,11 @@ class CondorReplay:
                     needs.extend(self.source.needs(c, ts, self.end))
                 if needs:
                     return needs
+            forecast, why = (self.source.forecast_variance(ts, expiry)
+                             if hasattr(self.source, "forecast_variance") else (None, None))
             market = MarketSnapshot(
                 now=ts.replace(tzinfo=IST), spot=spot, spot_live=True, feeds_ok=True, chain=rows,
-                listed=self._listed(rows, spot, held),
+                listed=self._listed(rows, spot, held), forecast_variance=forecast, forecast_reason=why,
             )
             decision, wanted = chooser(market)
             wanted = set(wanted or ()) | self._contracts_of(expiry, decision)
@@ -561,7 +768,8 @@ class CondorReplay:
             self._event(ts, kind, spot, d, "skipped")
             return
         if d.action == "no_action":
-            if d.reason in ("roll_credit_below_min", "roll_near_exit", "roll_unpriced", "tranche_unpriced", "roll_no_wing"):
+            if d.reason in ("roll_credit_below_min", "roll_near_exit", "roll_unpriced", "tranche_unpriced", "roll_no_wing",
+                            "premium_not_rich", "premium_unreadable"):
                 self._skip(d.reason)
                 self._event(ts, kind, spot, d, "skipped", roll_credit=d.roll_credit_points)
             return
@@ -582,7 +790,12 @@ class CondorReplay:
             camp.charges += fees
             cycle.closed, cycle.close_reason = ts.isoformat(), d.reason
             self._event(ts, kind, spot, d, "close", cash=round(cash, 2), orders=self._orders_json(d.orders))
-            if d.action == "exit_or_roll" and self.exit_action == "time_roll" and plan:
+            if isinstance(plan, str):
+                # The premium gate refused the next cycle: the live time-roll ticket then only
+                # closes, which ends the campaign as Close does (#78).
+                self._skip(plan)
+                self._end_campaign(ts, plan)
+            elif d.action == "exit_or_roll" and self.exit_action == "time_roll" and plan:
                 expiry, strikes, roll_market = plan
                 nxt = _Cycle(expiry=expiry)
                 camp.cycles.append(nxt)
@@ -593,8 +806,20 @@ class CondorReplay:
             else:
                 self._end_campaign(ts, d.reason if plan is not False else "no_expiry_to_roll_into")
 
+    def _lot_units(self, cycle: _Cycle, spot: float) -> int:
+        """Units in one lot of this cycle. On a notional-scaled source the cycle is sized at its
+        first tranche to today's money (the lot is today's lot x today's NIFTY / NIFTY then) and
+        keeps that size, so its tranches, rolls and per-lot delta band all agree."""
+        if cycle.lot_units is not None:
+            return cycle.lot_units
+        if not hasattr(self.source, "notional_scale"):
+            return self.lot_size
+        return max(1, round(self.lot_size * self.source.notional_scale(spot)))
+
     def _enter(self, cycle: _Cycle, strikes: dict, market: MarketSnapshot, kind, ts, d: Optional[Decision]) -> bool:
-        orders = entry_orders(strikes, self.qty, market)
+        if cycle.lot_units is None:
+            cycle.lot_units = self._lot_units(cycle, market.spot)
+        orders = entry_orders(strikes, (self.qty // self.lot_size) * cycle.lot_units, market)
         if orders is None:
             self._skip("tranche_unpriced")
             self._event(ts, kind, market.spot, d, "skipped", reason="tranche_unpriced",
@@ -618,8 +843,15 @@ class CondorReplay:
         if expiry is None:
             return False
 
+        refused: list[str] = []
+
         def choose(m: MarketSnapshot):
             model = build_greeks_model(m.chain, m.spot, expiry, m.now)
+            gate = premium_refusal(model, m, self.settings) if model else None
+            if gate is not None:
+                refused[:] = [gate[0]]
+                return None, set()
+            refused.clear()
             strikes = entry_strikes(model, m.strikes, self.settings) if model else None
             wanted = set()
             if strikes:
@@ -631,6 +863,8 @@ class CondorReplay:
         if isinstance(resolved, list):
             return resolved
         strikes, market = resolved
+        if refused:
+            return refused[0]  # the premium gate: close only, as the live ticket does (#78)
         return expiry, strikes, market
 
     def _end_campaign(self, ts: datetime.datetime, reason: str) -> None:

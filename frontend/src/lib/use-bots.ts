@@ -247,6 +247,11 @@ export type ApprovalMode = "auto" | "telegram";
 export type HoldingsWriterConfig = {
   default_safety_pct_ce: number;
   default_safety_pct_pe: number;
+  /** `implied_move`: strikes this many of the stock's own implied moves from spot, to expiry.
+   *  A scrip's own CE % / PE % still wins (docs/premium-gate-plan.md 5). */
+  distance_basis: "pct" | "implied_move";
+  implied_multiple_ce: number;
+  implied_multiple_pe: number;
   delivery_cash_budget: number;
   expiry_preference: "current" | "next";
   proposal_ttl_minutes: number;
@@ -259,24 +264,50 @@ export type HoldingsWriterConfig = {
   approval_mode: ApprovalMode;
 };
 
-export type IndexStrategy = "naked_ce" | "naked_pe" | "short_strangle";
+export type IndexStrategy =
+  | "naked_ce"
+  | "naked_pe"
+  | "short_strangle"
+  | "bear_call_spread"
+  | "bull_put_spread"
+  | "iron_condor";
 
 export const STRATEGY_LABEL: Record<IndexStrategy, string> = {
   naked_ce: "Naked CE",
   naked_pe: "Naked PE",
   short_strangle: "Short strangle",
+  bear_call_spread: "Bear call spread",
+  bull_put_spread: "Bull put spread",
+  iron_condor: "Iron condor",
 };
+
+/** The shapes that buy a wing beyond each short (docs/bot2-hedged-shapes-plan.md). */
+export const HEDGED_STRATEGIES: IndexStrategy[] = ["bear_call_spread", "bull_put_spread", "iron_condor"];
 
 export type IndexWriterLeg = {
   enabled: boolean;
-  /** A shortlist. With more than one entry the bot trades whichever yields the most
-   *  premium per rupee of margin — never the biggest absolute premium, which a strangle
-   *  would win every time it was shortlisted. */
+  /** A shortlist. The best naked and the best hedged shape are each the one collecting the
+   *  most premium at the size the margin cap allows; a proposal offers both, Auto places
+   *  whichever collects more. */
   strategies: IndexStrategy[];
   safety_pct_ce: number;
   safety_pct_pe: number;
+  /** `pct` uses the two distances above; `implied_move` puts each strike this many implied
+   *  standard deviations from spot, to expiry (docs/premium-gate-plan.md). */
+  distance_basis: "pct" | "implied_move";
+  implied_multiple_ce: number;
+  implied_multiple_pe: number;
+  /** A hedged shape's wing: this many implied moves beyond its short. */
+  wing_multiple: number;
   margin_pct_cap: number;
   priority: number;
+};
+
+/** Trade only when premium is rich (sellers) or cheap (the Long Scalper): implied move ÷ the
+ *  index's forecast move, against `threshold`. Fails closed. */
+export type PremiumGateConfig = {
+  enabled: boolean;
+  threshold: number;
 };
 
 export type ExpiryIndexWriterConfig = {
@@ -290,6 +321,7 @@ export type ExpiryIndexWriterConfig = {
   /** Share of the premium to capture before booking. 100 means let it expire worthless —
    *  no profit exit is armed at all, and only the stop-loss stands. */
   profit_book_premium_pct: number;
+  premium_gate: PremiumGateConfig;
 };
 
 /** Paper runs the full logic against live prices and places nothing; live places real
@@ -327,6 +359,8 @@ export type MomentumLongScalperConfig = {
   /** The signal that opens a trade. A trade is held until the call that opened it ends; the
    *  stop and the ladder still apply. One trade per call. */
   signal: SignalChoice;
+  /** Buys only when the option is cheap against the index's forecast move. */
+  premium_gate: PremiumGateConfig;
   exits: {
     /** A trailing trigger, not a take-profit: reaching it starts the runner. */
     target_pts: number;
@@ -374,6 +408,8 @@ export type IronFlyScalperConfig = {
     /** `signal_quiet`: the signal whose live call (either side) holds a fly. Direction unused. */
     signal: SignalChoice;
   };
+  /** Sells the fly only when its ATM options are rich against the index's forecast move. */
+  premium_gate: PremiumGateConfig;
   execution: ScalperExecutionConfig;
   risk: ScalperRiskConfig;
 };
@@ -621,6 +657,20 @@ export function useLiveEligibility(botType: BotType, enabled = true) {
   });
 }
 
+/** The newest completed backtest of a bot's exact saved settings, or null. For confirmations
+ *  in front of unattended orders that are not a scalper's (CAS Bingo's Autonomous). */
+export function useBacktestEvidence(botType: BotType, enabled = true) {
+  return useQuery({
+    queryKey: ["bots", "backtest-evidence", botType],
+    enabled,
+    queryFn: ({ signal }) =>
+      apiClient.get<{ backtest: BacktestEvidence | null }>(
+        `/bots/backtest-evidence?bot_type=${botType}`,
+        signal,
+      ),
+  });
+}
+
 /** The shared cost model. Deployment-wide, so it is not keyed by bot. */
 export function useTradingCharges() {
   return useQuery({
@@ -743,7 +793,11 @@ export type ProposalLeg = {
   selected: boolean;
   note: string | null;
   strategy: IndexStrategy | null;
-  /** Both sides of a strangle share this, so selecting one selects both. */
+  /** "buy" for a hedged shape's wing; every other leg is sold. */
+  action?: "sell" | "buy";
+  /** Bot 2 offers the best naked and the best hedged trade; exactly one is placed. */
+  alternative?: "naked" | "hedged" | null;
+  /** Both sides of a strangle (and a spread's wing) share this, so selecting one selects all. */
   group_key: string | null;
   margin_yield: number | null;
 };
@@ -819,6 +873,26 @@ export type ScanResponse = {
   warnings: Record<string, unknown>[];
 };
 
+/** The Expiry-Day Index Writer's premium reading on a manual run (`kind: "premium"`). Shown,
+ *  never enforced: a trade chosen by hand is the user's call. */
+export type PremiumNote = {
+  stock_code: string;
+  message: string;
+  would_refuse: boolean;
+  threshold: number | null;
+};
+
+export function premiumNotes(result: ScanResponse | null | undefined): PremiumNote[] {
+  return (result?.warnings ?? [])
+    .filter((w) => w.kind === "premium" && typeof w.message === "string")
+    .map((w) => ({
+      stock_code: String(w.stock_code ?? ""),
+      message: String(w.message),
+      would_refuse: Boolean(w.would_refuse),
+      threshold: typeof w.threshold === "number" ? w.threshold : null,
+    }));
+}
+
 export type PlacedLeg = {
   stock_code: string;
   right: string;
@@ -831,6 +905,8 @@ export type PlacedLeg = {
   error: string | null;
   /** What the order feed has confirmed filled so far; null before it reports. */
   filled_quantity?: number | null;
+  /** "buy" for a hedged shape's wing; every other leg is sold. */
+  action?: "sell" | "buy";
 };
 
 /** One index's PB/SL once the approval placed it. "pending" arms itself on the last fill. */

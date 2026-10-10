@@ -21,6 +21,7 @@ import {
   isScalper,
   BOT_IRON_FLY_SCALPER,
   BOT_DYNAMIC_CONDOR,
+  HEDGED_STRATEGIES,
   type HoldingsWriterConfig,
   type MomentumLongScalperConfig,
   type IndexStrategy,
@@ -36,6 +37,7 @@ import {
 } from "@/components/bots/ScalperSettings";
 import { CAS_BINGO_TABS, CasBingoSettings } from "@/components/bots/CasBingoSettings";
 import { TabIntro, WorkedExample, rupees } from "@/components/bots/SettingsHelp";
+import { PremiumGateSettings } from "@/components/bots/PremiumGateSettings";
 import { CONDOR_TABS, CondorSettings, type CondorBotConfig } from "@/components/bots/CondorSettings";
 import type { CasBingoConfig } from "@/lib/use-bots";
 
@@ -48,17 +50,30 @@ const HOLDINGS_TABS: Tab[] = [
 
 const INDEX_TABS: Tab[] = [
   { id: "indices", label: "Indices" },
+  { id: "premium", label: "Premium" },
   { id: "schedule", label: "Schedule" },
   { id: "exits", label: "Exits" },
 ];
 
-const ALL_STRATEGIES: IndexStrategy[] = ["naked_ce", "naked_pe", "short_strangle"];
+const DISTANCE_OPTIONS = [
+  { value: "implied_move", label: "Implied move" },
+  { value: "pct", label: "% of spot" },
+] as const satisfies ReadonlyArray<SelectOption<"implied_move" | "pct">>;
+
+const NAKED_STRATEGIES: IndexStrategy[] = ["naked_ce", "naked_pe", "short_strangle"];
+const ALL_STRATEGIES: IndexStrategy[] = [...NAKED_STRATEGIES, ...HEDGED_STRATEGIES];
 
 const STRATEGY_HINT: Record<IndexStrategy, string> = {
   naked_ce: "sells a call above the index; it profits unless the index rises past the strike.",
   naked_pe: "sells a put below the index; it profits unless the index falls past the strike.",
   short_strangle: "sells both; it profits while the index stays between the two strikes.",
+  bear_call_spread: "sells the call and buys one further above, which caps the loss at the gap between them.",
+  bull_put_spread: "sells the put and buys one further below, which caps the loss at the gap between them.",
+  iron_condor: "a bear call spread and a bull put spread together.",
 };
+
+const CALL_SIDE: IndexStrategy[] = ["naked_ce", "short_strangle", "bear_call_spread", "iron_condor"];
+const PUT_SIDE: IndexStrategy[] = ["naked_pe", "short_strangle", "bull_put_spread", "iron_condor"];
 
 const EXPIRY_OPTIONS = [
   { value: "current", label: "Current month" },
@@ -270,6 +285,8 @@ function ScripTable({
   disabled: boolean;
   onChange: (code: string, patch: Partial<ScripPref>) => void;
 }) {
+  // By implied move, a blank CE % / PE % means the bot's multiple, so that is what it shows.
+  const byImplied = config.distance_basis === "implied_move";
   return (
     <>
       <div className="mb-4">
@@ -289,7 +306,8 @@ function ScripTable({
             </li>
             <li>
               <b>CE %</b> / <b>PE %</b>{" "}— how far above (call) or below (put) the stock&rsquo;s current price the
-              strike sits. Further is safer but earns less. Blank uses the Limits tab&rsquo;s defaults.
+              strike sits. Further is safer but earns less. Blank uses the Limits tab&rsquo;s defaults
+              {byImplied ? " — by implied move, shown as a multiple such as 1×" : ""}. A % set here always wins.
             </li>
             <li>
               <b>Priority</b> — who is funded first when free margin or delivery cash cannot cover every row. Lower
@@ -391,7 +409,7 @@ function ScripTable({
                     <NumberCell
                       label={`${holding.stock_code} call distance`}
                       value={pref.safety_pct_ce}
-                      placeholder={String(config.default_safety_pct_ce)}
+                      placeholder={byImplied ? `${config.implied_multiple_ce}×` : String(config.default_safety_pct_ce)}
                       step={0.5}
                       max={50}
                       disabled={disabled}
@@ -404,7 +422,7 @@ function ScripTable({
                     <NumberCell
                       label={`${holding.stock_code} put distance`}
                       value={pref.safety_pct_pe}
-                      placeholder={String(config.default_safety_pct_pe)}
+                      placeholder={byImplied ? `${config.implied_multiple_pe}×` : String(config.default_safety_pct_pe)}
                       step={0.5}
                       max={50}
                       disabled={disabled}
@@ -499,7 +517,7 @@ function HoldingsSettings({
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="Days before expiry"
-            hint="Trading days, so it never lands on a weekend or a holiday. 0 is expiry day itself."
+            hint="Trading days before this month's expiry, so it never lands on a weekend or a holiday. 0 is expiry day itself."
           >
             <NumberInput
               className="app-input"
@@ -556,11 +574,11 @@ function HoldingsSettings({
             It writes {config.expiry_preference === "next" ? "next month's" : "this month's"} options at{" "}
             <b>{config.nag_start_ist}</b>,{" "}
             {config.fire_days_before_expiry === 0 ? (
-              <b>on the day they expire</b>
+              <b>on the day {config.expiry_preference === "next" ? "this month's options" : "they"} expire</b>
             ) : (
               <b>
                 {config.fire_days_before_expiry} trading day{config.fire_days_before_expiry === 1 ? "" : "s"} before
-                they expire
+                {config.expiry_preference === "next" ? " this month's options" : " they"} expire
               </b>
             )}
             , if your ICICI session is live.
@@ -581,6 +599,44 @@ function HoldingsSettings({
           Defaults for every stock on the Scrips tab, and the limits on what the bot may commit.
         </p>
       </TabIntro>
+      <div className="max-w-xs">
+        <SelectField
+          label="Distance by"
+          hint="Implied move: a multiple of the move the stock's own options price to expiry, so a volatile stock's strike sits further out than a quiet one's. % of spot: the same share for every stock. A CE % or PE % set on a row of the Scrips tab always wins."
+          value={config.distance_basis ?? "pct"}
+          options={DISTANCE_OPTIONS}
+          disabled={disabled}
+          onChange={(distance_basis) => onConfig({ distance_basis })}
+        />
+      </div>
+      {config.distance_basis === "implied_move" ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Default call × implied move" hint="A written call's strike, this many implied moves above the stock's price. 1 is roughly a 16-delta call.">
+            <NumberInput
+              className="app-input"
+              validityKey="implied_multiple_ce"
+              step={0.25}
+              min={0.25}
+              max={10}
+              disabled={disabled}
+              value={config.implied_multiple_ce}
+              onChange={(v) => onConfig({ implied_multiple_ce: v })}
+            />
+          </Field>
+          <Field label="Default put × implied move" hint="A written put's strike, this many implied moves below the stock's price.">
+            <NumberInput
+              className="app-input"
+              validityKey="implied_multiple_pe"
+              step={0.25}
+              min={0.25}
+              max={10}
+              disabled={disabled}
+              value={config.implied_multiple_pe}
+              onChange={(v) => onConfig({ implied_multiple_pe: v })}
+            />
+          </Field>
+        </div>
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Default call distance %" hint="How far above the stock's current price a written call's strike sits. A row on the Scrips tab can set its own.">
           <NumberInput
@@ -636,6 +692,16 @@ function HoldingsSettings({
         />
       </Field>
       <WorkedExample title="Example: a stock trading at ₹1,000">
+        {config.distance_basis === "implied_move" ? (
+          <li>
+            If its options price a ±5% move to expiry, a call is written at{" "}
+            <b>{rupees(1000 * Math.exp(0.05 * config.implied_multiple_ce), 0)}</b> or the next listed strike above,
+            and a put at <b>{rupees(1000 * Math.exp(-0.05 * config.implied_multiple_pe), 0)}</b> or the next below. A
+            stock whose options price ±10% gets strikes twice as far out. Without a live price on its at-the-money
+            options the strike is placed from their last-traded prices and marked indicative: it can be reviewed but
+            not placed until it is re-priced live. The % below applies to rows that set their own.
+          </li>
+        ) : null}
         <li>
           A call is written at <b>{rupees(1000 * (1 + config.default_safety_pct_ce / 100), 0)}</b> or the next listed
           strike above — strikes are always rounded further from the price, never closer.
@@ -663,8 +729,11 @@ function IndexPanel({
   onChange: (patch: Partial<IndexWriterLeg>) => void;
 }) {
   const strategies = leg.strategies ?? [];
-  const showCe = strategies.some((s) => s === "naked_ce" || s === "short_strangle");
-  const showPe = strategies.some((s) => s === "naked_pe" || s === "short_strangle");
+  const showCe = strategies.some((s) => CALL_SIDE.includes(s));
+  const showPe = strategies.some((s) => PUT_SIDE.includes(s));
+  const anyHedged = strategies.some((s) => HEDGED_STRATEGIES.includes(s));
+  const anyNaked = strategies.some((s) => NAKED_STRATEGIES.includes(s));
+  const byImplied = leg.distance_basis === "implied_move";
 
   function toggleStrategy(strategy: IndexStrategy) {
     const next = strategies.includes(strategy)
@@ -725,15 +794,61 @@ function IndexPanel({
         </ul>
         {strategies.length > 1 && (
           <p className="mt-2 text-hint text-faint">
-            With more than one picked, the bot trades whichever earns the most premium per
-            rupee of margin. A strangle collects both premiums but ties up more margin, so
-            it only wins when the extra premium pays for it.
+            With more than one picked, the bot sizes each to the margin cap and keeps the one
+            that collects the most premium in total. A strangle collects both premiums but ties
+            up more margin, so it fits fewer lots and wins only when the extra premium pays for
+            it.
+            {anyNaked && anyHedged && (
+              <>
+                {" "}With naked and hedged shapes both picked, a Telegram proposal offers the best
+                of each and you tap the one to place; Auto places whichever collects more.
+              </>
+            )}
           </p>
         )}
       </div>
 
+      <div className="mt-3 max-w-xs">
+        <SelectField
+          label="Distance by"
+          hint="Implied move: a multiple of the move the expiring options price to the close, so strikes sit further out on a wild morning and closer on a calm one. % of spot: a fixed share of the index."
+          value={leg.distance_basis ?? "pct"}
+          options={DISTANCE_OPTIONS}
+          disabled={disabled}
+          onChange={(distance_basis) => onChange({ distance_basis })}
+        />
+      </div>
+
       <div className="mt-3 grid gap-3 sm:grid-cols-4">
-        {showCe && (
+        {byImplied && showCe && (
+          <Field label="CE × implied move" hint="Call strike, this many implied moves above the index.">
+            <NumberInput
+              className="app-input"
+              validityKey={`${code}_implied_multiple_ce`}
+              step={0.25}
+              min={0.25}
+              max={10}
+              disabled={disabled}
+              value={leg.implied_multiple_ce}
+              onChange={(v) => onChange({ implied_multiple_ce: v })}
+            />
+          </Field>
+        )}
+        {byImplied && showPe && (
+          <Field label="PE × implied move" hint="Put strike, this many implied moves below the index.">
+            <NumberInput
+              className="app-input"
+              validityKey={`${code}_implied_multiple_pe`}
+              step={0.25}
+              min={0.25}
+              max={10}
+              disabled={disabled}
+              value={leg.implied_multiple_pe}
+              onChange={(v) => onChange({ implied_multiple_pe: v })}
+            />
+          </Field>
+        )}
+        {!byImplied && showCe && (
           <Field label="CE distance %" hint="Call strike, this far above the index.">
             <NumberInput
               className="app-input"
@@ -747,7 +862,7 @@ function IndexPanel({
             />
           </Field>
         )}
-        {showPe && (
+        {!byImplied && showPe && (
           <Field label="PE distance %" hint="Put strike, this far below the index.">
             <NumberInput
               className="app-input"
@@ -758,6 +873,23 @@ function IndexPanel({
               disabled={disabled}
               value={leg.safety_pct_pe}
               onChange={(v) => onChange({ safety_pct_pe: v })}
+            />
+          </Field>
+        )}
+        {anyHedged && (
+          <Field
+            label="Wing × implied move"
+            hint="A hedged shape buys its wing this many implied moves beyond each short, at least one strike out."
+          >
+            <NumberInput
+              className="app-input"
+              validityKey={`${code}_wing_multiple`}
+              step={0.25}
+              min={0.25}
+              max={10}
+              disabled={disabled}
+              value={leg.wing_multiple ?? 1}
+              onChange={(v) => onChange({ wing_multiple: v })}
             />
           </Field>
         )}
@@ -812,7 +944,9 @@ function IndexSettings({
           </p>
           <p>
             Distances are measured from the index level when it fires, and strikes are rounded further out, never
-            closer.
+            closer. By <b>implied move</b>, 1 is the move the expiring options themselves price to the close (one
+            standard deviation): 2.5 sits about where 2% does on an ordinary expiry morning, further out when the
+            market is wild and closer when it is calm. If that move cannot be read, the bot does not sell.
           </p>
         </TabIntro>
         {Object.entries(config.indices ?? {}).map(([code, leg]) => (
@@ -832,6 +966,17 @@ function IndexSettings({
           lower sizes first.
         </p>
       </div>
+    );
+  }
+
+  if (tab === "premium") {
+    return (
+      <PremiumGateSettings
+        gate={config.premium_gate ?? { enabled: false, threshold: 1 }}
+        side="sell"
+        disabled={disabled}
+        onChange={(premium_gate) => onConfig({ premium_gate })}
+      />
     );
   }
 

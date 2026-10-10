@@ -82,6 +82,14 @@ def settings_hash(settings: dict[str, Any], exit_action: str, engine_version: in
     """The identity every piece of evidence is matched on: the campaign settings, the exit
     action, and the rules' version. Same settings under the same rules match at any age (the
     user's choice, 2026-10-03); a rules change matches nothing earned before it."""
+    # A premium gate that is off decides nothing, and evidence earned before the setting existed
+    # was stored without it: both hash as no gate, so no evidence is voided by the field (#78).
+    settings = dict(settings or {})
+    gate = settings.pop("premium_gate", None)
+    if isinstance(gate, dict) and gate.get("enabled"):
+        from icici_breeze_backend.app.services.premium_gate.reading import GATE_VERSION
+
+        settings["premium_gate"] = {**gate, "version": GATE_VERSION}
     blob = json.dumps(
         {"settings": settings, "exit_action": exit_action, "engine_version": int(engine_version or 0)},
         sort_keys=True, default=str,

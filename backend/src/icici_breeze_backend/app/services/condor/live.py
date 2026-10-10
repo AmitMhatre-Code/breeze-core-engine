@@ -100,8 +100,10 @@ def snapshot(
     for strike, right in held:
         if sources.get((float(strike), right)) != LIVE_SOURCE:
             stand_ins.append(f"{int(strike)} {'CE' if right == 'Call' else 'PE'}")
+    forecast, forecast_reason = premium_forecast(user_id, expiry_display, now)
     market = MarketSnapshot(
-        now=now, spot=spot, spot_live=tick_spot is not None, feeds_ok=True, chain=tuple(rows)
+        now=now, spot=spot, spot_live=tick_spot is not None, feeds_ok=True, chain=tuple(rows),
+        forecast_variance=forecast, forecast_reason=forecast_reason,
     )
     return LiveSnapshot(
         market=market,
@@ -110,6 +112,27 @@ def snapshot(
         spot_source="live" if tick_spot is not None else payload.get("spot_source"),
         chain_ready=bool(rows),
     )
+
+
+def premium_forecast(
+    user_id: str, expiry_display: str, now: datetime.datetime
+) -> tuple[Optional[float], Optional[str]]:
+    """The premium gate's forecast to this expiry (#78): the cash index's own recent sessions,
+    the same reading the other gated bots use (#75). (variance, None) or (None, why)."""
+    from icici_breeze_backend.app.services.premium_gate import live as premium_live
+    from icici_breeze_backend.app.services.premium_gate import reading as premium
+
+    try:
+        expiry = datetime.datetime.strptime(expiry_display, "%d-%b-%Y").date()
+        sessions = premium_live.sessions_for(UNDERLYING, now.date(), user_id=user_id)
+        fc = premium.forecast(sessions, now.replace(tzinfo=None),
+                              premium_live.sessions_after(now.date(), expiry))
+    except Exception:  # noqa: BLE001 -- no forecast is no reading, never a crash
+        _logger.warning("condor: premium forecast failed for %s", expiry_display, exc_info=True)
+        return None, premium.REASON_NO_HISTORY
+    if fc is None:
+        return None, premium.REASON_NO_HISTORY
+    return fc.variance, None
 
 
 def with_ltp_stand_ins(market: MarketSnapshot) -> MarketSnapshot:

@@ -7,6 +7,7 @@ import { FieldValidityContext, NumberInput } from "@/components/ui/NumberInput";
 import { Select, type SelectOption } from "@/components/ui/Select";
 import type { CondorSettings as Campaign } from "@/lib/condor";
 import type { Tab } from "@/components/bots/ScalperSettings";
+import { PremiumGateSettings } from "@/components/bots/PremiumGateSettings";
 
 /** The Dynamic Iron Condor bot's settings, in the drawer every bot uses (#67). Its campaign
  *  settings are the same ones a manual campaign started from Basket Orders runs on. */
@@ -15,6 +16,7 @@ export const CONDOR_TABS: Tab[] = [
   { id: "strikes", label: "Strikes" },
   { id: "rolls", label: "Rolls" },
   { id: "risk", label: "Risk" },
+  { id: "premium", label: "Premium" },
   { id: "bot", label: "Bot" },
 ];
 
@@ -390,6 +392,27 @@ export function CondorSettings({
             </li>
           </WorkedExample>
         )}
+      </div>
+    );
+  }
+
+  if (tab === "premium") {
+    return (
+      <div className="space-y-4">
+        {evidence}
+        <PremiumGateSettings
+          gate={c.premium_gate ?? { enabled: false, threshold: 1 }}
+          side="sell"
+          disabled={disabled}
+          onChange={(premium_gate) => set({ premium_gate })}
+        />
+        <p className="app-card-muted p-3 text-hint">
+          For a condor the gate decides only when a <b>tranche</b> goes in, including the first one of a time
+          roll&rsquo;s next cycle. A due tranche waits, check by check, until premium is rich or the cut-off DTE
+          passes. Rolls, exits and the max-loss stop never wait for it. If it says no at a time roll, the old cycle
+          still closes and the campaign ends there, as with <b>Close</b>; the next cycle&rsquo;s tranches go in when
+          premium is rich.
+        </p>
       </div>
     );
   }

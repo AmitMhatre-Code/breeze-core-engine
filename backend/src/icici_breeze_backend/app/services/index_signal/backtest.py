@@ -239,6 +239,13 @@ summary.csv
     do not trade in about half the minutes):
     sessions_replayed      trading sessions that had bars to replay
     calls                  how many calls (bullish or bearish) the signal made
+
+    Every call is measured from the FIRST TRADE AFTER IT -- the open of the next minute that
+    traded -- not from the close that fired it. A call is known only once its bar has closed, so
+    that close is a price nobody acting on the call can get, and for a spike it is the extreme
+    print: the next trade often lands back across the bid-ask spread. A call with no trade in the
+    five minutes after it is not scored (calls_without_entry).
+
     right / wrong          calls where the index moved the called way / the other way by at least
                            the breakeven move within the duration; smaller moves are neither
     hit_rate               right / (right + wrong)
@@ -263,11 +270,18 @@ summary.csv
     fade_<h>m_net_bps      the same for a trade taken AGAINST the call. A signal that is reliably
                            wrong is worth as much as one that is reliably right, so both are
                            scored; neither is "the" answer.
-    follow/fade_<h>m_t     how many times its own day-to-day scatter that average is. Around 2 or
-                           more means it stands out; under that, the average is inside the noise
-                           however large it looks. Averaged per day first, never pooled.
-    follow/fade_<h>m_verdict  pays (positive and stands out) / unclear (positive, inside the
-                           noise) / loses / not_enough_days
+    follow/fade_<h>m_t     how many times its own day-to-day scatter that average is. Averaged per
+                           day first, never pooled.
+    follow/fade_<h>m_holdout_net_bps
+                           the same net average over the run's last third of sessions alone
+                           (from holdout_from).
+    follow/fade_<h>m_verdict  pays (stands out) / unclear (positive, but short of it) / loses /
+                           not_enough_days. Standing out needs all three: a positive net, t of 3 or
+                           more, and a positive net in the last third on its own. A run scores
+                           about 170 cells and keeps the best of each series' 8 (comparisons), so
+                           at the usual t of 2 several would stand out by chance alone.
+    follow/fade_<h>m_short_of  why a positive result is only "unclear": noise (t under 3) or
+                           holdout (it did not pay in the last third).
     best_horizon_minutes, best_direction, best_net_bps, best_t, tradeable
                            the best of those twelve cells. A call's information does not have to
                            peak at the length of the window that produced it -- a one-minute
@@ -275,6 +289,19 @@ summary.csv
                            is reported rather than assumed.
     mean_daily_correlation strength vs the next move, correlated per day then averaged (pooling
                            days manufactures correlation)
+    calls_without_entry    calls with no trade in the five minutes after them, so not scored
+    mean_entry_gap_bps     the average move the called way between the firing close and the first
+                           trade after it. Negative means the market was already back across the
+                           spike before anyone could act -- the part of a fade only the firing
+                           close could collect.
+    vol_<h>m_ratio, vol_<h>m_t, vol_<h>m_verdict
+                           volatility, whichever way: the size of the move h minutes after a call
+                           against the usual move from that minute of the session (1.0 = usual).
+                           expands / calms need t of 3 and the last third agreeing; unclear
+                           otherwise. A signal can forecast movement without forecasting direction.
+    at_close_*             the best cell and every follow/fade net and t, measured the old way,
+                           from the firing close. For comparison only: the gap between these and
+                           the columns above is how much of a finding was the bounce.
 
 <INDEX>/bars.csv
     The exact one-minute futures bars the run replayed (NIFTY near-month on NFO, SENSEX BSESEN on
@@ -292,9 +319,10 @@ summary.csv
 
 <INDEX>/<mechanism>-<duration>/calls.csv
     One row per call: when it fired, which way, at what level, everything the mechanism read when
-    it fired (c_*), how it ended (lapsed / turned / unavailable / session_end), the move at 1, 5,
-    15 and 30 minutes as well as after one and two durations and at its end, the best and worst
-    move while it stood, and the result. move_<h>m_bps is signed the way the call pointed, so a
+    it fired (c_*), the first trade after it (entry_time, entry_level, entry_gap_bps), how it ended
+    (lapsed / turned / unavailable / session_end), the move from that first trade at 1, 5, 15 and
+    30 minutes as well as after one and two durations and at its end, the best and worst move
+    while it stood, and the result. A horizon that closed before the first trade is blank. move_<h>m_bps is signed the way the call pointed, so a
     negative number is the index going the other way -- and a column of negatives is what a fade
     is made of.
 
@@ -356,14 +384,34 @@ def _summary_row(key: SeriesKey, s: dict[str, Any]) -> dict[str, Any]:
     # and a signal that is reliably wrong is worth exactly as much as one that is reliably right.
     for horizon, both in (s.get("horizons") or {}).items():
         for direction, score in both.items():
-            for k in ("net_bps", "t", "hit_rate", "verdict"):
+            for k in ("net_bps", "t", "holdout_net_bps", "hit_rate", "verdict", "short_of"):
                 row[f"{direction}_{horizon}m_{k}"] = score.get(k)
+    row["comparisons"] = s.get("comparisons")
+    row["holdout_from"] = s.get("holdout_from")
+    for horizon, vol in (s.get("volatility") or {}).items():
+        row[f"vol_{horizon}m_ratio"] = vol.get("mean_ratio")
+        row[f"vol_{horizon}m_t"] = vol.get("t")
+        row[f"vol_{horizon}m_holdout_ratio"] = vol.get("holdout_ratio")
+        row[f"vol_{horizon}m_verdict"] = vol.get("verdict")
     best = s.get("best") or {}
     row["best_horizon_minutes"] = best.get("horizon_minutes")
     row["best_direction"] = best.get("direction")
     row["best_net_bps"] = best.get("net_bps")
     row["best_t"] = best.get("t")
     row["tradeable"] = s.get("tradeable")
+    row["calls_without_entry"] = s.get("calls_without_entry")
+    row["mean_entry_gap_bps"] = s.get("mean_entry_gap_bps")
+    # The same, measured from the firing close -- how much of a finding was the bounce.
+    at_close = s.get("at_signal_close") or {}
+    close_best = at_close.get("best") or {}
+    row["at_close_best_horizon_minutes"] = close_best.get("horizon_minutes")
+    row["at_close_best_direction"] = close_best.get("direction")
+    row["at_close_best_net_bps"] = close_best.get("net_bps")
+    row["at_close_best_t"] = close_best.get("t")
+    for horizon, both in (at_close.get("horizons") or {}).items():
+        for direction, score in both.items():
+            for k in ("net_bps", "t"):
+                row[f"at_close_{direction}_{horizon}m_{k}"] = score.get(k)
     return row
 
 
@@ -575,13 +623,18 @@ def _headline(summaries: dict[str, dict[str, Any]]) -> str:
               if (s.get("best") or {}).get("direction") == "follow" and s.get("tradeable")]
     fade = [sid for sid, s in summaries.items()
             if (s.get("best") or {}).get("direction") == "fade" and s.get("tradeable")]
+    comparisons = sum(int(s.get("comparisons") or 0) for s in summaries.values())
+    expanding = [sid for sid, s in summaries.items()
+                 if any(v.get("verdict") == "expands" for v in (s.get("volatility") or {}).values())]
+    vol_tail = f" {len(expanding)} forecast bigger moves." if expanding else ""
     if not follow and not fade:
-        tail = " None of them stood out, either followed or faded."
+        tail = (f" None of them stood out, either followed or faded (best of {comparisons} "
+                f"comparisons).{vol_tail}")
     else:
         parts = []
         if follow:
             parts.append(f"{len(follow)} worth following")
         if fade:
             parts.append(f"{len(fade)} worth going against")
-        tail = f" {' and '.join(parts)}."
+        tail = f" {' and '.join(parts)} (best of {comparisons} comparisons).{vol_tail}"
     return f"Replayed {len(summaries)} series; {calls} calls in total.{tail}"

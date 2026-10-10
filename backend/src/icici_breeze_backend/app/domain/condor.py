@@ -10,7 +10,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from icici_breeze_backend.app.domain.bots import HHMM_PATTERN
+from icici_breeze_backend.app.domain.bots import HHMM_PATTERN, PremiumGateConfig
 
 CondorUnderlying = Literal["NIFTY"]
 # `monthly` keeps to each month's last listed expiry, where far-month liquidity sits; `any`
@@ -61,6 +61,12 @@ class CondorSettings(BaseModel):
     max_loss_pct_of_ceiling: Optional[float] = Field(5.0, gt=0, le=100)
 
     margin_ceiling_inr: float = Field(..., gt=0)
+
+    # Enter a tranche only when the cycle's options price a bigger move to expiry than the index's
+    # own history forecasts (the premium gate, #75 and #78). Tranche entries only, including the
+    # opening of a time roll's next cycle: rolls, exits and the stop are never gated, because a
+    # campaign already open must still be managed. Off unless switched on.
+    premium_gate: PremiumGateConfig = Field(default_factory=PremiumGateConfig)
 
     @model_validator(mode="after")
     def _clock_is_ordered(self) -> "CondorSettings":

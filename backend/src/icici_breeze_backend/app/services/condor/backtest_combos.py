@@ -11,6 +11,10 @@ do?". Agreed with the user, 2026-10-05:
 * no-roll window: 0 and 3 days, plus the saved value if it is neither
 * exit action: time roll and close
 
+Plus the premium gate (#78), one factor at a time as the other gated bots have it (#75): off and at
+0.90 / 1.00 / 1.20, each at the saved settings and exit action, less the row matching the saved
+gate. Three more rows, not a fourth axis: crossed, the grid would be 432.
+
 Everything else -- strikes, the cycle clock, the leg rule, sizing -- stays as saved: those either
 change which contracts are traded (and so the fetch bill) or only scale P&L. A step outside a
 setting's allowed range is dropped, never shifted inward, so a row is always the saved value or
@@ -112,6 +116,7 @@ def combos_for(saved: CondorSettings, saved_exit_action: str) -> list[Combo]:
                 "max_loss": _max_loss_text(loss_field, m),
                 "no_roll_within_days_of_exit": n,
                 "exit_action": x,
+                "premium_gate": _gate_text(saved.premium_gate.enabled, saved.premium_gate.threshold),
             },
             overrides={
                 "net_delta_band_per_lot": b,
@@ -120,6 +125,39 @@ def combos_for(saved: CondorSettings, saved_exit_action: str) -> list[Combo]:
                 "no_roll_within_days_of_exit": n,
             },
             is_saved=is_saved,
+        ))
+    return out + premium_combos(saved, saved_exit_action)
+
+
+def _gate_text(enabled: bool, threshold: float) -> str:
+    return f"{threshold:.2f}x" if enabled else "off"
+
+
+def premium_combos(saved: CondorSettings, saved_exit_action: str) -> list[Combo]:
+    from icici_breeze_backend.app.services.premium_gate.replay import COMPARED_THRESHOLDS
+
+    gate = saved.premium_gate
+    out = []
+    for threshold in (None, *COMPARED_THRESHOLDS):
+        enabled = threshold is not None
+        if enabled == gate.enabled and (not enabled or abs(threshold - gate.threshold) < 1e-9):
+            continue
+        new_gate = {"enabled": enabled, "threshold": threshold if enabled else gate.threshold}
+        out.append(Combo(
+            id=f"premium-{'off' if not enabled else f'{threshold:.2f}'}",
+            label="Premium gate off" if not enabled else f"Premium gate: sell at or above {threshold:.2f}x",
+            settings=CondorSettings(**{**saved.model_dump(), "premium_gate": new_gate}),
+            exit_action=saved_exit_action,
+            varied={
+                "net_delta_band_per_lot": saved.net_delta_band_per_lot,
+                "min_roll_credit_points": saved.min_roll_credit_points,
+                "max_loss": _max_loss_text(max_loss_field(saved), float(getattr(saved, max_loss_field(saved)))),
+                "no_roll_within_days_of_exit": saved.no_roll_within_days_of_exit,
+                "exit_action": saved_exit_action,
+                "premium_gate": _gate_text(enabled, new_gate["threshold"]),
+            },
+            overrides={"premium_gate": new_gate},
+            is_saved=False,
         ))
     return out
 

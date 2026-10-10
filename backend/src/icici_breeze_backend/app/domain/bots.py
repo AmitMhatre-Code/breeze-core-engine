@@ -118,6 +118,11 @@ class ReasonCode:
     SIGNAL_NOT_FRESH = "signal_not_fresh"
     # Bot 4's entry filter (#38): VIX rising, or an expansion call live.
     ENTRY_FILTER_CLOSED = "entry_filter_closed"
+    # The premium gate (docs/premium-gate-plan.md): a seller found premium not rich enough, the
+    # Long Scalper found it not cheap enough, or no reading could be made (which never trades).
+    PREMIUM_NOT_RICH = "premium_not_rich"
+    PREMIUM_NOT_CHEAP = "premium_not_cheap"
+    PREMIUM_UNREADABLE = "premium_unreadable"
     # The user set the bot Off (or back to Paper) while a real position was still open. The
     # loop keeps ticking it so the exit path runs -- section 5.5's "a gate that blocks
     # entering never blocks leaving", extended past the arming switch itself -- but nothing
@@ -233,6 +238,12 @@ TRANSIENT_RETRY_MINUTES = 2.0
 # --------------------------------------------------------------------------------------
 
 
+# How far from spot a written strike sits: a share of spot, or a multiple of the move the options
+# themselves price to expiry (docs/premium-gate-plan.md section 5). The same 2% is about three
+# standard deviations on a calm expiry morning and one and a half on a wild one.
+DistanceBasis = Literal["pct", "implied_move"]
+
+
 class HoldingsWriterConfig(BaseModel):
     """Bot 1 config. CE is capped by holdings; PE is capped by delivery cash.
 
@@ -249,6 +260,14 @@ class HoldingsWriterConfig(BaseModel):
     default_safety_pct_pe: float = Field(
         5.0, gt=0, le=50, description="Default distance below spot for written puts"
     )
+    # `implied_move` places a scrip's strikes this many implied standard deviations from spot,
+    # to expiry, read from that stock's own at-the-money call and put (docs/premium-gate-plan.md
+    # section 5): a volatile stock's strike sits further out than a quiet one's at the same
+    # setting. A scrip with its own CE % / PE % keeps it. Saved bots keep `pct`; new bots start
+    # on `implied_move`. 1.0 is roughly a 16-delta call.
+    distance_basis: DistanceBasis = "pct"
+    implied_multiple_ce: float = Field(1.0, gt=0, le=10)
+    implied_multiple_pe: float = Field(1.0, gt=0, le=10)
     # The PE side has no natural cap from holdings -- assignment buys shares, so the real
     # constraint is cash. One global ceiling; in manual mode the user allocates it across
     # scrips, and in autonomous mode per-scrip priority spends it in order.
@@ -311,7 +330,23 @@ class ScripPref(BaseModel):
 # --------------------------------------------------------------------------------------
 
 
-IndexStrategy = Literal["naked_ce", "naked_pe", "short_strangle"]
+IndexStrategy = Literal[
+    "naked_ce", "naked_pe", "short_strangle",
+    # Hedged (docs/bot2-hedged-shapes-plan.md): each short with a wing bought further out.
+    "bear_call_spread", "bull_put_spread", "iron_condor",
+]
+
+class PremiumGateConfig(BaseModel):
+    """Trade only when option premium is rich (sellers) or cheap (the Long Scalper) against the
+    index's own forecast move to expiry (`services/premium_gate`, docs/premium-gate-plan.md).
+
+    `threshold` is implied move / forecast move: a seller trades at or above it, the buyer at or
+    below it. Off unless switched on: a saved bot that predates the gate never gains it silently
+    (new bots start with it on, `repositories.bots.new_bot_config`). Fails closed -- no reading,
+    no trade."""
+
+    enabled: bool = False
+    threshold: float = Field(1.0, ge=0.5, le=3.0)
 
 
 class IndexWriterLeg(BaseModel):
@@ -332,6 +367,15 @@ class IndexWriterLeg(BaseModel):
     # comparable premium on a call and a put.
     safety_pct_ce: float = Field(2.0, gt=0, le=50)
     safety_pct_pe: float = Field(2.0, gt=0, le=50)
+    # `pct` uses the two distances above; `implied_move` puts each strike this many implied
+    # standard deviations from spot, to expiry. 2.5 is about where 2% sits on an ordinary
+    # expiry morning. Saved bots keep `pct`; new bots start on `implied_move`.
+    distance_basis: DistanceBasis = "pct"
+    implied_multiple_ce: float = Field(2.5, gt=0, le=10)
+    implied_multiple_pe: float = Field(2.5, gt=0, le=10)
+    # A hedged shape's wing: this many implied standard deviations beyond its short, to expiry,
+    # rounded further out and always at least one listed strike beyond (the user's choice, 2026-10-10).
+    wing_multiple: float = Field(1.0, gt=0, le=10)
     margin_pct_cap: float = Field(
         30.0, gt=0, le=100, description="Share of free margin this index may consume"
     )
@@ -393,6 +437,9 @@ class ExpiryIndexWriterConfig(BaseModel):
     # See `HoldingsWriterConfig.approval_mode`. On this bot the window is the expiry
     # morning itself, so the re-proposal loop runs from `entry_time_ist` to `cutoff_ist`.
     approval_mode: ApprovalMode = "telegram"
+    # Sell only when the expiring options price a bigger move than the index's history forecasts.
+    # Checked per index when the trade is planned; the manual run sheet shows it but never blocks.
+    premium_gate: PremiumGateConfig = Field(default_factory=PremiumGateConfig)
 
     # Exit policy, both sides now expressed against the premium collected.
     #
@@ -768,6 +815,10 @@ class MomentumLongScalperConfig(BaseModel):
     # Defaults to Momentum v3 1m, followed (#72); a saved bot keeps its own choice, and the
     # per-signal backtest shows how every other cell would have done.
     signal: SignalChoice = Field(default_factory=lambda: SignalChoice(**_BOT3_DEFAULT_SIGNAL))
+    # Buy only when the option is cheap: its implied move to expiry at or below `threshold` x
+    # the index's forecast move (docs/premium-gate-plan.md). Checked once a fresh call has fired:
+    # it holds the entry while the call stands, so premium that cheapens mid-call can still trade.
+    premium_gate: PremiumGateConfig = Field(default_factory=PremiumGateConfig)
     exits: TrailingLadderConfig = Field(default_factory=TrailingLadderConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
@@ -933,6 +984,9 @@ class IronFlyScalperConfig(BaseModel):
     exits: IronFlyExitConfig = Field(default_factory=IronFlyExitConfig)
     reentry: IronFlyReentryConfig = Field(default_factory=IronFlyReentryConfig)
     entry_filter: IronFlyEntryFilterConfig = Field(default_factory=IronFlyEntryFilterConfig)
+    # Sell the fly only when its ATM options price a bigger move to expiry than the index's
+    # history forecasts (docs/premium-gate-plan.md). Checked every pass, beside the filter.
+    premium_gate: PremiumGateConfig = Field(default_factory=PremiumGateConfig)
     execution: ScalperExecutionConfig = Field(default_factory=ScalperExecutionConfig)
     risk: ScalperRiskConfig = Field(default_factory=ScalperRiskConfig)
 
@@ -1361,6 +1415,11 @@ class ProposalLeg(BaseModel):
     right: Literal["call", "put"]
     expiry_display: str
     strike_price: float
+    # Bot 2's hedged shapes buy a wing (docs/bot2-hedged-shapes-plan.md); every other leg sells.
+    action: Literal["sell", "buy"] = "sell"
+    # Bot 2: which alternative the leg belongs to. A proposal can offer the best naked and the
+    # best hedged trade side by side; exactly one of them is placed.
+    alternative: Optional[Literal["naked", "hedged"]] = None
     lots: int = Field(..., ge=1)
     lot_size: int = Field(..., ge=1)
     quantity: int = Field(..., ge=1)
@@ -1432,6 +1491,8 @@ class PlacedLegResult(BaseModel):
     error: Optional[str] = None
     # What the order feed has confirmed filled so far; None when it has not reported yet.
     filled_quantity: Optional[int] = None
+    # "buy" for a hedged shape's wing (docs/bot2-hedged-shapes-plan.md); every other leg is sold.
+    action: Literal["sell", "buy"] = "sell"
 
 
 class ExitStopResult(BaseModel):

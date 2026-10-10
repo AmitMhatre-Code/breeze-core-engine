@@ -86,7 +86,7 @@ You can run as many campaigns as you like, each on its **own NIFTY expiry**: for
 
 ## Settings
 
-The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tabs **Cycle**, **Strikes**, **Rolls**, **Risk** and **Bot**. A campaign started from Basket Order takes a copy of them when it starts; a campaign's own card on Portfolio can change its copy later.
+The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tabs **Cycle**, **Strikes**, **Rolls**, **Risk**, **Premium** and **Bot**. A campaign started from Basket Order takes a copy of them when it starts; a campaign's own card on Portfolio can change its copy later.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -106,6 +106,7 @@ The settings are on the gear of the **Dynamic Iron Condor** bot card, in the tab
 | **Start-of-day check / End-of-day check** | 10:30 / 15:31 | The two check times, IST. |
 | **Margin ceiling** | — | The campaign's margin. Keep the rest of your capital free as a buffer. |
 | **Max loss / …or of the ceiling** | off / 5% | Close everything past this. If both are set, the tighter one applies. One of them must be set. |
+| **Only sell when premium is rich / Sell at or above** | off (on for a new bot) / 1.00 | The [premium gate](bots.md#the-premium-gate) for **tranche entries only**. A due tranche waits, check by check, until the cycle's options price at least this multiple of the move NIFTY's recent history forecasts to expiry, or until the cut-off DTE passes. Rolls, exits and the max-loss stop never wait for it. At a time roll it decides only whether the next cycle opens: if not, the old cycle still closes and the campaign ends there, as with **Close**, and the next cycle's tranches go in when premium is rich. |
 
 The **Bot** tab adds the bot's own settings (see [Dynamic Iron Condor](bots.md#dynamic-iron-condor)): what happens at the exit DTE, the lots per tranche and the Semi-auto approval window.
 
@@ -114,6 +115,18 @@ The defaults are starting points, not findings. Backtest them before trusting th
 ## Backtest the rules
 
 The history icon on the **Dynamic Iron Condor** bot card backtests the rules on the card's **saved** settings, exit action and lots per tranche, like every bot's backtest (see [Backtesting a bot](bots.md#backtesting-a-bot)): choose a period, run it, and read the result in **Activity**. Save a change before you backtest it. The replay runs the same rules a campaign runs, at the same two checks, on ICICI's traded **5-minute** option prices from January 2026; a period reaching further back starts there, and the result says so.
+
+### Years of history: NSE daily closes
+
+ICICI's prices cover only about eight monthly cycles, none of them a crash. For a longer view, choose **Prices: NSE daily closes** in the backtest dialog. It replays the same rules on the closing prices NSE publishes for every session **from 1 January 2020**, so it includes the March 2020 crash, the 2022 sell-off and the June 2024 election day. **Since 2020** fills in the whole range. It differs from an ICICI replay in four ways, and its notes repeat them:
+
+- **One decision a session, at the close.** Daily files have only each contract's close, so a 10:30 check would read prices before they happened. Entries, rolls, exits and the max-loss stop are all decided after the close, and a tranche set to enter at the start-of-day check enters at the close instead. The stop is therefore checked once a day, not twice.
+- **Every cycle is sized to today's money.** NIFTY was about 12,000 in 2020. Each cycle's lot is today's lot × today's NIFTY ÷ NIFTY when the cycle opened, so a 2% move costs the same in 2020 as it does now and every year is judged on equal terms. Rupee figures read "as if traded at today's size". Settings in index points (**Minimum roll credit**) stay in points, so they are relatively larger at older, lower index levels.
+- **A contract that did not trade is priced from the ones that did.** NSE's file gives a contract that did not trade that day a stale price, so that price is ignored. Instead, the price is worked out from the implied volatility of the same expiry's contracts that did trade that day, which is how NSE prices untraded contracts too. This matters most for far wings, which often go a day without a trade. A traded price always wins, and each run's notes say how many prices were worked out this way.
+- **Spreads are today's.** The bid-ask spread is modelled on today's quotes, which understates how wide older far strikes were.
+- **The premium gate reads daily prices.** Its forecast of NIFTY's movement uses each session's open-to-close and overnight moves, where a live check uses one-minute prices. Both measure the same thing; the daily version is noisier.
+
+The prices are downloaded from NSE's public archive, outside market hours: about 1.3 GB the first time from 2020 (about an hour), and only new sessions after that. Only NIFTY options near the money that traded are kept, about 100 MB, listed as **NSE daily option prices** on [Storage](settings-diagnostics.md#storage), where a date range can be deleted. In market hours the backtest replays what is already stored.
 
 ### Comparing settings
 
@@ -131,7 +144,7 @@ That is 108 combinations with the defaults. A value outside the setting's allowe
 
 The Activity row opens on a table with one line per combination: the five settings, **Campaigns**, **Rolls**, **Win rate**, **Net P&L**, **Max drawdown** (the largest fall at a check) and **Worst at a check**. **your settings** marks your saved combination, **best** marks the highest net P&L, and **partial** marks a combination that stopped for missing prices (hover it to see where). The campaigns, chart and figures below the table are your saved combination's.
 
-History covers only about eight monthly cycles, so the best of 108 combinations is a lead to look into, not a finding. Each combination is also kept as a backtest of its own settings: save one, and the card's **Backtest of these settings** shows its result straight away.
+On ICICI prices, history covers only about eight monthly cycles, so the best of 108 combinations is a lead to look into, not a finding. NSE daily closes from 2020 cover about 80, which is better but still not proof: pick settings from the middle of a range that does well, not the single best row. Each combination is also kept as a backtest of its own settings: save one, and the card's **Backtest of these settings** shows its result straight away.
 
 Lots per tranche left blank are sized from today's margin, which needs ICICI's margin calculator; a mock instance has none, so set the lots in the settings first.
 

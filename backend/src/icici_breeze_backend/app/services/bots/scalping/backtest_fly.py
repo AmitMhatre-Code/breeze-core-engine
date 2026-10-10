@@ -60,6 +60,7 @@ from icici_breeze_backend.app.services.bots.scalping.iron_fly_bot import (
     reentry_blocked,
     wing_width_for,
 )
+from icici_breeze_backend.app.services.bots.scalping.decide import Decision
 from icici_breeze_backend.app.services.bots.scalping.paper import simulate_buy, simulate_sell
 from icici_breeze_backend.app.services.bots.scalping.spreads import SpreadStats
 
@@ -179,9 +180,11 @@ def run_fly_backtest(
     vix_series: Optional[Sequence[tuple[float, float]]] = None,
     record_decisions: bool = False,
     on_day: Optional[Callable[[datetime.date], None]] = None,
+    premium: Any = None,
 ) -> FlyResult:
     """`filter_readings` / `vix_series` feed the entry filter, when it is switched on: the
-    chosen signal series' replayed readings, or India VIX 1-minute bars."""
+    chosen signal series' replayed readings, or India VIX 1-minute bars. `premium` is a
+    `premium_gate.replay.ReplayPremium` for the premium gate (docs/premium-gate-plan.md 4)."""
     pricer = pricer or ModelPricer()
     spots = spot_map(spot_bars)
     spot_days = {ts.date() for ts in spots}
@@ -205,6 +208,7 @@ def run_fly_backtest(
         _run_day(
             day_bars, day, expiry, sigma, vix, config, charges, spread, pricer, spots, lots, result,
             filter_readings=filter_readings, vix_series=vix_series, record_decisions=record_decisions,
+            premium=premium,
         )
     return result
 
@@ -245,6 +249,7 @@ def _run_day(
     filter_readings: Optional[dict[datetime.datetime, dict[str, Any]]] = None,
     vix_series: Optional[Sequence[tuple[float, float]]] = None,
     record_decisions: bool = False,
+    premium: Any = None,
 ) -> None:
     pre_open, day_bars = split_session(day_bars)
     quantity = lots * regime.lot_size_for(INDEX, day)
@@ -343,6 +348,19 @@ def _run_day(
         if NO_TRADE in statuses:
             result.skipped_no_fill += 1
             continue
+        if config.premium_gate.enabled:
+            # The live gate, at the minute the fly would fill: its own short legs are the ATM pair.
+            from icici_breeze_backend.app.services.premium_gate import reading as premium_reading
+            from icici_breeze_backend.app.services.premium_gate.gate import refusal
+            from icici_breeze_backend.app.services.premium_gate.replay import bar_price
+
+            reading = (premium.reading(now, expiry, fill_spot, atm, bar_price(priced[2]), bar_price(priced[3]))[0]
+                       if premium is not None
+                       else premium_reading.Reading(None, None, None, premium_reading.REASON_NO_HISTORY))
+            refused = refusal(reading, config.premium_gate, "sell")
+            if refused is not None:
+                tally_idle(result.idle, Decision("idle", *refused))
+                continue
 
         credit, entry_charges, last = 0.0, 0.0, {}
         for leg, (_, leg_bar) in zip(legs, priced):

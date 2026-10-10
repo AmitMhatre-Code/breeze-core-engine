@@ -210,6 +210,10 @@ const nextConfig = {
         destination: `${backendUpstream}/bots/live-eligibility`,
       },
       {
+        source: "/bots/backtest-evidence",
+        destination: `${backendUpstream}/bots/backtest-evidence`,
+      },
+      {
         source: "/bots/cycles",
         destination: `${backendUpstream}/bots/cycles`,
       },

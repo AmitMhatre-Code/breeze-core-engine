@@ -270,7 +270,14 @@ def _tick_holdings_writer(
 
 
 def _is_holdings_firing_day(proc: Any, user_id: str, config: HoldingsWriterConfig) -> bool:
-    """Is today N trading days before the target monthly expiry?
+    """Is today N trading days before this month's stock-option expiry?
+
+    The count always runs back from the *current* monthly expiry, whichever month the bot
+    writes; "Next month" means writing next month's options on that day, which is the
+    contract `run_scan` picks. Counting back from next month's own expiry could never match:
+    by the time that day comes this month's contract has expired, the next one has become
+    the current one, and the target moves a month ahead every day it is checked -- so a
+    "Next month" bot never fired on its schedule.
 
     The expiry comes from the scrip master rather than a rule of thumb, for the same reason
     Bot 2 reads it there: stock-option expiries have moved before, and the calendar only
@@ -295,10 +302,7 @@ def _is_holdings_firing_day(proc: Any, user_id: str, config: HoldingsWriterConfi
         expiries = _monthly_expiries(entry.get("expiry_dates") or [])
         if not expiries:
             continue
-        wanted = 1 if config.expiry_preference == "next" else 0
-        if len(expiries) <= wanted:
-            continue
-        expiry = _parse_expiry(expiries[wanted])
+        expiry = _parse_expiry(expiries[0])
         if expiry is None:
             continue
         return firing_date(expiry, config.fire_days_before_expiry) == today
@@ -452,7 +456,8 @@ def _propose_index(
                 errors.append(f"{index_code}: {plan.error or 'nothing sized'}")
                 failed_codes.append(plan.reason_code or ReasonCode.NOTHING_ELIGIBLE)
                 continue
-            legs.extend(svc.plan_to_legs(plan, index_code))
+            # Both alternatives, the best naked and the best hedged, for the user to pick one.
+            legs.extend(svc.plan_alternatives_to_legs(plan, index_code))
 
         if not legs:
             # Carry the plan's own reason code through instead of flattening everything to

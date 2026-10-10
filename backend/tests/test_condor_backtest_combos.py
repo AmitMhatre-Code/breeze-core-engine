@@ -26,8 +26,11 @@ def _values(combos, field):
 
 def test_the_default_grid_is_108_combinations_around_the_saved_settings():
     saved = CondorSettings(margin_ceiling_inr=10_00_000)
-    combos = backtest_combos.combos_for(saved, "time_roll")
+    every = backtest_combos.combos_for(saved, "time_roll")
+    # The 108-row grid, then the premium gate's rows (#78), one factor at a time.
+    combos = [c for c in every if not c.id.startswith("premium-")]
     assert len(combos) == 108 == len({c.id for c in combos})
+    assert [c.id for c in every[108:]] == ["premium-0.90", "premium-1.00", "premium-1.20"]
     assert _values(combos, "net_delta_band_per_lot") == [0.1, 0.15, 0.2]
     assert _values(combos, "min_roll_credit_points") == [10.0, 20.0, 30.0]
     assert _values(combos, "max_loss_pct_of_ceiling") == [2.5, 5.0, 7.5]
@@ -47,7 +50,7 @@ def test_a_step_outside_the_allowed_range_is_dropped_not_shifted():
         margin_ceiling_inr=10_00_000, net_delta_band_per_lot=0.05, min_roll_credit_points=0,
         max_loss_pct_of_ceiling=80, no_roll_within_days_of_exit=5,
     )
-    combos = backtest_combos.combos_for(saved, "close")
+    combos = [c for c in backtest_combos.combos_for(saved, "close") if not c.id.startswith("premium-")]
     assert _values(combos, "net_delta_band_per_lot") == [0.05, 0.1]
     assert _values(combos, "min_roll_credit_points") == [0.0, 10.0]
     assert _values(combos, "max_loss_pct_of_ceiling") == [40.0, 80.0]

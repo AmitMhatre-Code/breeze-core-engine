@@ -237,3 +237,20 @@ def test_open_live_cycles_are_findable_for_exit_only_management(db_path):
     )
     assert repo.bots_with_open_live_cycles() == [(USER, BOT)]
     del paper_cycle  # an abandoned simulation has no exchange side to manage
+
+
+def test_a_premium_gate_that_is_off_does_not_move_the_fingerprint():
+    """The gate arrived after evidence existed: a bot that never switched it on keeps its
+    Simulation evidence. Switched on, the gate is part of what the bot does with money."""
+    from icici_breeze_backend.app.db.bots_migrate import BOT_MOMENTUM_LONG_SCALPER
+    from icici_breeze_backend.app.services.bots.scalping.evidence import material_config_hash
+
+    before = material_config_hash(BOT_MOMENTUM_LONG_SCALPER, {"premium_outlay_inr": 25000})
+    off = material_config_hash(BOT_MOMENTUM_LONG_SCALPER, {
+        "premium_outlay_inr": 25000, "premium_gate": {"enabled": False, "threshold": 1.4}})
+    on = material_config_hash(BOT_MOMENTUM_LONG_SCALPER, {
+        "premium_outlay_inr": 25000, "premium_gate": {"enabled": True, "threshold": 1.0}})
+    on_other = material_config_hash(BOT_MOMENTUM_LONG_SCALPER, {
+        "premium_outlay_inr": 25000, "premium_gate": {"enabled": True, "threshold": 0.9}})
+    assert before == off
+    assert len({before, on, on_other}) == 3

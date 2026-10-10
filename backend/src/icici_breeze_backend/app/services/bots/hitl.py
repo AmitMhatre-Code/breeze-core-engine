@@ -121,16 +121,29 @@ def ask_about(
         bot_type,
         "⌛ *Superseded* — a newer proposal follows below. Nothing was placed from this one.",
     )
-    token = repo.issue_approval_token(
-        user_id=user_id,
-        bot_type=bot_type,
-        proposal_id=proposal.id,
-        chat_id=chat,
-        ttl_minutes=ttl_minutes,
-    )
+    # Bot 2 offering two alternatives: one token per alternative (the portal routes only
+    # approve/reject), so the button tapped says which trade (docs/bot2-hedged-shapes-plan.md).
+    choices = [c for c in ("naked", "hedged")
+               if any(getattr(leg, "alternative", None) == c for leg in proposal.legs)]
+    choice_tokens: dict[str, str] | None = None
+    if len(choices) > 1:
+        choice_tokens = repo.issue_approval_tokens(
+            user_id=user_id, bot_type=bot_type, proposal_id=proposal.id, chat_id=chat,
+            ttl_minutes=ttl_minutes, choices=choices,
+        )
+        token = choice_tokens[choices[0]]
+    else:
+        token = repo.issue_approval_token(
+            user_id=user_id,
+            bot_type=bot_type,
+            proposal_id=proposal.id,
+            chat_id=chat,
+            ttl_minutes=ttl_minutes,
+        )
     # Registered before the message goes out: a button whose token the portal cannot route
     # is a dead control, and the user would tap it on an expiry morning and get nothing.
-    register_approval_token(token, ttl_minutes * 60)
+    for t in (choice_tokens or {}).values() if choice_tokens else (token,):
+        register_approval_token(t, ttl_minutes * 60)
 
     deadline = (proposal.expires_at or "")[11:16] or f"+{ttl_minutes}m"
     return telegram_alerts.notify_bot_proposal(
@@ -142,6 +155,7 @@ def ask_about(
         record_message=lambda message_id, text: repo.set_approval_message(
             token, message_id, text
         ),
+        choice_tokens=choice_tokens,
     )
 
 
@@ -422,7 +436,7 @@ def handle_callback(event: dict[str, Any]) -> None:
         f"⏳ *Approved at {stamp} — placing orders now…*\n"
         "_The result follows in a new message._",
     )
-    _approve_and_report(user_id, bot_type, str(claim["proposal_id"]))
+    _approve_and_report(user_id, bot_type, str(claim["proposal_id"]), choice=claim.get("choice"))
     if retired:
         # "Placing orders now" would read as still in flight for ever after the result.
         _edit_ask(ask, f"☑️ *Approved at {stamp}* — the result is in the message below.")
@@ -461,7 +475,7 @@ def _ask_again(user_id: str, bot_type: str) -> None:
         )
 
 
-def _approve_and_report(user_id: str, bot_type: str, proposal_id: str) -> None:
+def _approve_and_report(user_id: str, bot_type: str, proposal_id: str, *, choice: Optional[str] = None) -> None:
     from icici_breeze_backend.app.services import telegram_alerts
     from icici_breeze_backend.app.services.bots import proposals as svc
 
@@ -474,7 +488,11 @@ def _approve_and_report(user_id: str, bot_type: str, proposal_id: str) -> None:
         )
         return
 
-    payload = ApproveProposalRequest(leg_indexes=list(range(len(pending.legs))))
+    # A choice (the button tapped on a two-alternative message) approves that alternative's legs.
+    payload = ApproveProposalRequest(leg_indexes=[
+        i for i, leg in enumerate(pending.legs)
+        if choice is None or getattr(leg, "alternative", None) == choice
+    ])
     try:
         result = svc.approve(user_id, bot_type, payload, trigger="telegram")
     except svc.ApprovalRefused as e:
@@ -576,7 +594,7 @@ def format_outcome(result: Any) -> str:
     lines = [head, ""]
     for p in result.placed:
         side = "CE" if str(p.right).lower().startswith("c") else "PE"
-        contract = f"{p.stock_code} {p.strike_price:g} {side}"
+        contract = f"{'BUY ' if getattr(p, 'action', 'sell') == 'buy' else ''}{p.stock_code} {p.strike_price:g} {side}"
         if p.error and p.order_ids:
             lines.append(f"⚠️ {contract} — partly placed: {_md(p.error)}")
         elif p.error:

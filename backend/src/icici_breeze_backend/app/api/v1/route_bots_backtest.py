@@ -51,6 +51,9 @@ class StartRequest(BaseModel):
     period: Literal["last_day", "last_week", "last_month", "custom"]
     from_date: Optional[datetime.date] = None
     to_date: Optional[datetime.date] = None
+    # The Dynamic Iron Condor only: ICICI's intraday prices, or NSE's daily closes from 2020
+    # (docs/condor-daily-history-plan.md). Every other bot replays on ICICI's.
+    prices: Literal["icici", "nse_daily"] = "icici"
 
 
 def _range(req: RangeRequest) -> tuple[datetime.date, datetime.date]:
@@ -98,7 +101,8 @@ def start(req: StartRequest, ctx: RequestContext = Depends(get_request_context))
     """Fetch what is missing within today's call budget, replay on real prices, and record the
     result as an Activity row with its own audit trail."""
     return _start(
-        lambda: jobs.start_bot_backtest(ctx.user_id, req.bot, req.period, req.from_date, req.to_date)
+        lambda: jobs.start_bot_backtest(ctx.user_id, req.bot, req.period, req.from_date, req.to_date,
+                                        prices=req.prices)
     )
 
 

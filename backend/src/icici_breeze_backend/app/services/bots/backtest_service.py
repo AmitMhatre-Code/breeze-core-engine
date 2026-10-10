@@ -37,6 +37,7 @@ from icici_breeze_backend.app.domain.bots import (
     MomentumLongScalperConfig,
 )
 from icici_breeze_backend.app.services.bots.backtest_expiry import (
+    HEDGED,
     STRATEGY_RIGHTS,
     expiry_days,
     merge_expiry_results,
@@ -275,6 +276,7 @@ def replay(
                     lots={s: scope.lots.get(s, 1) for s in strategies},
                     vix_by_day=vix,
                     on_day=on_day,
+                    premium=_replay_premium(config, scope.index, start, end, hol, path),
                 )
             )
         merged = merge_expiry_results(results, price_source=pricer.source, spread_source=spread.describe())
@@ -311,13 +313,37 @@ def replay(
             spot_bars=spot, pricer=pricer, lots=lots or DEFAULT_LOTS, holidays=hol,
             filter_readings=filter_readings, vix_series=vix_series,
             record_decisions=record_decisions, on_day=on_day,
+            premium=_replay_premium(config, "NIFTY", start, end, hol, path),
         )
     readings = _series_readings(_series_key(config.signal, "nifty"), start, end, hol, path, readings_cache)
     return run_backtest(
         futures, config=config, charges=charges, spread=spread, vix_by_day=vix,
         spot_bars=spot, pricer=pricer, holidays=hol, readings=readings,
         record_decisions=record_decisions, on_day=on_day,
+        premium=_replay_premium(config, "NIFTY", start, end, hol, path),
     )
+
+
+def _replay_premium(
+    config: Any, index: str, start: datetime.date, end: datetime.date,
+    hol: set[datetime.date], path: Optional[str],
+) -> Any:
+    """The premium gate's replay inputs, when this setting reads them: the gate is on, or Bot 2
+    places strikes by implied move (docs/premium-gate-plan.md 4) or shortlists a hedged shape,
+    whose wing is set by it (docs/bot2-hedged-shapes-plan.md). None otherwise."""
+    from icici_breeze_backend.app.services.bots.backtest_expiry import HEDGED
+
+    gate = getattr(config, "premium_gate", None)
+    legs = (getattr(config, "indices", None) or {}).values()
+    by_implied = any(getattr(leg, "distance_basis", "pct") == "implied_move" for leg in legs)
+    hedged = any(s in HEDGED for leg in legs for s in (getattr(leg, "strategies", None) or ()))
+    if not (getattr(gate, "enabled", False) or by_implied or hedged):
+        return None
+    from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS, ReplayPremium
+
+    bars = store.load_candles(stock_code=index, from_date=start - datetime.timedelta(days=WARMUP_DAYS),
+                              to_date=end, table="spot_candles", path=path)
+    return ReplayPremium(bars, hol)
 
 
 def _replay_cas(
@@ -466,8 +492,15 @@ def fetch_underlying(
             fetcher.fetch_futures(index, warm_from, end)
     elif bot != "expiry":
         fetcher.fetch_futures("NIFTY", warm_from, end)
+    # Bots with a premium gate read the cash index's sessions before the range too: every one of
+    # their backtests compares the gate's settings (docs/premium-gate-plan.md 4).
+    spot_from = start
+    if bot in ("expiry", "fly", "momentum"):
+        from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS
+
+        spot_from = start - datetime.timedelta(days=WARMUP_DAYS)
     for index in indices:
-        fetcher.fetch_spot(index, start, end)
+        fetcher.fetch_spot(index, spot_from, end)
     if bot == "fly":
         # India VIX minute bars, for the fly's `vix_not_rising` entry filter (#38). A handful of
         # calls a month; fetched whatever the filter is set to, so switching it on later needs
@@ -569,6 +602,22 @@ def nearest_expiry_for(proc: Any, stock_code: str, exchange: str, today: datetim
 def _latest_vix(path: Optional[str]) -> Optional[float]:
     vix = store.load_vix(path=path)
     return vix[max(vix)] if vix else None
+
+
+def _writer_wings(index: str, strikes: Mapping[str, float], multiple: float, path: Optional[str]) -> dict[str, float]:
+    """Wing strikes for sizing a hedged shape today. The live wing reads the expiry morning's
+    ATM pair; with none at hand, the latest VIX over the one day to expiry stands in for it."""
+    from icici_breeze_backend.app.services.premium_gate.reading import strike_target
+
+    vix = _latest_vix(path) or 13.0
+    implied = (vix / 100.0) ** 2 / 365.0
+    step = regime.STRIKE_STEP[index]
+    out: dict[str, float] = {}
+    for right, short in strikes.items():
+        up = right == cfg.CALL
+        wing = regime.strike_beyond(strike_target(short, implied, multiple, up=up), index, up=up)
+        out[right] = max(wing, short + step) if up else min(wing, short - step)
+    return out
 
 
 def _spot_and_contract(proc: Any, index: str, exchange: str, today: datetime.date, path: Optional[str]) -> tuple[float, str, int]:
@@ -729,18 +778,22 @@ def _price_writer(config: ExpiryIndexWriterConfig, user_id: str, proc: Any, path
             cfg.CALL: regime.strike_beyond(spot * (1 + leg_cfg.safety_pct_ce / 100.0), scope.index, up=True),
             cfg.PUT: regime.strike_beyond(spot * (1 - leg_cfg.safety_pct_pe / 100.0), scope.index, up=False),
         }
+        wings = _writer_wings(scope.index, strikes, leg_cfg.wing_multiple, path)
         lots: dict[str, int] = {}
         margins: dict[str, Optional[float]] = {}
         for strategy in scope.strategies:
             rights = [cfg.CALL if r == "call" else cfg.PUT for r in STRATEGY_RIGHTS[strategy]]
+            legs = [(r, strikes[r], lot_size, cfg.SELL) for r in rights]
+            if strategy in HEDGED:
+                # Wings first, as the bot places them; the margin is the whole shape's.
+                legs = [(r, wings[r], lot_size, cfg.BUY) for r in rights] + legs
             margin = pricer.span_file(
-                exchange_code=exchange, stock_code=scope.index, expiry_display=expiry,
-                legs=[(r, strikes[r], lot_size, cfg.SELL) for r in rights],
+                exchange_code=exchange, stock_code=scope.index, expiry_display=expiry, legs=legs,
             )
             if margin is None:
                 margin = margin_for_legs(
                     proc, user_id, exchange_code=exchange, stock_code=scope.index,
-                    expiry_display=expiry, legs=[(r, strikes[r], lot_size) for r in rights],
+                    expiry_display=expiry, legs=legs,
                 )
             margins[strategy] = round(margin, 2) if margin else None
             lots[strategy] = int(budget // margin) if margin else 0

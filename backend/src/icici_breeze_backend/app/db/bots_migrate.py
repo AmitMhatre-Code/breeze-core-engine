@@ -188,6 +188,9 @@ def ensure_bots_tables(db_path: str) -> None:
         _add_column(conn, "bot_approval_tokens", "message_id", "INTEGER")
         _add_column(conn, "bot_approval_tokens", "message_text", "TEXT")
         _add_column(conn, "bot_approval_tokens", "message_closed_at", "TIMESTAMP")
+        # Bot 2 offers two alternatives in one message, each behind its own token (the portal
+        # routes only approve/reject): which one this token places (docs/bot2-hedged-shapes-plan.md).
+        _add_column(conn, "bot_approval_tokens", "choice", "TEXT")
 
         # A position whose stop could not be armed yet because its entry orders were still
         # working. Persisted rather than held in memory because the gap it covers -- orders

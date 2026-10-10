@@ -369,7 +369,7 @@ def test_a_proposal_that_cannot_be_delivered_leaves_nothing_pending(db_path, mon
 
 def test_a_stale_tap_places_nothing(db_path, monkeypatch):
     placed = []
-    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a: placed.append(a))
+    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a, **k: placed.append(a))
     sent = []
     import icici_breeze_backend.app.services.telegram_client as client
 
@@ -386,7 +386,7 @@ def test_a_tap_from_another_chat_is_refused(db_path, monkeypatch):
     chat the proposal was sent to."""
     token, _ = _issue(chat_id="900")
     placed = []
-    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a: placed.append(a))
+    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a, **k: placed.append(a))
 
     hitl.handle_callback({"token": token, "chat_id": "111", "action": "a"})
 
@@ -417,7 +417,7 @@ def test_read_only_mode_blocks_an_approved_tap(db_path, monkeypatch):
     token, _ = _issue()
     monkeypatch.setattr(hitl, "trading_allowed", lambda: False)
     placed = []
-    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a: placed.append(a))
+    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a, **k: placed.append(a))
     messages = []
     import icici_breeze_backend.app.services.telegram_alerts as alerts
 
@@ -435,7 +435,7 @@ def test_an_approved_tap_reaches_the_approval_service(db_path, monkeypatch):
     token, proposal = _issue()
     monkeypatch.setattr(hitl, "trading_allowed", lambda: True)
     seen = []
-    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a: seen.append(a))
+    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a, **k: seen.append(a))
 
     hitl.handle_callback({"token": token, "chat_id": "900", "action": "a"})
 
@@ -540,7 +540,7 @@ def test_an_approve_tap_retires_the_buttons_before_placing_anything(db_path, mon
     events = []
     edits = _capture_edits(monkeypatch)
     monkeypatch.setattr(
-        hitl, "_approve_and_report", lambda *a: events.append(("placed", len(edits)))
+        hitl, "_approve_and_report", lambda *a, **k: events.append(("placed", len(edits)))
     )
 
     hitl.handle_callback({"token": token, "chat_id": "900", "action": "a"})
@@ -708,3 +708,97 @@ class TestBacktestRunsAreNotLiveRuns:
         self._row(trigger="schedule")
         assert repo.has_terminal_run_today("u1", "momentum_long_scalper") is True
         assert repo.has_committed_run_today("u1", "momentum_long_scalper") is True
+
+
+# --- Bot 2's two alternatives on one message (docs/bot2-hedged-shapes-plan.md) --------------
+
+
+def _issue_choices(chat_id="900"):
+    _, proposal = _propose_row(bot_type=BOT_EXPIRY_INDEX_WRITER)
+    tokens = repo.issue_approval_tokens(
+        user_id="u1", bot_type=BOT_EXPIRY_INDEX_WRITER, proposal_id=proposal.id, chat_id=chat_id,
+        ttl_minutes=15, choices=["naked", "hedged"],
+    )
+    return tokens, proposal
+
+
+def test_each_alternative_gets_its_own_token_and_one_tap_burns_both(db_path):
+    tokens, proposal = _issue_choices()
+    assert set(tokens) == {"naked", "hedged"} and tokens["naked"] != tokens["hedged"]
+    claim = repo.consume_approval_token(tokens["hedged"])
+    assert claim["choice"] == "hedged" and claim["proposal_id"] == proposal.id
+    # One tap places one trade, never two.
+    assert repo.consume_approval_token(tokens["naked"]) is None
+
+
+def test_a_sibling_token_finds_the_shared_message(db_path):
+    tokens, _ = _issue_choices()
+    repo.set_approval_message(tokens["naked"], 55, "choose one")
+    assert repo.open_approval_message(tokens["hedged"])["message_id"] == 55
+
+
+def test_the_tapped_alternative_is_what_gets_approved(db_path, monkeypatch):
+    tokens, proposal = _issue_choices()
+    monkeypatch.setattr(hitl, "trading_allowed", lambda: True)
+    seen = []
+    monkeypatch.setattr(hitl, "_approve_and_report", lambda *a, **k: seen.append((a, k)))
+
+    hitl.handle_callback({"token": tokens["hedged"], "chat_id": "900", "action": "a"})
+
+    assert seen == [(("u1", BOT_EXPIRY_INDEX_WRITER, proposal.id), {"choice": "hedged"})]
+
+
+def test_a_two_alternative_ask_registers_and_offers_both(db_path, monkeypatch):
+    import icici_breeze_backend.app.services.telegram_alerts as alerts
+    import icici_breeze_backend.app.services.telegram_link_portal as portal
+
+    registered, sent = [], {}
+    monkeypatch.setattr(portal, "register_approval_token", lambda t, ttl: registered.append(t) or True)
+    monkeypatch.setattr(hitl, "register_approval_token", lambda t, ttl: registered.append(t) or True,
+                        raising=False)
+
+    def fake_notify(user_id, **kw):
+        sent.update(kw)
+        return True
+
+    monkeypatch.setattr(alerts, "notify_bot_proposal", fake_notify)
+    run_id = repo.start_run("u1", BOT_EXPIRY_INDEX_WRITER, "schedule")
+    proposal = repo.create_proposal(
+        run_id=run_id, user_id="u1", bot_type=BOT_EXPIRY_INDEX_WRITER,
+        legs=[_leg(stock_code="NIFTY", alternative="naked"),
+              _leg(stock_code="NIFTY", alternative="hedged", action="buy"),
+              _leg(stock_code="NIFTY", alternative="hedged")],
+        totals={}, ttl_minutes=15,
+    )
+
+    assert hitl.ask_about("u1", BOT_EXPIRY_INDEX_WRITER, proposal, ttl_minutes=15, chat_id="900")
+    assert set(sent["choice_tokens"]) == {"naked", "hedged"}
+    assert set(registered) == set(sent["choice_tokens"].values())
+
+
+def test_the_keyboard_has_one_place_button_per_alternative_and_one_reject():
+    from icici_breeze_backend.app.services.telegram_alerts import _approval_keyboard
+
+    keyboard = _approval_keyboard("T1", "", {"naked": "T1", "hedged": "T2"},
+                                  {"naked": 9000.0, "hedged": 12500.0})["inline_keyboard"]
+    places, rejects = keyboard
+    assert [b["callback_data"] for b in places] == ["a:T1", "a:T2"]
+    assert "12,500" in places[1]["text"]
+    assert [b["callback_data"] for b in rejects] == ["r:T1"]
+
+
+def test_the_message_shows_both_alternatives_with_the_wing_as_a_buy():
+    from types import SimpleNamespace
+
+    from icici_breeze_backend.app.services.telegram_alerts import _format_proposal_message
+
+    proposal = SimpleNamespace(
+        legs=[_leg(stock_code="NIFTY", alternative="naked"),
+              _leg(stock_code="NIFTY", alternative="hedged", action="buy", strike_price=270.0),
+              _leg(stock_code="NIFTY", alternative="hedged")],
+        totals={"alternatives": {"naked": {"premium_total": 9000, "strategies": ["Naked CE"]},
+                                 "hedged": {"premium_total": 12500, "strategies": ["Bear call spread"]}}},
+    )
+    text = _format_proposal_message(BOT_EXPIRY_INDEX_WRITER, proposal, "10:30 IST")
+    assert "choose one" in text and "Naked" in text and "Hedged" in text
+    assert "BUY" in text and "12,500" in text

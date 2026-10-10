@@ -42,13 +42,30 @@ from icici_breeze_backend.app.services.bots.scalping.backtest_fetch import (
 from icici_breeze_backend.app.services.bots.scalping.backtest_store import Need
 from icici_breeze_backend.app.services.bots.scalping.spreads import spread_stats
 from icici_breeze_backend.app.services.condor import backtest_combos
-from icici_breeze_backend.app.services.condor.backtest import CondorReplay, ExitAction, StoreSource
+from icici_breeze_backend.app.services.condor import daily_history
+from icici_breeze_backend.app.services.condor.backtest import CondorReplay, DailySource, ExitAction, StoreSource
 from icici_breeze_backend.app.services.condor.engine import ENGINE_VERSION
 
 _logger = logging.getLogger(__name__)
 
 BOT = "condor"
 LABEL = "Dynamic Iron Condor"
+#: Where a run's prices come from: ICICI's intraday option bars (from 5 Jan 2026), or NSE's daily
+#: closes (from 1 Jan 2020, docs/condor-daily-history-plan.md).
+PRICES = ("icici", "nse_daily")
+PRICES_LABEL = {"icici": "ICICI intraday prices", "nse_daily": "NSE daily closes, close-only checks"}
+DAILY_NOTES = (
+    "Prices: NSE's daily closing prices. Every decision is made once a session, at the close "
+    "(entries, rolls, exits and the max-loss stop), so a 10:30 check never reads prices before "
+    "they happened; a tranche set to enter at the start-of-day check enters at the close.",
+    "Each cycle is sized to today's money: its lot is today's lot x today's NIFTY / NIFTY when it "
+    "opened, so a 2% move costs the same in every year. Settings in index points (minimum roll "
+    "credit) stay in points, so they are relatively larger at older, lower index levels.",
+    "A contract that did not trade that session (often a far wing) is priced off the session's "
+    "smile: the implied volatility of that expiry's contracts that did trade, as NSE prices "
+    "untraded contracts. A traded close always wins. Spreads are modelled on today's, which "
+    "understates older far-strike spreads.",
+)
 META_FIVE_MIN = "five_minute_bars"
 # Rounds of fetch-and-resume before a run gives up; each round fetches what one check lacked.
 MAX_ROUNDS = 2000
@@ -211,11 +228,13 @@ def start(
     period: Optional[str] = None,
     notes: Optional[list[str]] = None,
     on_finish: Optional[Callable[[dict[str, Any]], None]] = None,
+    prices: str = "icici",
 ) -> dict[str, Any]:
-    """Start a replay in the shared job slot. `run_id`, `period` and `on_finish` are the card's
+    """Start a replay in the shared job slot. `prices` "nse_daily" replays on NSE's daily
+    closes from 2020 (close-only checks, notional-scaled) instead of ICICI's intraday bars. `run_id`, `period` and `on_finish` are the card's
     (`start_card`): the stored run then shares its id with the Activity row, and `on_finish`
     records that row once the run is saved, whatever its outcome."""
-    check_startable(from_date, to_date, lots_per_tranche)
+    check_startable(from_date, to_date, lots_per_tranche, prices=prices)
     combos = backtest_combos.combos_for(settings, exit_action)
     now = now_ist()
     run_id = run_id or str(uuid.uuid4())
@@ -235,6 +254,7 @@ def start(
             "settings": settings.model_dump(mode="json"),
             "engine_version": ENGINE_VERSION,
             "combinations": len(combos),
+            "prices": prices,
             **({"period": period} if period else {}),
         },
     }
@@ -255,6 +275,12 @@ def start(
         try:
             last_session = service.last_completed_session(now, service.holidays())
             end = min(to_date, last_session)
+            if prices == "nse_daily":
+                _run_daily(user_id, settings, from_date, end, combos, lots_per_tranche, notes, run, now)
+                finished()
+                message = run.get("headline") or _message(run.get("summary") or {}, run["status"])
+                jobs._finish("completed", message=message, calls=0, run_id=run_id)  # noqa: SLF001
+                return
             fetcher = None
             remaining = _fetch_allowance(user_id, now, notes)
             scope = jobs._broker_scope(user_id) if remaining > 0 else None  # noqa: SLF001
@@ -266,7 +292,11 @@ def start(
                     fetcher.max_calls = remaining
                     jobs._update(phase="fetching")  # noqa: SLF001
                     jobs._log("Fetching NIFTY index bars…")  # noqa: SLF001
-                    fetcher.fetch_spot("NIFTY", from_date, end)
+                    # From a month and a half before the range: the premium gate's forecast reads
+                    # the sessions before each check (#78).
+                    from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS
+
+                    fetcher.fetch_spot("NIFTY", from_date - datetime.timedelta(days=WARMUP_DAYS), end)
 
                 lots = lots_per_tranche
                 sizing_text = f"{lots} lot(s) a tranche, as entered."
@@ -346,13 +376,19 @@ def start(
     )
 
 
-def check_startable(from_date: datetime.date, to_date: datetime.date, lots_per_tranche: Optional[int]) -> None:
+def check_startable(
+    from_date: datetime.date, to_date: datetime.date, lots_per_tranche: Optional[int], *, prices: str = "icici",
+) -> None:
     """Everything that refuses a run before it takes the job slot."""
     jobs.ensure_store()
     jobs.refuse_if_storage_blocked()
     jobs._memory_check("before starting")  # noqa: SLF001
-    if from_date < regime.HISTORY_START:
-        raise ValueError(f"ICICI's option history starts {regime.HISTORY_START:%d %b %Y}.")
+    if prices not in PRICES:
+        raise ValueError(f"Unknown prices {prices!r}; expected one of {', '.join(PRICES)}.")
+    first = daily_history.HISTORY_START if prices == "nse_daily" else regime.HISTORY_START
+    if from_date < first:
+        source = "NSE daily-price history" if prices == "nse_daily" else "ICICI's option history"
+        raise ValueError(f"{source} starts {first:%d %b %Y}.")
     if to_date < from_date:
         raise ValueError("The end date is before the start date.")
     if lots_per_tranche is None and not jobs.broker_live():
@@ -372,6 +408,7 @@ def start_card(
     period: str,
     from_date: Optional[datetime.date] = None,
     to_date: Optional[datetime.date] = None,
+    prices: str = "icici",
 ) -> dict[str, Any]:
     """The bot card's backtest, as the other bots have it: one choice of period, and the rest
     is the bot's saved settings -- campaign settings, exit action and lots per tranche (blank
@@ -390,13 +427,15 @@ def start_card(
     now = now_ist()
     first, last = service.resolve_period(period, from_date, to_date, now, service.holidays())
     notes: list[str] = []
-    if first < regime.HISTORY_START:
+    history_start = daily_history.HISTORY_START if prices == "nse_daily" else regime.HISTORY_START
+    source_name = "NSE's daily-price history" if prices == "nse_daily" else "ICICI's option history"
+    if first < history_start:
         notes.append(
-            f"ICICI's option history starts {regime.HISTORY_START:%d %b %Y}, so the replay starts there, "
+            f"{source_name} starts {history_start:%d %b %Y}, so the replay starts there, "
             f"not {first:%d %b %Y}."
         )
-        first = regime.HISTORY_START
-    check_startable(first, last, config.lots_per_tranche)
+        first = history_start
+    check_startable(first, last, config.lots_per_tranche, prices=prices)
     with jobs._lock:  # noqa: SLF001
         if jobs._thread is not None and jobs._thread.is_alive():  # noqa: SLF001
             raise jobs.Busy("A backtest is already running. Wait for it, or stop it.")
@@ -406,6 +445,8 @@ def start_card(
         f"{service.PERIOD_LABELS[period]} · {first}" if first == last
         else f"{service.PERIOD_LABELS[period]} · {first} to {last}"
     )
+    if prices == "nse_daily":
+        period_text += f" · {PRICES_LABEL[prices]}"
 
     def record(run: dict[str, Any]) -> None:
         detail = {"backtest_run_id": run_id, "period": period, "from": first.isoformat(), "to": last.isoformat()}
@@ -440,7 +481,7 @@ def start_card(
         return start(
             user_id, config.campaign, first, last,
             exit_action=config.exit_action, lots_per_tranche=config.lots_per_tranche,
-            run_id=run_id, period=period, notes=notes, on_finish=record,
+            run_id=run_id, period=period, notes=notes, on_finish=record, prices=prices,
         )
     except Exception as exc:
         bots_repo.finish_run(
@@ -561,6 +602,103 @@ def _grid_text(settings: CondorSettings) -> str:
         f"net-Δ band ±{backtest_combos.BAND_STEP:g}, minimum roll credit ±{backtest_combos.ROLL_CREDIT_STEP:g} points, "
         f"{loss} × 0.5 / 1 / 1.5, no-roll window 0 and 3 days (and the saved value), time roll and close"
     )
+
+
+def _run_daily(
+    user_id: str,
+    settings: CondorSettings,
+    from_date: datetime.date,
+    end: datetime.date,
+    combos: list[Any],
+    lots_per_tranche: Optional[int],
+    notes: list[str],
+    run: dict[str, Any],
+    now: datetime.datetime,
+) -> None:
+    """The long-history replay (docs/condor-daily-history-plan.md): download what NSE sessions
+    are missing, then replay every combination on daily closes, close-only, notional-scaled."""
+    notes.extend(DAILY_NOTES)
+    block = jobs.market_hours_reason(now)
+    if block:
+        notes.append(f"Nothing downloaded: {block} Replayed on the NSE prices already stored.")
+    else:
+        jobs._update(phase="fetching")  # noqa: SLF001
+        jobs._log("Downloading NSE daily prices that are not stored yet…")  # noqa: SLF001
+
+        def stop() -> Optional[str]:
+            if jobs._cancel.is_set():  # noqa: SLF001
+                return "Stopped at your request."
+            return jobs.market_hours_reason()
+
+        fetcher = daily_history.DailyFetcher(
+            stop=stop, log=jobs._log,  # noqa: SLF001
+            progress=lambda n, total: jobs._update(phase="fetching", step=n, steps=total),  # noqa: SLF001
+        )
+        try:
+            # A month and a half before the range too: the premium gate's forecast reads the
+            # sessions before each check (#78).
+            from icici_breeze_backend.app.services.premium_gate.replay import WARMUP_DAYS
+
+            stats = fetcher.fetch_range(from_date - datetime.timedelta(days=WARMUP_DAYS), end)
+            notes.append(
+                f"NSE daily prices: {stats[daily_history.OK]} session(s) downloaded, "
+                f"{stats[daily_history.NO_FILE]} holiday(s), {stats[daily_history.ERROR]} error(s) "
+                "(retried by the next run)."
+            )
+        except daily_history.Stopped as exc:
+            notes.append(f"Download stopped: {exc} Replayed on the NSE prices already stored.")
+    sessions = daily_history.sessions(from_date, end)
+    if not sessions:
+        raise ValueError("No NSE daily prices are stored for this range yet. Run it outside market hours.")
+    reference = daily_history.latest_index_close()
+    notes.append(
+        f"{len(sessions)} session(s) from {sessions[0]:%d %b %Y} to {sessions[-1]:%d %b %Y}; "
+        f"sized to NIFTY {reference:,.0f} (the latest stored close)."
+    )
+
+    lots = lots_per_tranche
+    sizing_text = f"{lots} lot(s) a tranche, as entered."
+    if lots is None:
+        jobs._update(phase="sizing")  # noqa: SLF001
+        sizing = size_from_margin(settings, user_id)
+        lots, sizing_text = sizing["lots"], sizing["describe"]
+    notes.append(sizing_text)
+
+    band, band_note = tradeable_band(settings, now.date())
+    notes.append(band_note)
+    source = DailySource(from_date, end, reference_spot=reference)
+    charges, spread = load_charges(), spread_stats()
+    hol = service.holidays()
+    replays = [
+        (combo, CondorReplay(
+            combo.settings, from_date, end, lots_per_tranche=lots, exit_action=combo.exit_action,
+            source=source, listed_band=band, charges=charges, spread=spread, holidays=hol,
+            checks=("eod",),
+        ))
+        for combo in combos
+    ]
+    notes.append(f"{len(combos)} settings combinations replayed: {_grid_text(settings)}. Every other setting as saved.")
+    stopped = _drive(replays, source, None, notes)
+    estimated_days = {day for day, _c in source.estimated}
+    notes.append(
+        f"{len(source.estimated)} option price(s) on {len(estimated_days)} session(s) were estimated "
+        "off the session's smile because the contract did not trade; every other price traded."
+    )
+    rows, campaigns_by_combo = [], {}
+    for combo, replay in replays:
+        combo_summary = replay.summary()
+        campaigns = card_trades(combo_summary)
+        rows.append(backtest_combos.comparison_row(
+            combo, combo_summary, campaigns, complete=replay.done, stopped_at=stopped.get(combo.id),
+        ))
+        campaigns_by_combo[combo.id] = campaigns
+    status = "completed" if all(r["complete"] for r in rows) else "partial"
+    saved_combo, replay = next(((c, r) for c, r in replays if c.is_saved), replays[0])
+    summary = replay.summary()
+    summary.update(notes=notes, calls=0, comparison=rows, setting_label=saved_combo.label,
+                   prices="nse_daily", prices_label=PRICES_LABEL["nse_daily"])
+    run.update(status=status, summary=summary, trades=replay.events, combos=campaigns_by_combo)
+    store.save_run(run)
 
 
 def _drive(

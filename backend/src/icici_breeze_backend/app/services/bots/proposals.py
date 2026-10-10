@@ -81,15 +81,35 @@ def leg_key(leg) -> tuple:
 # --------------------------------------------------------------------------------------
 
 
-def plan_to_legs(plan, index_code: str) -> list[ProposalLeg]:
+def plan_alternatives_to_legs(plan, index_code: str) -> list[ProposalLeg]:
+    """Every placeable alternative a plan sized -- the best naked and the best hedged -- as
+    proposal legs, each tagged with its alternative (docs/bot2-hedged-shapes-plan.md). Exactly
+    one of them is placed: the user picks on Telegram or in the run sheet."""
+    alternatives = getattr(plan, "alternatives", None) or {}
+    if not alternatives:
+        return plan_to_legs(plan, index_code)
+    out: list[ProposalLeg] = []
+    for choice in ("naked", "hedged"):
+        alt = alternatives.get(choice)
+        if alt is not None and not alt.error and alt.legs:
+            legs = plan_to_legs(alt, index_code, alternative=choice)
+            # Pre-selected: the one the bot would place on its own (the bigger total).
+            for leg in legs:
+                leg.selected = choice == getattr(plan, "choice", None)
+            out.extend(legs)
+    return out
+
+
+def plan_to_legs(plan, index_code: str, *, alternative: Optional[str] = None) -> list[ProposalLeg]:
     """Flatten a sized plan into proposal legs.
 
     Both sides of a strangle share a `group_key`, so the UI can select and deselect them
-    together -- half a strangle is a naked short, which is not the shape the user picked.
+    together -- half a strangle is a naked short, which is not the shape the user picked. A
+    hedged shape's wings share it too: a spread without its wing is a naked short.
     """
     from icici_breeze_backend.app.services.bots import expiry_index_writer as bot2
 
-    group_key = f"{index_code}:{plan.strategy}"
+    group_key = f"{index_code}:{alternative or ''}:{plan.strategy}"
     lot_size = plan.quantity // plan.lots if plan.lots else plan.quantity
     out = []
     for leg in plan.legs:
@@ -106,6 +126,8 @@ def plan_to_legs(plan, index_code: str) -> list[ProposalLeg]:
                 premium_per_share=leg["bid"],
                 premium_total=leg["premium_total"],
                 premium_basis="bid",
+                action=leg.get("action", "sell"),
+                alternative=alternative,
                 spot=plan.spot,
                 # The whole shape's netted margin is a property of the pair, so it is
                 # attributed to the first leg rather than split arbitrarily across both.
@@ -121,9 +143,42 @@ def plan_to_legs(plan, index_code: str) -> list[ProposalLeg]:
     return out
 
 
+def _net_premium(legs: list[ProposalLeg]) -> float:
+    return sum(l.premium_total if l.action == "sell" else -l.premium_total for l in legs)
+
+
+def worst_case(legs: list[ProposalLeg]) -> Optional[float]:
+    """A hedged shape's most possible loss at expiry, in rupees: the widest short-to-wing gap x
+    quantity, less the net premium. None for a shape with a naked short."""
+    shorts = [l for l in legs if l.action == "sell"]
+    wings = {(l.stock_code, l.right): l for l in legs if l.action == "buy"}
+    if not shorts or any((s.stock_code, s.right) not in wings for s in shorts):
+        return None
+    widest = max(abs(s.strike_price - wings[(s.stock_code, s.right)].strike_price) * s.quantity for s in shorts)
+    return round(widest - _net_premium(legs), 2)
+
+
+def alternative_totals(legs: list[ProposalLeg]) -> dict[str, dict[str, Any]]:
+    """Per alternative: net premium, margin and (hedged) worst case -- what each button places."""
+    out: dict[str, dict[str, Any]] = {}
+    for choice in ("naked", "hedged"):
+        mine = [l for l in legs if l.alternative == choice]
+        if mine:
+            out[choice] = {
+                "premium_total": round(_net_premium(mine), 2),
+                "span_total": round(sum(l.span_margin or 0 for l in mine), 2),
+                "worst_case": worst_case(mine) if choice == "hedged" else None,
+                "strategies": sorted({l.note or l.strategy or "" for l in mine}),
+            }
+    return out
+
+
 def index_totals(legs: list[ProposalLeg]) -> dict:
+    # Net of any wing bought. With two alternatives in one proposal these sum both; each
+    # alternative's own figures are under "alternatives".
     return {
-        "premium_total": round(sum(l.premium_total for l in legs), 2),
+        "premium_total": round(_net_premium(legs), 2),
+        "alternatives": alternative_totals(legs),
         "span_total": round(sum(l.span_margin or 0 for l in legs), 2),
         "elm_total": 0.0,
         "delivery_exposure_total": 0.0,
@@ -561,10 +616,27 @@ def _approve_index_plan(
             index_cfg = config.indices.get(code)
             if index_cfg is None:
                 continue
+            if index_cfg.distance_basis == "implied_move":
+                # A % typed in the review is a %: this run places that index by % of spot, and a
+                # side left alone keeps the distance it was planned at, not the saved %.
+                index_cfg.distance_basis = "pct"
+                for leg in pending.legs:
+                    if leg.stock_code == code and leg.spot and leg.right not in sides:
+                        sides = {**sides, leg.right: round(abs(leg.strike_price / leg.spot - 1) * 100, 4)}
             if "call" in sides:
                 index_cfg.safety_pct_ce = sides["call"]
             if "put" in sides:
                 index_cfg.safety_pct_pe = sides["put"]
+
+    # The alternative the chosen legs belong to is the one re-planned and placed. Legs of both
+    # for one index is two trades, which no proposal offers (hedged-shapes plan 5). Refused
+    # before anything is started, so a refusal leaves no run behind.
+    for code in {leg.stock_code for leg in chosen}:
+        if len({leg.alternative for leg in chosen if leg.stock_code == code and leg.alternative}) > 1:
+            raise ApprovalRefused(
+                f"Choose either the naked or the hedged trade for {bot2.INDEX_LABEL.get(code, code)}, not both.",
+                status_code=400,
+            )
 
     available = bot2._available_margin(proc, user_id)
     if not available or available <= 0:
@@ -581,6 +653,7 @@ def _approve_index_plan(
     all_ok = True
     for index_code in sorted({leg.stock_code for leg in chosen}):
         index_legs = [leg for leg in chosen if leg.stock_code == index_code]
+        alternatives = {leg.alternative for leg in index_legs if leg.alternative}
         plan = bot2.plan_index(
             proc,
             user_id,
@@ -589,6 +662,10 @@ def _approve_index_plan(
             config=config,
             available_margin=available,
             margin_source=margin_source,
+            # A trade approved in the app was chosen by hand; a Telegram tap approves the bot's
+            # own proposal, which must still clear the premium gate at today's prices.
+            enforce_gate=trigger != "manual",
+            choice=next(iter(alternatives)) if alternatives else "best",
         )
         if plan.error or not plan.legs:
             all_ok = False
@@ -622,8 +699,10 @@ def _approve_index_plan(
                 for leg in plan.legs:
                     leg["quantity"] = plan.quantity
                     leg["premium_total"] = round(leg["bid"] * plan.quantity, 2)
+                # Net of any wing bought, as the plan's own total is.
                 plan.premium_total = round(
-                    sum(leg["premium_total"] for leg in plan.legs), 2
+                    sum(leg["premium_total"] * (-1 if leg.get("action") == "buy" else 1)
+                        for leg in plan.legs), 2
                 )
 
         result = bot2.execute_plan(proc, user_id, plan, config=config, run_id=run_id)
@@ -647,6 +726,7 @@ def _approve_index_plan(
                     order_ids=order_ids,
                     error=error,
                     filled_quantity=fill["executed"] if fill["heard"] else None,
+                    action=leg.get("action", "sell"),
                 )
             )
         stop = _stop_result(result)

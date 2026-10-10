@@ -56,7 +56,11 @@ const COLUMNS: Record<BacktestBot, Column[]> = {
       label: "Strikes",
       render: (t) =>
         (Array.isArray(t.legs) ? t.legs : [])
-          .map((l: { strike?: number; right?: string }) => `${l.strike} ${l.right === "call" ? "CE" : "PE"}`)
+          // A hedged shape's wing is marked "+": bought, where every other leg is sold.
+          .map(
+            (l: { strike?: number; right?: string; action?: string }) =>
+              `${l.action === "buy" ? "+" : ""}${l.strike} ${l.right === "call" ? "CE" : "PE"}`,
+          )
           .join(" / "),
     },
     { key: "lots", label: "Lots", align: "right", render: (t) => String(t.lots) },
@@ -84,8 +88,9 @@ const COLUMNS: Record<BacktestBot, Column[]> = {
   ],
 };
 
-/** Every signal setting the bot could trade, side by side (docs/signals-streamline-plan.md 8).
- *  The trades below are the saved setting's; every setting's files are in the run's zip. */
+/** Every signal setting the bot could trade, and its premium gate off and at three thresholds,
+ *  side by side (docs/signals-streamline-plan.md 8, docs/premium-gate-plan.md 4). The trades
+ *  below are the saved setting's; every setting's files are in the run's zip. */
 function Comparison({ rows }: { rows: ComparisonRow[] }) {
   const best = rows.reduce<ComparisonRow | null>(
     (b, r) => (b === null || (r.net_pnl ?? -Infinity) > (b.net_pnl ?? -Infinity) ? r : b),
@@ -94,13 +99,13 @@ function Comparison({ rows }: { rows: ComparisonRow[] }) {
   return (
     <div>
       <p className="mb-1.5 text-micro font-bold uppercase tracking-wide text-faint">
-        Every signal setting, replayed ({rows.length})
+        Every setting compared, replayed ({rows.length})
       </p>
       <div className="app-table-wrap max-h-[22rem]">
         <table className="min-w-full text-left text-table">
           <thead className="app-table-head sticky top-0">
             <tr>
-              <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Signal setting</th>
+              <th className="px-2.5 py-2 font-semibold whitespace-nowrap">Setting</th>
               <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Trades</th>
               <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Win rate</th>
               <th className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">Net P&amp;L</th>
@@ -168,6 +173,7 @@ function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
               <th className={TH_R}>Max loss</th>
               <th className={TH_R}>No-roll window</th>
               <th className={TH}>Exit action</th>
+              <th className={TH_R}>Premium gate</th>
               <th className={TH_R}>Campaigns</th>
               <th className={TH_R}>Rolls</th>
               <th className={TH_R}>Win rate</th>
@@ -187,6 +193,7 @@ function CondorComparison({ rows }: { rows: CondorComparisonRow[] }) {
                 <td className="px-2.5 py-1.5 whitespace-nowrap text-foreground">
                   {r.varied.exit_action === "close" ? "Close" : "Time roll"}
                 </td>
+                <td className={TD_NUM}>{r.varied.premium_gate ?? "—"}</td>
                 <td className={TD_NUM}>{r.trades}</td>
                 <td className={TD_NUM}>{r.rolls}</td>
                 <td className={TD_NUM}>{r.win_rate_pct == null ? "—" : `${r.win_rate_pct}%`}</td>

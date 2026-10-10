@@ -27,8 +27,10 @@ from icici_breeze_backend.app.core.strike import parse_strike
 from icici_breeze_backend.app.domain.bots import (
     ExpiryIndexWriterConfig,
     IndexWriterLeg,
+    PremiumGateConfig,
     ReasonCode,
 )
+from icici_breeze_backend.app.services.premium_gate import reading as premium
 
 _logger = logging.getLogger(__name__)
 
@@ -163,16 +165,36 @@ class CandidateLeg:
     right: str  # cfg.CALL / cfg.PUT
     strike_price: float
     bid: float
+    # "sell" for a short; "buy" for a hedged shape's wing, priced at `ask`.
+    action: str = "sell"
+    ask: float = 0.0
+
+    @property
+    def price(self) -> float:
+        """What this leg trades at: the bid we sell at, or the ask we buy a wing at."""
+        return self.bid if self.action == "sell" else self.ask
 
 
 @dataclass
 class Candidate:
-    """One shortlisted strategy, priced for a single lot so shapes compare like for like."""
+    """One shortlisted strategy, priced for a single lot so shapes compare like for like.
+    `premium_per_lot` is net: sold bids less bought asks."""
 
     strategy: str
     legs: list[CandidateLeg]
     premium_per_lot: float
     margin_per_lot: float
+
+    @property
+    def hedged(self) -> bool:
+        return self.strategy in HEDGED
+
+    def lots_for(self, budget: float) -> int:
+        return int(math.floor(budget / self.margin_per_lot)) if self.margin_per_lot > 0 else 0
+
+    def premium_for(self, budget: float) -> float:
+        """Premium receivable at the size `budget` buys: the user's ranking (2026-10-10)."""
+        return self.premium_per_lot * self.lots_for(budget)
 
     @property
     def margin_yield(self) -> float:
@@ -196,14 +218,26 @@ STRATEGY_LABEL = {
     "naked_ce": "Naked CE",
     "naked_pe": "Naked PE",
     "short_strangle": "Short strangle",
+    "bear_call_spread": "Bear call spread",
+    "bull_put_spread": "Bull put spread",
+    "iron_condor": "Iron condor",
 }
 
-# Which sides each shortlisted shape sells.
+# Which sides each shortlisted shape sells. A hedged shape also buys a wing beyond each.
 STRATEGY_RIGHTS: dict[str, tuple[str, ...]] = {
     "naked_ce": (cfg.CALL,),
     "naked_pe": (cfg.PUT,),
     "short_strangle": (cfg.CALL, cfg.PUT),
+    "bear_call_spread": (cfg.CALL,),
+    "bull_put_spread": (cfg.PUT,),
+    "iron_condor": (cfg.CALL, cfg.PUT),
 }
+NAKED = ("naked_ce", "naked_pe", "short_strangle")
+HEDGED = ("bear_call_spread", "bull_put_spread", "iron_condor")
+#: The two alternatives a plan offers (docs/bot2-hedged-shapes-plan.md): the best of each group.
+CHOICES = ("naked", "hedged")
+#: How long a wing's buy may take to fill before nothing is sold.
+WING_FILL_TIMEOUT_SECONDS = 20.0
 
 
 def _side(right: str) -> str:
@@ -269,7 +303,7 @@ def margin_for_legs(
     exchange_code: str,
     stock_code: str,
     expiry_display: str,
-    legs: list[tuple[str, float, int]],
+    legs: list[tuple],
 ) -> Optional[float]:
     """SPAN for a set of short legs priced together in ONE margin_calculator call.
 
@@ -278,7 +312,7 @@ def margin_for_legs(
     strangle's cost by the whole netting benefit -- biasing the yield ranking against the
     very shape the netting exists to reward.
 
-    `legs` is (right, strike, quantity). Returns None on any failure; callers treat that as
+    `legs` is (right, strike, quantity[, "buy"]). Returns None on any failure; callers treat that as
     "cannot price", never as zero.
     """
     return price_margin_for_legs(
@@ -323,13 +357,17 @@ def price_margin_for_legs(
                 "stock_code": stock_code,
                 "right": right,
             }
-            for right, strike, quantity in legs
+            for right, strike, quantity, *_ in legs
         ]
+        # A hedged shape's wings are bought: priced together with the shorts, ICICI nets them.
+        for row, leg in zip(payload, legs):
+            if len(leg) > 3 and str(leg[3]).lower() == "buy":
+                row["action"] = cfg.BUY
         out = breeze.margin_calculator(payload, exchange_code=exchange_code)
     except Exception as exc:  # noqa: BLE001 -- an unpriceable shape drops out of the shortlist
         _logger.warning("bot2: margin_calculator failed for %s", stock_code, exc_info=True)
         return None, f"margin_calculator raised {type(exc).__name__}: {exc}"
-    shape = "+".join(f"{'CE' if r == cfg.CALL else 'PE'}{strike:g}x{qty}" for r, strike, qty in legs)
+    shape = "+".join(f"{'CE' if l[0] == cfg.CALL else 'PE'}{l[1]:g}x{l[2]}" for l in legs)
     if not isinstance(out, dict):
         reason = f"margin_calculator returned {type(out).__name__}, not a response"
     elif out.get("Status") != 200:
@@ -364,14 +402,22 @@ def build_candidates(
     expiry_display: str,
     leg_cfg: IndexWriterLeg,
     lot_size: int,
-) -> tuple[list[Candidate], Optional[str], float, Optional[str]]:
+    gate: Optional[PremiumGateConfig] = None,
+    enforce_gate: bool = True,
+    now: Optional[datetime.datetime] = None,
+) -> tuple[list[Candidate], Optional[str], float, Optional[str], Optional[premium.Reading]]:
     """Price every shortlisted strategy for one lot.
 
-    Returns (candidates, error, spot, reason_code). When nothing prices, `error` names every
-    leg and strategy that dropped out and why -- "could not be priced" on its own covered a
-    missing strike, an empty book and a refused margin call alike, and each needs a
+    Returns (candidates, error, spot, reason_code, premium reading). When nothing prices, `error`
+    names every leg and strategy that dropped out and why -- "could not be priced" on its own
+    covered a missing strike, an empty book and a refused margin call alike, and each needs a
     different fix.
+
+    The premium reading is made when the gate is on or strikes are set by implied move; with
+    `enforce_gate` False (the manual run sheet) it is reported but never refuses.
     """
+    from icici_breeze_backend.app.core.timezone import now_ist
+    from icici_breeze_backend.app.services.premium_gate import live as premium_live
     from icici_breeze_backend.app.services.quote_source_router import row_is_live
 
     # CE before PE, so the same failure always reads the same way in the run log.
@@ -389,11 +435,35 @@ def build_candidates(
                 f"No option chain available ({_side(right)} {expiry_display}: {chain_error}).",
                 0.0,
                 ReasonCode.CHAIN_NOT_READY,
+                None,
             )
         rows_by_right[right] = rows
         spot = spot or _spot_from(rows)
     if spot <= 0:
-        return [], _no_live_spot_reason(rows_by_right), 0.0, ReasonCode.QUOTE_UNAVAILABLE
+        return [], _no_live_spot_reason(rows_by_right), 0.0, ReasonCode.QUOTE_UNAVAILABLE, None
+
+    # The premium reading needs the ATM call and put, whichever sides the shortlist sells.
+    gate_on = gate is not None and gate.enabled
+    by_implied = leg_cfg.distance_basis == "implied_move"
+    # A hedged shape's wing is set by the implied move too, whatever the strikes are set by.
+    wants_wings = any(s in HEDGED for s in leg_cfg.strategies)
+    reading: Optional[premium.Reading] = None
+    implied: Optional[float] = None
+    if gate_on or by_implied or wants_wings:
+        sides = {r: rows_by_right.get(r) or _chain_rows(proc, user_id, index_code, exchange, expiry_display, r)
+                 for r in (cfg.CALL, cfg.PUT)}
+        expiry = datetime.datetime.strptime(expiry_display, "%d-%b-%Y").date()
+        reading, implied = premium_live.live_reading(
+            index_code, expiry, spot, sides[cfg.CALL] or [], sides[cfg.PUT] or [], now or now_ist(),
+            user_id=user_id,
+        )
+        refusal = gate_refusal(reading, gate) if (gate_on and enforce_gate) else None
+        if refusal is not None:
+            return [], refusal[1], spot, refusal[0], reading
+        if by_implied and implied is None:
+            # Fails closed: a strike placed by a % it was never set to is not the user's trade.
+            return ([], f"Strikes are set by implied move, but there is {reading.describe()}.",
+                    spot, ReasonCode.PREMIUM_UNREADABLE, reading)
 
     # Pick each side once and reuse it: a strangle's call leg is the same contract the
     # naked-CE candidate would sell, so pricing it twice would only invite them to drift.
@@ -402,9 +472,13 @@ def build_candidates(
     for right in rights_needed:
         safety = leg_cfg.safety_pct_ce if right == cfg.CALL else leg_cfg.safety_pct_pe
         rows = rows_by_right[right]
-        row = _pick_strike(rows, spot, right, safety)
+        target = strike_target(leg_cfg, spot, right, implied)
+        row = _pick_strike_at(rows, target, right)
         if row is None:
-            leg_failures.append(_no_strike_reason(rows, spot, right, safety))
+            k = leg_cfg.implied_multiple_ce if right == cfg.CALL else leg_cfg.implied_multiple_pe
+            leg_failures.append(_no_strike_reason(
+                rows, spot, right, safety, target=target,
+                distance=f"{k:g}x the implied move" if by_implied else None))
             continue
         strike = float(parse_strike(row.get("strike_price")) or 0)
         if strike <= 0:
@@ -431,6 +505,18 @@ def build_candidates(
             continue
         picked[right] = CandidateLeg(right=right, strike_price=strike, bid=bid)
 
+    wings: dict[str, CandidateLeg] = {}
+    if wants_wings:
+        if implied is None:
+            leg_failures.append(f"hedged shapes: no wing without the implied move ({reading.describe() if reading else 'no reading'})")
+        else:
+            for right, short in picked.items():
+                wing, why = _pick_wing(rows_by_right[right], short, right, implied, leg_cfg.wing_multiple)
+                if wing is None:
+                    leg_failures.append(f"{_side(right)} wing beyond {short.strike_price:g}: {why}")
+                else:
+                    wings[right] = wing
+
     candidates: list[Candidate] = []
     margin_failures: list[str] = []
     for strategy in leg_cfg.strategies:
@@ -439,13 +525,18 @@ def build_candidates(
         if len(legs) != len(rights):
             # The missing leg is already explained once in `leg_failures`.
             continue
+        if strategy in HEDGED:
+            if any(r not in wings for r in rights):
+                continue  # explained once in `leg_failures`
+            # Wings first: the order they are placed in, and no naked short at any step.
+            legs = [wings[r] for r in rights] + legs
         margin, margin_error = price_margin_for_legs(
             proc,
             user_id,
             exchange_code=exchange,
             stock_code=index_code,
             expiry_display=expiry_display,
-            legs=[(leg.right, leg.strike_price, lot_size) for leg in legs],
+            legs=[(leg.right, leg.strike_price, lot_size, leg.action) for leg in legs],
         )
         if margin is None:
             strikes = " + ".join(f"{_side(l.right)} {l.strike_price:g}" for l in legs)
@@ -457,7 +548,8 @@ def build_candidates(
             Candidate(
                 strategy=strategy,
                 legs=legs,
-                premium_per_lot=round(sum(leg.bid for leg in legs) * lot_size, 2),
+                premium_per_lot=round(sum(leg.price if leg.action == "sell" else -leg.price
+                                              for leg in legs) * lot_size, 2),
                 margin_per_lot=round(margin, 2),
             )
         )
@@ -470,13 +562,15 @@ def build_candidates(
             if margin_failures and not leg_failures
             else ReasonCode.QUOTE_UNAVAILABLE
         )
-        return [], f"None of the shortlisted strategies could be priced ({detail}).", spot, code
-    return candidates, None, spot, None
+        return [], f"None of the shortlisted strategies could be priced ({detail}).", spot, code, reading
+    return candidates, None, spot, None, reading
 
 
-def _no_strike_reason(rows: list[dict], spot: float, right: str, safety_pct: float) -> str:
+def _no_strike_reason(rows: list[dict], spot: float, right: str, safety_pct: float,
+                      *, target: Optional[float] = None, distance: Optional[str] = None) -> str:
     """Why `_pick_strike` found nothing: the target and how far the listed strikes reach."""
-    target = spot * (1 + safety_pct / 100) if right == cfg.CALL else spot * (1 - safety_pct / 100)
+    if target is None:
+        target = spot * (1 + safety_pct / 100) if right == cfg.CALL else spot * (1 - safety_pct / 100)
     strikes = sorted(
         float(s) for s in (parse_strike(r.get("strike_price")) for r in rows) if s is not None
     )
@@ -484,15 +578,69 @@ def _no_strike_reason(rows: list[dict], spot: float, right: str, safety_pct: flo
     reach = f"listed {strikes[0]:g}-{strikes[-1]:g}" if strikes else "no readable strikes"
     return (
         f"{_side(right)}: no strike {direction} {target:,.2f} "
-        f"(spot {spot:,.2f}, safety {safety_pct:g}%; {reach})"
+        f"(spot {spot:,.2f}, {distance or f'safety {safety_pct:g}%'}; {reach})"
     )
 
 
-def choose(candidates: list[Candidate]) -> Optional[Candidate]:
-    """Best premium per rupee of margin. Ties break towards the cheaper shape."""
+def strike_target(leg_cfg: IndexWriterLeg, spot: float, right: str, implied: Optional[float]) -> float:
+    """The index level a written strike must sit at or beyond, before rounding away from spot:
+    a share of spot, or a multiple of the implied move to expiry (docs/premium-gate-plan.md 5)."""
+    up = right == cfg.CALL
+    if leg_cfg.distance_basis == "implied_move" and implied is not None:
+        k = leg_cfg.implied_multiple_ce if up else leg_cfg.implied_multiple_pe
+        return premium.strike_target(spot, implied, k, up=up)
+    pct = leg_cfg.safety_pct_ce if up else leg_cfg.safety_pct_pe
+    return spot * (1 + pct / 100) if up else spot * (1 - pct / 100)
+
+
+def gate_refusal(reading: premium.Reading, gate: PremiumGateConfig) -> Optional[tuple[str, str]]:
+    """(reason code, text) when the premium gate says no, else None. No reading is a no."""
+    from icici_breeze_backend.app.services.premium_gate.gate import refusal
+
+    return refusal(reading, gate, "sell")
+
+
+def _pick_wing(
+    rows: list[dict], short: CandidateLeg, right: str, implied: float, multiple: float
+) -> tuple[Optional[CandidateLeg], Optional[str]]:
+    """The wing for one short: `multiple` implied moves beyond it, rounded further out, and at
+    least one listed strike beyond it. Bought at a live ask."""
+    from icici_breeze_backend.app.services.quote_source_router import row_is_live
+
+    up = right == cfg.CALL
+    target = premium.strike_target(short.strike_price, implied, multiple, up=up)
+    beyond = [r for r in rows
+              if (s := parse_strike(r.get("strike_price"))) is not None
+              and (float(s) > short.strike_price if up else float(s) < short.strike_price)]
+    row = _pick_strike_at(beyond, target, right)
+    if row is None and beyond:
+        # The target lies past the listed strikes: the furthest listed one, as the condor does.
+        row = max(beyond, key=lambda r: float(parse_strike(r.get("strike_price")) or 0) * (1 if up else -1))
+    if row is None:
+        return None, "no listed strike beyond it"
+    strike = float(parse_strike(row.get("strike_price")) or 0)
+    try:
+        ask = float(row.get("best_offer_price") or 0)
+    except (TypeError, ValueError):
+        ask = 0.0
+    if ask <= 0:
+        return None, f"{strike:g} has no ask"
+    if not row_is_live(row):
+        return None, f"{strike:g} has no live quote"
+    return CandidateLeg(right=right, strike_price=strike, bid=_bid(row), action="buy", ask=ask), None
+
+
+def choose(candidates: list[Candidate], budget: Optional[float] = None) -> Optional[Candidate]:
+    """The most premium receivable at the size `budget` buys (the user's ranking, 2026-10-10):
+    premium per lot x the lots that fit. A strangle collects both premiums but ties up more
+    margin, so it wins only when the extra premium pays for it -- the comparison the earlier
+    premium-per-margin ranking made, now in rupees received. Ties break towards the cheaper
+    shape. Without a budget, premium per rupee of margin."""
     if not candidates:
         return None
-    return max(candidates, key=lambda c: (c.margin_yield, -c.margin_per_lot))
+    if budget is None:
+        return max(candidates, key=lambda c: (c.margin_yield, -c.margin_per_lot))
+    return max(candidates, key=lambda c: (c.premium_for(budget), c.margin_yield, -c.margin_per_lot))
 
 
 # --------------------------------------------------------------------------------------
@@ -534,6 +682,15 @@ class FireResult:
     arm_error: Optional[str] = None
     # Set when the order book made the bot trade fewer lots than it planned.
     liquidity_note: Optional[str] = None
+    # The premium gate's reading for this index, when one was made (docs/premium-gate-plan.md).
+    premium: Optional[dict] = None
+    premium_text: Optional[str] = None
+    # The gate is on and this reading would stop the bot selling on its own schedule.
+    premium_would_refuse: bool = False
+    # "naked" or "hedged": which alternative this plan is (docs/bot2-hedged-shapes-plan.md).
+    choice: Optional[str] = None
+    # Both alternatives as sized, keyed by choice: what a proposal offers side by side.
+    alternatives: dict = field(default_factory=dict, repr=False)
 
     @property
     def ok(self) -> bool:
@@ -560,6 +717,13 @@ def _pick_strike(rows: list[dict], spot: float, right: str, safety_pct: float) -
     if spot <= 0:
         return None
     target = spot * (1 + safety_pct / 100) if right == cfg.CALL else spot * (1 - safety_pct / 100)
+    return _pick_strike_at(rows, target, right)
+
+
+def _pick_strike_at(rows: list[dict], target: float, right: str) -> Optional[dict]:
+    """The listed strike at or beyond `target`, away from the money, nearest to it."""
+    if not target > 0:
+        return None
     best, best_distance = None, float("inf")
     for row in rows:
         strike = parse_strike(row.get("strike_price"))
@@ -584,12 +748,22 @@ def plan_index(
     config: ExpiryIndexWriterConfig,
     available_margin: float,
     margin_source: str,
+    enforce_gate: bool = True,
+    choice: str = "best",
 ) -> FireResult:
     """Decide *what* to trade and *how big*, without placing anything.
+
+    `choice` picks the alternative (docs/bot2-hedged-shapes-plan.md): "naked" or "hedged" sizes
+    the best of that group; "best" sizes both and returns whichever has the more premium
+    receivable. The result carries every alternative it sized in `alternatives`.
 
     Split out from `fire_index` so the manual run and the unattended run size identically --
     a manual review that showed different numbers from what the bot would have done on its
     own would be worse than no review at all.
+
+    `enforce_gate` False is the manual run sheet: the premium reading is still made and
+    reported (`result.premium`), but a "not rich" reading does not stop a trade the user is
+    choosing by hand.
     """
     leg_cfg = config.indices[index_code]
     exchange = INDEX_EXCHANGE.get(index_code, cfg.NFO)
@@ -613,7 +787,7 @@ def plan_index(
         _logger.warning("bot2: %s %s not planned: no lot size in the scrip master", index_code, expiry_display)
         return result
 
-    candidates, error, spot, error_code = build_candidates(
+    candidates, error, spot, error_code, reading = build_candidates(
         proc,
         user_id,
         index_code,
@@ -621,8 +795,14 @@ def plan_index(
         expiry_display=expiry_display,
         leg_cfg=leg_cfg,
         lot_size=lot_size,
+        gate=config.premium_gate,
+        enforce_gate=enforce_gate,
     )
     result.spot = round(spot, 2) if spot > 0 else None
+    if reading is not None:
+        result.premium = reading.to_dict()
+        result.premium_text = reading.describe()
+        result.premium_would_refuse = gate_refusal(reading, config.premium_gate) is not None
     if error:
         result.reason_code = error_code
         result.error = error
@@ -643,21 +823,59 @@ def plan_index(
         for c in candidates
     ]
 
-    best = choose(candidates)
-    if best is None:
+    # The best of each group (docs/bot2-hedged-shapes-plan.md): a proposal offers both, Auto
+    # places whichever pays more, and a choice made on Telegram or by hand re-plans just that one.
+    wanted = CHOICES if choice == "best" else (choice,)
+    sized: dict[str, FireResult] = {}
+    for group in wanted:
+        pool = [c for c in candidates if c.hedged == (group == "hedged")]
+        best = choose(pool, budget)
+        if best is not None:
+            sized[group] = _size(proc, user_id, result, best, budget=budget, lot_size=lot_size,
+                                 exchange=exchange, index_code=index_code, expiry_display=expiry_display)
+            sized[group].choice = group
+    if not sized:
         result.reason_code = ReasonCode.QUOTE_UNAVAILABLE
-        result.error = "No strategy could be priced."
+        result.error = ("No strategy could be priced." if choice == "best"
+                        else f"No {choice} strategy is shortlisted, or none could be priced.")
         return result
+    placeable = [r for r in sized.values() if not r.error]
+    if choice != "best":
+        pick = sized.get(choice) or result
+    elif placeable:
+        pick = max(placeable, key=lambda r: float(r.premium_total or 0))
+    else:
+        pick = next(iter(sized.values()))
+    pick.alternatives = sized
+    return pick
 
+
+def _size(
+    proc: Any,
+    user_id: str,
+    base: FireResult,
+    best: Candidate,
+    *,
+    budget: float,
+    lot_size: int,
+    exchange: str,
+    index_code: str,
+    expiry_display: str,
+) -> FireResult:
+    """Size one candidate to the margin cap, confirmed with ICICI."""
+    import dataclasses
+
+    result = dataclasses.replace(base, legs=[], alternatives={})
     result.strategy = best.strategy
     result.span_per_lot = best.margin_per_lot
     result.margin_yield = round(best.margin_yield, 6)
-    # `right` and `strike_price` describe the single-leg case and stay populated for it;
+    shorts = [leg for leg in best.legs if leg.action == "sell"]
+    # `right` and `strike_price` describe the single-short case and stay populated for it;
     # `legs` is the full picture and is what placement and the exit arming read.
-    result.right = "call" if best.legs[0].right == cfg.CALL else "put"
-    result.strike_price = best.legs[0].strike_price if len(best.legs) == 1 else None
+    result.right = "call" if shorts[0].right == cfg.CALL else "put"
+    result.strike_price = shorts[0].strike_price if len(shorts) == 1 else None
 
-    lots = int(math.floor(budget / best.margin_per_lot))
+    lots = best.lots_for(budget)
     if lots < 1:
         result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
         result.error = (
@@ -666,17 +884,16 @@ def plan_index(
         )
         return result
 
+    def margin_at(n: int) -> Optional[float]:
+        return margin_for_legs(
+            proc, user_id, exchange_code=exchange, stock_code=index_code, expiry_display=expiry_display,
+            legs=[(leg.right, leg.strike_price, n * lot_size, leg.action) for leg in best.legs],
+        )
+
     # Verify against a real margin call at the full size before committing capital. The
     # per-lot figure does not always scale linearly, and over-committing an unattended trade
     # is exactly what the cap exists to prevent.
-    verified = margin_for_legs(
-        proc,
-        user_id,
-        exchange_code=exchange,
-        stock_code=index_code,
-        expiry_display=expiry_display,
-        legs=[(leg.right, leg.strike_price, lots * lot_size) for leg in best.legs],
-    )
+    verified = margin_at(lots)
     if verified is not None:
         # Each smaller size is asked of ICICI too (B-26). Its margin is not linear in
         # quantity (the basket 28L -> 73L incident), so scaling the per-lot figure down could
@@ -685,14 +902,7 @@ def plan_index(
         checks = 0
         while verified is not None and verified > budget and lots > 1 and checks < _MARGIN_RECHECKS:
             lots = max(1, min(lots - 1, int(lots * budget / verified)))
-            verified = margin_for_legs(
-                proc,
-                user_id,
-                exchange_code=exchange,
-                stock_code=index_code,
-                expiry_display=expiry_display,
-                legs=[(leg.right, leg.strike_price, lots * lot_size) for leg in best.legs],
-            )
+            verified = margin_at(lots)
             checks += 1
         if verified is None:
             result.reason_code = ReasonCode.MARGIN_CAP_TOO_SMALL
@@ -715,14 +925,16 @@ def plan_index(
     result.lots = lots
     result.quantity = lots * lot_size
     result.premium_total = round(best.premium_per_lot * lots, 2)
-    result.entry_price = best.legs[0].bid if len(best.legs) == 1 else None
+    result.entry_price = shorts[0].bid if len(best.legs) == 1 else None
     result.legs = [
         {
             "right": "call" if leg.right == cfg.CALL else "put",
             "strike_price": leg.strike_price,
-            "bid": leg.bid,
+            # The price the leg trades at: the bid for a short, the ask for a bought wing.
+            "bid": leg.price,
+            "action": leg.action,
             "quantity": result.quantity,
-            "premium_total": round(leg.bid * result.quantity, 2),
+            "premium_total": round(leg.price * result.quantity, 2),
         }
         for leg in best.legs
     ]
@@ -792,6 +1004,11 @@ def execute_plan(
     # Listening has to start before the first order goes out: a fast fill's events arrive
     # while the remaining freeze slices are still being placed.
     exit_arming.prepare(proc, user_id)
+    # A hedged shape's wings go first and must fill completely before anything is sold, so no
+    # short is ever naked, even for a moment (docs/bot2-hedged-shapes-plan.md).
+    if not _buy_wings(proc, user_id, result):
+        return result
+    shorts = [leg for leg in result.legs if leg.get("action", "sell") == "sell"]
     placed = placement.place_short_legs(
         proc,
         user_id,
@@ -805,13 +1022,13 @@ def execute_plan(
                 "quantity": leg["quantity"],
                 "premium_per_share": leg["bid"],
             }
-            for leg in result.legs
+            for leg in shorts
         ],
         tolerance_pct=float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT),
     )
     errors = []
     # `place_short_legs` returns one result per input leg, in order.
-    for leg, leg_result in zip(result.legs, placed):
+    for leg, leg_result in zip(shorts, placed):
         leg["order_ids"] = list(leg_result.order_ids)
         leg["error"] = leg_result.error
         leg["limit_price"] = leg_result.limit_price
@@ -838,6 +1055,41 @@ def execute_plan(
     return result
 
 
+def _buy_wings(proc: Any, user_id: str, result: FireResult) -> bool:
+    """Buy a hedged plan's wings, each confirmed filled. False (with the reason on the result)
+    when one did not fill completely: then nothing is sold, and any wing already bought is a
+    harmless long the report names."""
+    from icici_breeze_backend.app.services.aggressive_limit import round_to_tick
+    from icici_breeze_backend.app.services.bots.scalping import live as scalp
+
+    tolerance = float(cfg.AGGRESSIVE_LIMIT_DEFAULT_TOLERANCE_PCT) / 100.0
+    for leg in result.legs:
+        if leg.get("action") != "buy":
+            continue
+        ask = float(leg["bid"])  # a wing's `bid` field holds the ask it is bought at
+        order = scalp.LegOrder(result.index_code, result.exchange_code, leg["right"],
+                               float(leg["strike_price"]), result.expiry_display, cfg.BUY, int(leg["quantity"]))
+        fill = scalp.place_and_confirm(
+            proc, user_id, order,
+            price_for_attempt=lambda n, ask=ask: round_to_tick(ask * (1 + tolerance * (n + 1))),
+            timeout_seconds=WING_FILL_TIMEOUT_SECONDS,
+        )
+        leg["order_ids"] = [fill.order_id] if fill.order_id else []
+        leg["limit_price"] = fill.average_price or ask
+        result.order_ids.extend(leg["order_ids"])
+        if fill.unaccounted or int(fill.filled_quantity or 0) < int(leg["quantity"]):
+            leg["error"] = fill.error or f"filled {fill.filled_quantity} of {leg['quantity']}"
+            result.reason_code = ReasonCode.ORDER_REJECTED
+            result.error = (
+                f"The {_side(cfg.CALL if leg['right'] == 'call' else cfg.PUT)} {leg['strike_price']:g} wing "
+                f"did not fill completely ({leg['error']}), so nothing was sold. Any wing bought is a "
+                "long option with no short against it: close it or keep it."
+            )
+            return False
+        leg["error"] = None
+    return True
+
+
 def _fit_to_book(user_id: str, result: FireResult) -> bool:
     """Shrink the plan to what every leg's live book absorbs, or refuse it
     (docs/liquidity-checks-plan.md, decision 8). False when nothing may be placed.
@@ -856,7 +1108,8 @@ def _fit_to_book(user_id: str, result: FireResult) -> bool:
         [
             liquidity.SizedLeg(
                 result.exchange_code, result.index_code, result.expiry_display,
-                float(leg["strike_price"]), leg["right"], liquidity.SELL,
+                float(leg["strike_price"]), leg["right"],
+                liquidity.BUY if leg.get("action") == "buy" else liquidity.SELL,
             )
             for leg in result.legs
         ],
@@ -909,8 +1162,11 @@ def exit_terms(result: FireResult, config: ExpiryIndexWriterConfig) -> Optional[
     # One target price for the group, so the rule fires only when EVERY short leg is at or
     # below it. On a strangle the cheapest leg would otherwise book the whole group and
     # leave the other side naked, which is strictly worse than holding both.
+    # Short legs only: a hedged shape's wing is bought, and "buy it back cheaply" means nothing
+    # for it (the engine's price target reads short legs only too).
     leg_targets = [
-        config.profit_target_price_for(float(leg.get("bid") or 0)) for leg in result.legs
+        config.profit_target_price_for(float(leg.get("bid") or 0))
+        for leg in result.legs if leg.get("action", "sell") == "sell"
     ]
     target_option_price = (
         min(t for t in leg_targets if t is not None)

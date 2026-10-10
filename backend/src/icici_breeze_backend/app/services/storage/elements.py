@@ -50,6 +50,10 @@ _CACHE_TABLES: dict[str, list[tuple[str, ...]]] = {
     "option_needs": [("stock_code", "expiry", "strike", "right", "interval", "start_ts", "end_ts")],
     "meta": [("key",)],
     "backtest_runs": [("id",), ("user_id", "created_at")],
+    # The condor's long history (#77): NSE daily closes, the index, and which sessions were fetched.
+    "nse_daily_options": [("expiry", "strike", "right", "session"), ("session",)],
+    "nse_daily_index": [("session",)],
+    "nse_daily_fetches": [("session",)],
 }
 _SAMPLE_ROWS = 500
 #: Per-row cell header and rowid, per-index-entry overhead: small, but on a million option bars
@@ -260,6 +264,10 @@ def _cache_coverage(conn: sqlite3.Connection, present: set[str]) -> dict[str, An
             "expiry_to": e_last,
             "contracts": int(contracts or 0),
         }
+    if "nse_daily_index" in present:
+        first, last, days = conn.execute(
+            "SELECT MIN(session), MAX(session), COUNT(*) FROM nse_daily_index").fetchone()
+        out["nse_daily"] = {"from": first, "to": last, "days": int(days or 0)}
     if "backtest_runs" in present:
         first, last, runs = conn.execute(
             "SELECT MIN(substr(created_at, 1, 10)), MAX(substr(created_at, 1, 10)), COUNT(*) FROM backtest_runs"
@@ -411,6 +419,15 @@ def inventory() -> dict[str, Any]:
                     "windows fetched. Deleting a date range also forgets which windows were fetched "
                     "there, so a later backtest fetches them again. The cache also trims itself, "
                     "oldest expiry first, past 2 GB.",
+    ))
+
+    elements.append(_element(
+        "nse_daily", "NSE daily option prices", "Backtest history",
+        bytes_=tbytes("nse_daily_options", "nse_daily_index", "nse_daily_fetches"), approx=True,
+        deletable=True, coverage=cov.get("nse_daily"),
+        description="NIFTY option closing prices from NSE's public archive, from 2020, for the "
+                    "Dynamic Iron Condor's long-history backtest. Deleting a date range also forgets "
+                    "those sessions were downloaded, so a later backtest downloads them again.",
     ))
 
     # --- bot backtest runs: rows in the cache + their audit trails
@@ -575,7 +592,8 @@ def inventory() -> dict[str, Any]:
 
 #: Elements whose rows live in the backtest cache: deleting them needs the job slot free (a
 #: running backtest is writing there) and is followed by compaction.
-CACHE_ELEMENTS = frozenset({"futures_bars", "spot_bars", "daily_vix", "option_bars", "bot_backtest_runs"})
+CACHE_ELEMENTS = frozenset({"futures_bars", "spot_bars", "daily_vix", "option_bars", "bot_backtest_runs",
+                            "nse_daily"})
 #: Elements whose rows live in `users.sqlite3`: a delete is followed by compacting that file.
 USERS_DB_ELEMENTS = frozenset({"audit_requests"})
 
@@ -607,6 +625,21 @@ def _delete_options(rng: DateRange, path: str) -> tuple[int, Optional[str]]:
         )
         conn.commit()
         return cur.rowcount, None
+
+
+def _delete_nse_daily(rng: DateRange, path: str) -> tuple[int, Optional[str]]:
+    """Sessions in the range: their prices, their index close, and the record they were fetched,
+    so the next long-history backtest downloads them again rather than replaying a gap."""
+    lo, hi = rng.start.isoformat(), rng.end.isoformat()
+    with sqlite3.connect(path, timeout=30) as conn:
+        present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "nse_daily_index" not in present:
+            return 0, None
+        n = conn.execute("DELETE FROM nse_daily_index WHERE session >= ? AND session <= ?", (lo, hi)).rowcount
+        conn.execute("DELETE FROM nse_daily_options WHERE session >= ? AND session <= ?", (lo, hi))
+        conn.execute("DELETE FROM nse_daily_fetches WHERE session >= ? AND session <= ?", (lo, hi))
+        conn.commit()
+        return n, None
 
 
 def _delete_vix(rng: DateRange, path: str) -> tuple[int, Optional[str]]:
@@ -692,6 +725,9 @@ def delete(key: str, rng: DateRange) -> dict[str, Any]:
     elif key == "option_bars":
         n, note = _delete_options(rng, path)
         unit = "bars"
+    elif key == "nse_daily":
+        n, note = _delete_nse_daily(rng, path)
+        unit = "sessions"
     elif key == "bot_backtest_runs":
         n, note = _delete_bot_runs(rng, path)
         unit = "runs"

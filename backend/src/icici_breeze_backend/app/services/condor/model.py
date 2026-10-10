@@ -72,6 +72,11 @@ class MarketSnapshot:
     # lists today (#69), so it never trades a strike live trading could not, while every quoted
     # row still feeds the smile and prices the held legs.
     listed: Optional[tuple[float, ...]] = None
+    # The premium gate's forecast (#78): the variance of NIFTY's log return from `now` to the
+    # cycle's expiry close, from the cash index's own recent sessions; None with `forecast_reason`
+    # when it cannot be made. Only a tranche entry with the gate on reads it.
+    forecast_variance: Optional[float] = None
+    forecast_reason: Optional[str] = None
 
     def quote(self, strike: float, right: Right) -> Optional[Quote]:
         for row in self.chain:

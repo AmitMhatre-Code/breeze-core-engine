@@ -26,6 +26,9 @@ export type CondorSettings = {
   max_loss_inr: number | null;
   max_loss_pct_of_ceiling: number | null;
   margin_ceiling_inr: number;
+  /** Tranche entries only, the next cycle of a time roll included: wait while the cycle's options
+   *  price less movement to expiry than the index's history forecasts (#78). */
+  premium_gate?: { enabled: boolean; threshold: number };
 };
 
 export type CondorCycle = {
