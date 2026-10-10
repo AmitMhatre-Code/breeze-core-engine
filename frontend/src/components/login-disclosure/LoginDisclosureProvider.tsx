@@ -18,6 +18,7 @@ import { composeDisclosureMarkdown } from "@/lib/login-disclosure-content";
 import { acceptLoginDisclosure, fetchLoginDisclosureCurrent } from "@/lib/login-disclosure";
 import { getPreloadedLoginDisclosure } from "@/lib/login-disclosure-preload";
 import {
+  ACK_KEY,
   clearDisclosurePending,
   getStoredSessionAckVersion,
   hasSessionAck,
@@ -67,6 +68,7 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
 
   const authed = Boolean(sessionQ.data?.authenticated);
   const userId = (sessionQ.data?.user_id || "").trim().toUpperCase();
+  const signedInAt = sessionQ.data?.signed_in_at ?? null;
   const preloadedDoc = getPreloadedLoginDisclosure();
 
   const disclosureQ = useQuery({
@@ -93,14 +95,24 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setJustAccepted(false);
-  }, [userId, version]);
+  }, [userId, version, signedInAt]);
 
-  const storedAckVersion = userId ? getStoredSessionAckVersion(userId) : null;
+  // Proceed clicked in another tab of the same sign-in lifts this tab's gate too.
+  const [, setAckChanges] = useState(0);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === ACK_KEY || e.key === null) setAckChanges((n) => n + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const storedAckVersion = userId ? getStoredSessionAckVersion(userId, signedInAt) : null;
   const hasStoredAck = storedAckVersion != null;
 
   const sessionAcked =
     justAccepted ||
-    (userId && version != null ? hasSessionAck(userId, version) : false);
+    (userId && version != null ? hasSessionAck(userId, version, signedInAt) : false);
 
   const needsTermsAcceptance = Boolean(
     termsStatusQ.isSuccess &&
@@ -120,7 +132,7 @@ export function LoginDisclosureProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: () => {
       if (userId && version != null) {
-        setSessionAck(userId, version);
+        setSessionAck(userId, version, signedInAt);
         clearDisclosurePending();
         setPendingLogin(false);
         setJustAccepted(true);

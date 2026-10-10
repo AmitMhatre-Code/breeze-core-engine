@@ -1,46 +1,76 @@
 import { clearPreloadedLoginDisclosure } from "@/lib/login-disclosure-preload";
 
-const KEY = "breeze_login_disclosure_ack";
+/**
+ * The ack is per sign-in, not per tab: it lives in localStorage (shared by every tab)
+ * and carries the sign-in's `signed_in_at` from /auth/session, so a new tab of the same
+ * sign-in is not asked again while the next sign-in always is. The pending flag stays in
+ * sessionStorage — it belongs to the one tab that just came back from ICICI login.
+ */
+export const ACK_KEY = "breeze_login_disclosure_ack";
 const PENDING_KEY = "breeze_login_disclosure_pending";
 
-function ackValue(userId: string, version: number): string {
-  return `${userId.trim().toUpperCase()}:${version}`;
+function ackStore(): Storage | null {
+  return typeof localStorage === "undefined" ? null : localStorage;
 }
 
-export function hasSessionAck(userId: string, version: number): boolean {
-  if (typeof sessionStorage === "undefined") return false;
+function signInPart(signedInAt: number | null | undefined): string {
+  return signedInAt == null ? "" : String(signedInAt);
+}
+
+function ackValue(userId: string, version: number, signedInAt: number | null | undefined): string {
+  return `${userId.trim().toUpperCase()}:${version}:${signInPart(signedInAt)}`;
+}
+
+export function hasSessionAck(
+  userId: string,
+  version: number,
+  signedInAt: number | null | undefined,
+): boolean {
+  const store = ackStore();
+  if (!store) return false;
   const uid = userId.trim().toUpperCase();
   if (!uid || version < 1) return false;
-  return sessionStorage.getItem(KEY) === ackValue(uid, version);
+  return store.getItem(ACK_KEY) === ackValue(uid, version, signedInAt);
 }
 
-export function getStoredSessionAckVersion(userId: string): number | null {
-  if (typeof sessionStorage === "undefined") return null;
+export function getStoredSessionAckVersion(
+  userId: string,
+  signedInAt: number | null | undefined,
+): number | null {
+  const store = ackStore();
+  if (!store) return null;
   const uid = userId.trim().toUpperCase();
   if (!uid) return null;
 
-  const stored = sessionStorage.getItem(KEY);
+  const stored = store.getItem(ACK_KEY);
   if (!stored) return null;
 
-  const colon = stored.indexOf(":");
-  if (colon < 1) return null;
+  const [storedUid, storedVersion, storedSignIn, ...rest] = stored.split(":");
+  if (rest.length || storedSignIn === undefined) return null;
+  if (storedUid.trim().toUpperCase() !== uid) return null;
+  if (storedSignIn !== signInPart(signedInAt)) return null;
 
-  const storedUid = stored.slice(0, colon).trim().toUpperCase();
-  if (storedUid !== uid) return null;
-
-  const version = Number.parseInt(stored.slice(colon + 1), 10);
+  const version = Number.parseInt(storedVersion, 10);
   return Number.isFinite(version) && version >= 1 ? version : null;
 }
 
-export function hasStoredSessionAckForUser(userId: string): boolean {
-  return getStoredSessionAckVersion(userId) != null;
+export function hasStoredSessionAckForUser(
+  userId: string,
+  signedInAt: number | null | undefined,
+): boolean {
+  return getStoredSessionAckVersion(userId, signedInAt) != null;
 }
 
-export function setSessionAck(userId: string, version: number): void {
-  if (typeof sessionStorage === "undefined") return;
+export function setSessionAck(
+  userId: string,
+  version: number,
+  signedInAt: number | null | undefined,
+): void {
+  const store = ackStore();
+  if (!store) return;
   const uid = userId.trim().toUpperCase();
   if (!uid || version < 1) return;
-  sessionStorage.setItem(KEY, ackValue(uid, version));
+  store.setItem(ACK_KEY, ackValue(uid, version, signedInAt));
 }
 
 export function markDisclosurePending(): void {
@@ -59,8 +89,11 @@ export function clearDisclosurePending(): void {
 }
 
 export function clearSessionAck(): void {
-  if (typeof sessionStorage === "undefined") return;
-  sessionStorage.removeItem(KEY);
-  sessionStorage.removeItem(PENDING_KEY);
+  ackStore()?.removeItem(ACK_KEY);
+  if (typeof sessionStorage !== "undefined") {
+    // Acks written before they moved to localStorage.
+    sessionStorage.removeItem(ACK_KEY);
+    sessionStorage.removeItem(PENDING_KEY);
+  }
   clearPreloadedLoginDisclosure();
 }

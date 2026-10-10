@@ -25,11 +25,17 @@ router = APIRouter(tags=["Authentication"])
 
 @router.get("/auth/session", include_in_schema=False)
 async def auth_session_status(request: Request):
-    """Lightweight check: valid JWT + ICICI broker cookie. Used by SPA landing redirect."""
+    """Lightweight check: valid JWT + ICICI broker cookie. Used by SPA landing redirect.
+
+    `signed_in_at` identifies the sign-in, so the risk disclosure accepted in one tab
+    counts for every tab of the same sign-in and is asked again after the next one.
+    """
     ctx = get_optional_user(request)
     if ctx and ctx.broker_token:
         user_id = (ctx.user_id or "").strip().upper() or None
-        return JSONResponse(content={"authenticated": True, "user_id": user_id})
+        return JSONResponse(
+            content={"authenticated": True, "user_id": user_id, "signed_in_at": ctx.issued_at}
+        )
     return JSONResponse(content={"authenticated": False}, status_code=401)
 
 

@@ -71,6 +71,8 @@ class RequestContext:
     request_id: Optional[str] = None
     ip_address: Optional[str] = None
     broker_token: Optional[str] = None
+    # The access token's `iat`: one value per sign-in, shared by every tab of it.
+    issued_at: Optional[int] = None
 
 
 def extract_user_context(request: Request) -> Optional[RequestContext]:
@@ -121,6 +123,7 @@ def extract_user_context(request: Request) -> Optional[RequestContext]:
         request_id=None,
         ip_address=request.client.host if request.client else None,
         broker_token=broker_token,
+        issued_at=payload.iat,
     )
     request.state.user_id = ctx.user_id
     return ctx
